@@ -1,0 +1,38 @@
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+building_inspection*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+
+# Development scripts
+check_*.py
+fix_*.py
+migrate_*.py
+test_*.py
+ckdb.py
+cleardata.py
+csv_analyzer.py
+
+# Uploads and backups
+uploads/
+backups/
+
+# V2 legacy files (NOT reports folder!)
+config/
+utils/
+web/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,267 @@
+Room,Component,Trade
+Apartment Entry Door,Door Handle,Doors
+Apartment Entry Door,Door Locks and Keys,Doors
+Apartment Entry Door,Paint,Painting
+Apartment Entry Door,Self Latching,Doors
+Apartment SOU Door,Fire Compliance Tag,Doors
+Balcony,Balustrade,Carpentry & Joinery
+Balcony,Drainage Point,Plumbing
+Balcony,GPO (if applicable),Electrical
+Balcony,Glass,Windows
+Balcony,Glass Sliding Door,Windows
+Balcony,Tiles,Flooring - Tiles
+Bathroom,Bathtub (if applicable),Plumbing
+Bathroom,Ceiling,Painting
+Bathroom,Doors,Doors
+Bathroom,Exhaust Fan,Electrical
+Bathroom,GPO,Electrical
+Bathroom,Light Fixtures,Electrical
+Bathroom,Mirror,Carpentry & Joinery
+Bathroom,Shower,Plumbing
+Bathroom,Sink,Plumbing
+Bathroom,Skirting,Carpentry & Joinery
+Bathroom,Tiles,Flooring - Tiles
+Bathroom,Toilet,Plumbing
+Bathroom,Walls,Painting
+Bathroom / Laundry,Bathroom_Ceiling,Painting
+Bathroom / Laundry,Bathroom_Doors,Doors
+Bathroom / Laundry,Bathroom_Exhaust Fan,Electrical
+Bathroom / Laundry,Bathroom_GPO,Electrical
+Bathroom / Laundry,Bathroom_Light Fixtures,Electrical
+Bathroom / Laundry,Bathroom_Mirror,Carpentry & Joinery
+Bathroom / Laundry,Bathroom_Shower,Plumbing
+Bathroom / Laundry,Bathroom_Sink,Plumbing
+Bathroom / Laundry,Bathroom_Skirting,Carpentry & Joinery
+Bathroom / Laundry,Bathroom_Tiles,Flooring - Tiles
+Bathroom / Laundry,Bathroom_Toilet,Plumbing
+Bathroom / Laundry,Bathroom_Walls,Painting
+Bathroom / Laundry,Ceiling,Painting
+Bathroom / Laundry,Cold/Hot Water Outlets,Plumbing
+Bathroom / Laundry,Doors,Doors
+Bathroom / Laundry,Drainage,Plumbing
+Bathroom / Laundry,Exhaust Fan,Electrical
+Bathroom / Laundry,GPO,Electrical
+Bathroom / Laundry,Laundry Section_Cold/Hot Water Outlets,Plumbing
+Bathroom / Laundry,Laundry Section_Doors,Doors
+Bathroom / Laundry,Laundry Section_Drainage,Plumbing
+Bathroom / Laundry,Laundry Section_Exhaust Fan,Electrical
+Bathroom / Laundry,Laundry Section_GPO,Electrical
+Bathroom / Laundry,Laundry Section_Laundry Sink,Plumbing
+Bathroom / Laundry,Laundry Section_Light Fixtures,Electrical
+Bathroom / Laundry,Laundry Section_Skirting,Carpentry & Joinery
+Bathroom / Laundry,Laundry Section_Tiles,Flooring - Tiles
+Bathroom / Laundry,Laundry Section_Walls,Painting
+Bathroom / Laundry,Laundry Sink (if applicable),Plumbing
+Bathroom / Laundry,Light Fixtures,Electrical
+Bathroom / Laundry,Mirror,Carpentry & Joinery
+Bathroom / Laundry,Shower,Plumbing
+Bathroom / Laundry,Sink,Plumbing
+Bathroom / Laundry,Skirting,Carpentry & Joinery
+Bathroom / Laundry,Tiles,Flooring - Tiles
+Bathroom / Laundry,Toilet,Plumbing
+Bathroom / Laundry,Walls,Painting
+Bathroom / Laundry,Laundry Sink,Plumbing
+Bedroom,Carpets,Flooring - Carpets
+Bedroom,Ceiling,Painting
+Bedroom,Doors,Doors
+Bedroom,GPO,Electrical
+Bedroom,Light Fixtures,Electrical
+Bedroom,Network Router,Electrical
+Bedroom,Network Router (if applicable),Electrical
+Bedroom,Skirting,Carpentry & Joinery
+Bedroom,Sliding Glass Door (if applicable),Windows
+Bedroom,Walls,Painting
+Bedroom,Wardrobe,Carpentry & Joinery
+Bedroom,Windows,Windows
+Bedroom 1,Carpets,Flooring - Carpets
+Bedroom 1,Ceiling,Painting
+Bedroom 1,Doors,Doors
+Bedroom 1,GPO,Electrical
+Bedroom 1,Light Fixtures,Electrical
+Bedroom 1,Network Router (if applicable),Electrical
+Bedroom 1,Skirting,Carpentry & Joinery
+Bedroom 1,Walls,Doors
+Bedroom 1,Wardrobe,Carpentry & Joinery
+Bedroom 1,Windows,Windows
+Bedroom 1 w/Ensuite,Bathtub (if applicable),Plumbing
+Bedroom 1 w/Ensuite,Carpets,Flooring - Carpets
+Bedroom 1 w/Ensuite,Ceiling,Painting
+Bedroom 1 w/Ensuite,Doors,Doors
+Bedroom 1 w/Ensuite,Exhaust Fan,Electrical
+Bedroom 1 w/Ensuite,GPO,Electrical
+Bedroom 1 w/Ensuite,Light Fixtures,Electrical
+Bedroom 1 w/Ensuite,Mirror,Carpentry & Joinery
+Bedroom 1 w/Ensuite,Network Router (if applicable),Electrical
+Bedroom 1 w/Ensuite,Shower,Plumbing
+Bedroom 1 w/Ensuite,Sink,Plumbing
+Bedroom 1 w/Ensuite,Skirting,Carpentry & Joinery
+Bedroom 1 w/Ensuite,Tiles,Flooring - Tiles
+Bedroom 1 w/Ensuite,Toilet,Plumbing
+Bedroom 1 w/Ensuite,Walls,Painting
+Bedroom 1 w/Ensuite,Wardrobe,Carpentry & Joinery
+Bedroom 1 w/Ensuite,Windows,Windows
+Bedroom 2,Carpets,Flooring - Carpets
+Bedroom 2,Ceiling,Painting
+Bedroom 2,Doors,Doors
+Bedroom 2,GPO,Electrical
+Bedroom 2,Light Fixtures,Electrical
+Bedroom 2,Network Router (if applicable),Electrical
+Bedroom 2,Skirting,Carpentry & Joinery
+Bedroom 2,Sliding Glass Door (if applicable),Windows
+Bedroom 2,Walls,Painting
+Bedroom 2,Wardrobe,Carpentry & Joinery
+Bedroom 2,Windows,Windows
+Bedroom 2 w/Ensuite,Bathtub (if applicable),Plumbing
+Bedroom 2 w/Ensuite,Carpets,Flooring - Carpets
+Bedroom 2 w/Ensuite,Ceiling,Painting
+Bedroom 2 w/Ensuite,Doors,Doors
+Bedroom 2 w/Ensuite,Exhaust Fan,Electrical
+Bedroom 2 w/Ensuite,GPO,Electrical
+Bedroom 2 w/Ensuite,Light Fixtures,Electrical
+Bedroom 2 w/Ensuite,Mirror,Carpentry & Joinery
+Bedroom 2 w/Ensuite,Network Router (if applicable),Electrical
+Bedroom 2 w/Ensuite,Shower,Plumbing
+Bedroom 2 w/Ensuite,Sink,Plumbing
+Bedroom 2 w/Ensuite,Skirting,Carpentry & Joinery
+Bedroom 2 w/Ensuite,Tiles,Flooring - Tiles
+Bedroom 2 w/Ensuite,Toilet,Plumbing
+Bedroom 2 w/Ensuite,Walls,Painting
+Bedroom 2 w/Ensuite,Wardrobe,Carpentry & Joinery
+Bedroom 2 w/Ensuite,Windows,Windows
+Bedroom 3,Carpets,Flooring - Carpets
+Bedroom 3,Ceiling,Painting
+Bedroom 3,Doors,Doors
+Bedroom 3,GPO,Electrical
+Bedroom 3,Light Fixtures,Electrical
+Bedroom 3,Network Router (if applicable),Electrical
+Bedroom 3,Skirting,Carpentry & Joinery
+Bedroom 3,Sliding Glass Door (if applicable),Windows
+Bedroom 3,Walls,Painting
+Bedroom 3,Wardrobe,Carpentry & Joinery
+Bedroom 3,Windows,Windows
+Bedroom w/Ensuite,Bathtub (if applicable),Plumbing
+Bedroom w/Ensuite,Carpets,Flooring - Carpets
+Bedroom w/Ensuite,Ceiling,Painting
+Bedroom w/Ensuite,Doors,Doors
+Bedroom w/Ensuite,Exhaust Fan,Electrical
+Bedroom w/Ensuite,GPO,Electrical
+Bedroom w/Ensuite,Light Fixtures,Electrical
+Bedroom w/Ensuite,Mirror,Carpentry & Joinery
+Bedroom w/Ensuite,Network Router (if applicable),Electrical
+Bedroom w/Ensuite,Shower,Plumbing
+Bedroom w/Ensuite,Sink,Plumbing
+Bedroom w/Ensuite,Skirting,Carpentry & Joinery
+Bedroom w/Ensuite,Sliding Glass Door (if applicable),Windows
+Bedroom w/Ensuite,Tiles,Flooring - Tiles
+Bedroom w/Ensuite,Toilet,Plumbing
+Bedroom w/Ensuite,Walls,Painting
+Bedroom w/Ensuite,Wardrobe,Carpentry & Joinery
+Bedroom w/Ensuite,Windows,Windows
+Butler's Pantry,Cabinets/Shelving,Carpentry & Joinery
+Butler's Pantry,Ceiling,Painting
+Butler's Pantry,Flooring,Flooring - Timber
+Butler's Pantry,GPO,Electrical
+Butler's Pantry,Light Fixtures,Electrical
+Butler's Pantry,Sink,Plumbing
+Butler's Pantry (if applicable),Cabinets/Shelving,Carpentry & Joinery
+Butler's Pantry (if applicable),Ceiling,Painting
+Butler's Pantry (if applicable),Flooring,Flooring - Timber
+Butler's Pantry (if applicable),GPO,Electrical
+Butler's Pantry (if applicable),Light Fixtures,Electrical
+Butler's Pantry (if applicable),Sink,Plumbing
+Corridor,Ceiling,Painting
+Corridor,Flooring,Flooring - Timber
+Corridor,Intercom,Electrical
+Corridor,Light Fixtures,Electrical
+Corridor,Skirting,Carpentry & Joinery
+Corridor,Walls,Painting
+Dining & Living Room Area,Ceiling,Painting
+Dining & Living Room Area,Flooring,Flooring - Timber
+Dining & Living Room Area,GPO,Electrical
+Dining & Living Room Area,Light Fixtures,Electrical
+Dining & Living Room Area,Skirting,Carpentry & Joinery
+Dining & Living Room Area,Walls,Painting
+Dining & Living Room Area,Windows (if applicable),Windows
+Downstairs Bathroom,Ceiling,Painting
+Downstairs Bathroom,Doors,Doors
+Downstairs Bathroom,Exhaust Fan,Electrical
+Downstairs Bathroom,GPO,Electrical
+Downstairs Bathroom,Light Fixtures,Electrical
+Downstairs Bathroom,Mirror,Carpentry & Joinery
+Downstairs Bathroom,Shower,Plumbing
+Downstairs Bathroom,Sink,Plumbing
+Downstairs Bathroom,Skirting,Carpentry & Joinery
+Downstairs Bathroom,Tiles,Flooring - Tiles
+Downstairs Bathroom,Toilet,Plumbing
+Downstairs Bathroom,Walls,Painting
+Downstairs Toilet (if applicable),Ceiling,Painting
+Downstairs Toilet (if applicable),Doors,Doors
+Downstairs Toilet (if applicable),Exhaust Fan,Electrical
+Downstairs Toilet (if applicable),Light Fixtures,Electrical
+Downstairs Toilet (if applicable),Sink,Plumbing
+Downstairs Toilet (if applicable),Skirting,Carpentry & Joinery
+Downstairs Toilet (if applicable),Tiles,Flooring - Tiles
+Downstairs Toilet (if applicable),Toilet,Plumbing
+Downstairs Toilet (if applicable),Walls,Painting
+Kitchen Area,Cabinets,Carpentry & Joinery
+Kitchen Area,Ceiling,Painting
+Kitchen Area,Dishwasher,Plumbing
+Kitchen Area,Dishwasher (if applicable),Plumbing
+Kitchen Area,Flooring,Flooring - Timber
+Kitchen Area,GPO,Electrical
+Kitchen Area,Kitchen Sink,Plumbing
+Kitchen Area,Kitchen Table Tops,Carpentry & Joinery
+Kitchen Area,Light Fixtures,Electrical
+Kitchen Area,Rangehood,Appliances
+Kitchen Area,Splashbacks,Painting
+Kitchen Area,Stovetop and Oven,Appliances
+Laundry Room,Cold/Hot Water Outlets,Plumbing
+Laundry Room,Doors,Doors
+Laundry Room,Drainage,Plumbing
+Laundry Room,Exhaust Fan,Electrical
+Laundry Room,GPO,Electrical
+Laundry Room,Laundry Sink,Plumbing
+Laundry Room,Light Fixtures,Electrical
+Laundry Room,Skirting,Carpentry & Joinery
+Laundry Room,Tiles,Flooring - Tiles
+Laundry Room,Walls,Painting
+Laundry Room,Windows (if applicable),Windows
+Laundry Section,Cold/Hot Water Outlets,Plumbing
+Laundry Section,Doors,Doors
+Laundry Section,Drainage,Plumbing
+Laundry Section,Exhaust Fan,Electrical
+Laundry Section,GPO,Electrical
+Laundry Section,Laundry Sink,Plumbing
+Laundry Section,Light Fixtures,Electrical
+Laundry Section,Skirting,Carpentry & Joinery
+Laundry Section,Tiles,Flooring - Tiles
+Laundry Section,Walls,Painting
+Staircase,Ceiling,Painting
+Staircase,Light Fixtures,Electrical
+Staircase,Railing (if applicable),Carpentry & Joinery
+Staircase,Skirting,Carpentry & Joinery
+Staircase,Staircase,Carpentry & Joinery
+Staircase,Walls,Painting
+Study Area (if applicable),Desk,Carpentry & Joinery
+Study Area (if applicable),GPO,Electrical
+Study Area (if applicable),Light Fixtures,Electrical
+Study Area (if applicable),Skirting,Carpentry & Joinery
+Study Area (if applicable),Walls,Painting
+Upstair Corridor,Ceiling,Painting
+Upstair Corridor,Flooring,Flooring - Timber
+Upstair Corridor,Light Fixtures,Electrical
+Upstair Corridor,Skirting,Carpentry & Joinery
+Upstair Corridor,Walls,Painting
+Upstairs Bathroom,Bathtub (if applicable),Plumbing
+Upstairs Bathroom,Ceiling,Painting
+Upstairs Bathroom,Doors,Doors
+Upstairs Bathroom,Exhaust Fan,Electrical
+Upstairs Bathroom,GPO,Electrical
+Upstairs Bathroom,Light Fixtures,Electrical
+Upstairs Bathroom,Mirror,Carpentry & Joinery
+Upstairs Bathroom,Shower,Plumbing
+Upstairs Bathroom,Sink,Plumbing
+Upstairs Bathroom,Skirting,Carpentry & Joinery
+Upstairs Bathroom,Tiles,Flooring - Tiles
+Upstairs Bathroom,Toilet,Plumbing
+Upstairs Bathroom,Walls,Painting
