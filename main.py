@@ -80,7 +80,11 @@ def init_database():
     
     # Database exists - apply migrations to ensure schema is up-to-date
     logger.info("Database exists - checking for schema updates")
-    migration_success = _apply_schema_migrations(db_manager)
+    migration_success, update_count = _apply_schema_migrations(db_manager)
+    
+    # Show toast notification outside of cached function
+    if update_count > 0:
+        st.toast(f"✅ Applied {update_count} database updates", icon="🔧")
     
     if not migration_success:
         st.warning("⚠️ Schema migration failed - attempting database recreation")
@@ -216,19 +220,19 @@ def _apply_schema_migrations(db_manager: DatabaseManager) -> bool:
             logger.info(f"Applied {len(updates_applied)} schema updates:")
             for update in updates_applied:
                 logger.info(f"  - {update}")
-            
-            # Show toast notification in Streamlit
-            st.toast(f"✅ Applied {len(updates_applied)} database updates", icon="🔧")
+            # Return info about updates (don't use st.toast in cached function)
+            return True, len(updates_applied)
         else:
             logger.info("✓ Database schema is up-to-date")
+            return True, 0
         
-        return True
+        return True, 0
         
     except Exception as e:
         logger.error(f"Schema migration failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return False
+        return False, 0
 
 
 def simple_authenticate(username: str, password: str) -> dict:
