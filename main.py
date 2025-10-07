@@ -73,9 +73,10 @@ def init_database():
     db_exists = os.path.exists("building_inspection.db")
     
     if not db_exists:
-        # First time - create everything fresh
+        # First time - create everything fresh WITHOUT seed data
         logger.info("Database doesn't exist - creating fresh")
-        db_manager.initialize_database(force_recreate=False)
+        from database.setup import setup_database
+        setup_database(seed_test_data=False)  # Changed to False - no test buildings
         return db_manager
     
     # Database exists - apply migrations to ensure schema is up-to-date
