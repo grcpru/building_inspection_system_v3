@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 import hashlib
+from typing import Tuple
 
 try:
     from database.setup import DatabaseManager
@@ -65,10 +66,11 @@ class AdminInterface:
         """, unsafe_allow_html=True)
         
         # Navigation tabs
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "👥 User Management",
             "🗺️ Trade Mapping",
             "💾 Database",
+            "🗑️ Cleanup",
             "⚙️ Settings",
             "📋 Audit Trail"
         ])
@@ -83,9 +85,12 @@ class AdminInterface:
             self._show_database_management()
         
         with tab4:
-            self._show_system_settings()
-        
+            self._show_database_cleanup()
+
         with tab5:
+            self._show_system_settings()
+
+        with tab6:
             self._show_audit_trail()
     
     # ========================================================================
@@ -993,6 +998,252 @@ class AdminInterface:
         # Existing backups
         st.markdown("#### Existing Backups")
         self._show_existing_backups()
+    
+    """
+    Add Database Cleanup Section to Admin Interface
+    ================================================
+    This code integrates directly into the existing admin.py file.
+    """
+
+    # Add this method to the AdminInterface class (around line 800, after _show_database_management)
+
+    def _show_database_cleanup(self):
+        """Database cleanup section for removing seed data"""
+        
+        st.markdown("### 🗑️ Database Cleanup")
+        st.markdown("Remove test/seed data from the database")
+        
+        with st.expander("View Current Buildings", expanded=False):
+            try:
+                import pandas as pd
+                conn = sqlite3.connect(self.db_path)
+                
+                buildings_df = pd.read_sql_query("""
+                    SELECT 
+                        b.name as Building,
+                        b.address as Address,
+                        COUNT(DISTINCT i.id) as Inspections,
+                        b.total_defects as Defects,
+                        b.created_at as Created
+                    FROM inspector_buildings b
+                    LEFT JOIN inspector_inspections i ON b.id = i.building_id
+                    GROUP BY b.id
+                    ORDER BY b.created_at DESC
+                """, conn)
+                
+                conn.close()
+                
+                if not buildings_df.empty:
+                    st.dataframe(buildings_df, use_container_width=True)
+                else:
+                    st.info("No buildings in database")
+                    
+            except Exception as e:
+                st.error(f"Error loading buildings: {e}")
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Remove Seed Data")
+            st.markdown("Removes test buildings:")
+            st.markdown("- Harbour Views Apartments")
+            st.markdown("- City Central Complex")
+            st.markdown("- Test Building - Schema Verification")
+            
+            if st.button("🗑️ Remove Seed Data", type="secondary", use_container_width=True):
+                with st.spinner("Removing seed data..."):
+                    success, message = self._remove_seed_data()
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+        
+        with col2:
+            st.markdown("#### Clear All Data")
+            st.warning("⚠️ This will delete ALL buildings and inspections")
+            
+            confirm_clear = st.checkbox("I understand this will delete everything")
+            
+            if st.button("🔥 Clear All Data", type="primary", disabled=not confirm_clear, use_container_width=True):
+                with st.spinner("Clearing all data..."):
+                    success, message = self._clear_all_data()
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+
+
+    def _remove_seed_data(self) -> Tuple[bool, str]:
+        """Remove seed/test data from database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get seed building IDs
+            cursor.execute("""
+                SELECT id, name FROM inspector_buildings
+                WHERE name IN (
+                    'Harbour Views Apartments',
+                    'City Central Complex',
+                    'Test Building - Schema Verification'
+                )
+            """)
+            
+            seed_buildings = cursor.fetchall()
+            
+            if not seed_buildings:
+                conn.close()
+                return True, "✓ No seed data found - database is already clean"
+            
+            # Start transaction
+            cursor.execute("BEGIN TRANSACTION")
+            
+            removed_count = 0
+            
+            # Delete in correct order (respecting foreign keys)
+            for building_id, name in seed_buildings:
+                
+                # Get inspection IDs for this building
+                cursor.execute("""
+                    SELECT id FROM inspector_inspections
+                    WHERE building_id = ?
+                """, (building_id,))
+                
+                inspection_ids = [row[0] for row in cursor.fetchall()]
+                
+                # Delete work orders
+                for inspection_id in inspection_ids:
+                    cursor.execute("""
+                        DELETE FROM inspector_work_orders
+                        WHERE inspection_id = ?
+                    """, (inspection_id,))
+                
+                # Delete inspection items
+                for inspection_id in inspection_ids:
+                    cursor.execute("""
+                        DELETE FROM inspector_inspection_items
+                        WHERE inspection_id = ?
+                    """, (inspection_id,))
+                
+                # Delete unit inspections (if table exists)
+                try:
+                    for inspection_id in inspection_ids:
+                        cursor.execute("""
+                            DELETE FROM inspector_unit_inspections
+                            WHERE inspection_id = ?
+                        """, (inspection_id,))
+                except:
+                    pass  # Table might not exist
+                
+                # Delete metrics summary (if table exists)
+                try:
+                    for inspection_id in inspection_ids:
+                        cursor.execute("""
+                            DELETE FROM inspector_metrics_summary
+                            WHERE inspection_id = ?
+                        """, (inspection_id,))
+                except:
+                    pass  # Table might not exist
+                
+                # Delete inspections
+                cursor.execute("""
+                    DELETE FROM inspector_inspections
+                    WHERE building_id = ?
+                """, (building_id,))
+                
+                # Delete project progress (if table exists)
+                try:
+                    cursor.execute("""
+                        DELETE FROM inspector_project_progress
+                        WHERE building_id = ?
+                    """, (building_id,))
+                except:
+                    pass  # Table might not exist
+                
+                # Delete building
+                cursor.execute("""
+                    DELETE FROM inspector_buildings
+                    WHERE id = ?
+                """, (building_id,))
+                
+                removed_count += 1
+            
+            # Clean up CSV processing log for test files
+            try:
+                cursor.execute("""
+                    DELETE FROM inspector_csv_processing_log
+                    WHERE building_name IN (
+                        'Harbour Views Apartments',
+                        'City Central Complex',
+                        'Test Building - Schema Verification'
+                    )
+                """)
+            except:
+                pass  # Table might not exist
+            
+            # Commit changes
+            conn.commit()
+            conn.close()
+            
+            return True, f"✅ Removed {removed_count} seed buildings successfully"
+            
+        except Exception as e:
+            try:
+                conn.rollback()
+                conn.close()
+            except:
+                pass
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Error removing seed data: {e}\n{error_details}")
+            return False, f"❌ Error removing seed data: {str(e)}"
+
+
+    def _clear_all_data(self) -> Tuple[bool, str]:
+        """Clear all inspection data from database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("BEGIN TRANSACTION")
+            
+            # Delete in order respecting foreign keys
+            tables_to_clear = [
+                'inspector_work_orders',
+                'inspector_metrics_summary',
+                'inspector_inspection_items',
+                'inspector_unit_inspections',
+                'inspector_project_progress',
+                'inspector_inspections',
+                'inspector_buildings',
+                'inspector_csv_processing_log'
+            ]
+            
+            cleared_count = 0
+            for table in tables_to_clear:
+                try:
+                    cursor.execute(f"DELETE FROM {table}")
+                    cleared_count += 1
+                except Exception as e:
+                    logger.warning(f"Could not clear {table}: {e}")
+            
+            conn.commit()
+            conn.close()
+            
+            return True, f"✅ Cleared {cleared_count} tables successfully"
+            
+        except Exception as e:
+            try:
+                conn.rollback()
+                conn.close()
+            except:
+                pass
+            logger.error(f"Error clearing data: {e}")
+            return False, f"❌ Error clearing data: {str(e)}"
     
     def _create_backup(self, backup_name: Optional[str], include_files: bool) -> Optional[str]:
         """Create database backup"""
