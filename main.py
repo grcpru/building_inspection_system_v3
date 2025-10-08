@@ -58,47 +58,52 @@ def load_system_settings() -> dict:
         'min_quality_score': 70
     }
 
-
-# ✅ Pure, cache-safe resource factory (NO st.* calls here)
+# ✅ 1. Pure, cache-safe database resource (NO Streamlit UI calls)
 @st.cache_resource(show_spinner=False)
 def get_db_manager():
     """
-    Create (or open) the database and ensure it exists.
-    No UI calls here to keep cache replay safe.
+    Create or open the database and ensure schema exists.
+    Absolutely NO st.* calls inside (cache-safe).
     """
     db_manager = DatabaseManager("building_inspection.db")
 
-    # Ensure database exists; setup_database logs via logger (not st.*)
+    # Ensure database exists; setup_database logs via logger (not Streamlit UI)
     if not os.path.exists(db_manager.db_path):
-        logger.info("Database doesn't exist - creating fresh")
-        setup_database(db_path=db_manager.db_path, force_recreate=False, seed_test_data=False)
+        logger.info("Database doesn't exist - creating fresh.")
+        setup_database(
+            db_path=db_manager.db_path,
+            force_recreate=False,
+            seed_test_data=False
+        )
     else:
         # Open a connection so downstream code can use it immediately
         db_manager.connect()
+        logger.info(f"Connected to DB: {db_manager.db_path}")
 
     return db_manager
 
 
+# ✅ 2. Wrapper with Streamlit UI feedback (safe outside of cache)
 def init_database_with_ui():
     """
-    Wrapper that does UI work (toasts/warnings, session_state)
-    OUTSIDE of the cached function.
+    Wrapper that adds UI messages safely outside of the cached function.
+    This is what you call from main().
     """
     db_manager = get_db_manager()
 
-    # run schema checks/migrations (no st.* inside _apply_schema_migrations)
+    # Run schema checks/migrations (no st.* inside _apply_schema_migrations)
     migration_success, update_count = _apply_schema_migrations(db_manager)
 
-    # UI feedback is safe here
+    # Show results safely (outside cached function)
     if update_count > 0:
         st.toast(f"✅ Applied {update_count} database updates", icon="🔧")
 
     if not migration_success:
-        st.warning("⚠️ Schema migration failed - attempting database recreation")
-        logger.warning("Migration failed - recreating database")
+        st.warning("⚠️ Schema migration failed - attempting database recreation.")
+        logger.warning("Migration failed — recreating database.")
         db_manager.initialize_database(force_recreate=True)
 
-    # store the shared instance for other modules
+    # Save instance for reuse (safe now)
     st.session_state["db_manager"] = db_manager
     return db_manager
   
