@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 import os
 import uuid
+from io import BytesIO
 
 try:
     from database.setup import DatabaseManager
@@ -53,6 +54,9 @@ class BuilderInterface:
         if not building_id:
             st.info("Please select a building")
             return
+        
+        # ⭐ ADD THIS LINE ⭐
+        self._show_download_section()
         
         # Get all work orders once
         all_orders = self._get_orders(building_id)
@@ -175,7 +179,7 @@ class BuilderInterface:
             self._show_list(waiting, 'waiting_approval', building_id)
         elif st.session_state.b_active_tab == 'approved':
             self._show_list(approved, 'approved', building_id)
-    
+       
     def _show_rejected_list(self, orders, building_id):
         """Show rejected work orders list - SPECIAL HANDLING"""
         
@@ -1013,7 +1017,293 @@ class BuilderInterface:
         except Exception as e:
             logger.error(f"File display error: {e}")
 
+    # ============================================================================
+    # DOWNLOAD SECTION - COPY FROM HERE
+    # ============================================================================
 
+    def _show_download_section(self):
+        """Download reports section - WORKING VERSION"""
+        
+        if not st.session_state.b_building:
+            return
+        
+        st.markdown("### 📥 Export Reports")
+        st.caption("Download work lists and reports for offline use")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        # DAILY WORK LIST
+        with col1:
+            with st.spinner(""):
+                excel_data = self._generate_daily_work_list(st.session_state.b_building)
+            
+            if excel_data:
+                st.download_button(
+                    "📋 Daily Work List",
+                    data=excel_data,
+                    file_name=f"daily_worklist_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    type="primary"
+                )
+            else:
+                st.button("📋 Daily Work List", disabled=True, use_container_width=True, 
+                        help="No pending/active items")
+        
+        # REJECTED ITEMS
+        with col2:
+            with st.spinner(""):
+                excel_data = self._generate_rejected_report(st.session_state.b_building)
+            
+            if excel_data:
+                st.download_button(
+                    "⚠️ Rejected Items",
+                    data=excel_data,
+                    file_name=f"rejected_items_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.button("⚠️ Rejected Items", disabled=True, use_container_width=True,
+                        help="No rejected items")
+        
+        # COMPLETION PACKAGE
+        with col3:
+            with st.spinner(""):
+                excel_data = self._generate_completion_package(st.session_state.b_building)
+            
+            if excel_data:
+                st.download_button(
+                    "✅ Completion Package",
+                    data=excel_data,
+                    file_name=f"completion_package_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.button("✅ Completion Package", disabled=True, use_container_width=True,
+                        help="No items awaiting approval")
+        
+        # PERFORMANCE REPORT
+        with col4:
+            with st.spinner(""):
+                excel_data = self._generate_performance_report(st.session_state.b_building)
+            
+            if excel_data:
+                st.download_button(
+                    "📊 My Performance",
+                    data=excel_data,
+                    file_name=f"performance_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.button("📊 My Performance", disabled=True, use_container_width=True,
+                        help="No data available")
+        
+        st.markdown("---")
+
+    def _generate_daily_work_list(self, building_id):
+        """Generate Excel daily work list"""
+        try:
+            conn = self.db.connect()
+            
+            work_df = pd.read_sql_query("""
+                SELECT 
+                    wo.unit, wo.room, wo.component, wo.trade, wo.urgency,
+                    wo.status, wo.planned_date, wo.notes, b.name as building_name
+                FROM inspector_work_orders wo
+                JOIN inspector_inspections i ON wo.inspection_id = i.id
+                JOIN inspector_buildings b ON i.building_id = b.id
+                WHERE i.building_id = ?
+                AND wo.status IN ('pending', 'in_progress')
+                AND (wo.builder_notes NOT LIKE '%REJECTED%' OR wo.builder_notes IS NULL)
+                ORDER BY 
+                    CASE wo.urgency WHEN 'Urgent' THEN 1 WHEN 'High Priority' THEN 2 ELSE 3 END,
+                    wo.unit
+            """, conn, params=[building_id])
+            
+            if work_df.empty:
+                return None
+            
+            output = BytesIO()
+            
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # Summary sheet
+                summary_data = {
+                    'Report': ['Builder Daily Work List'],
+                    'Building': [work_df['building_name'].iloc[0]],
+                    'Builder': [self.user_info.get('name', 'Builder')],
+                    'Date': [datetime.now().strftime('%d/%m/%Y %H:%M')],
+                    'Total Items': [len(work_df)],
+                    'Urgent': [len(work_df[work_df['urgency'] == 'Urgent'])],
+                    'High Priority': [len(work_df[work_df['urgency'] == 'High Priority'])],
+                    'Normal': [len(work_df[work_df['urgency'] == 'Normal'])]
+                }
+                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+                
+                # Urgent items
+                urgent = work_df[work_df['urgency'] == 'Urgent']
+                if not urgent.empty:
+                    urgent[['unit', 'room', 'component', 'trade', 'status', 'planned_date']].to_excel(
+                        writer, sheet_name='URGENT', index=False
+                    )
+                
+                # All items
+                work_df[['unit', 'room', 'component', 'trade', 'urgency', 'status', 'planned_date']].to_excel(
+                    writer, sheet_name='All Items', index=False
+                )
+            
+            output.seek(0)
+            return output.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error generating work list: {e}")
+            st.error(f"Failed to generate: {e}")
+            return None
+
+
+    def _generate_rejected_report(self, building_id):
+        """Generate rejected items report"""
+        try:
+            conn = self.db.connect()
+            
+            rejected_df = pd.read_sql_query("""
+                SELECT 
+                    wo.unit, wo.room, wo.component, wo.trade, wo.urgency,
+                    wo.builder_notes, b.name as building_name
+                FROM inspector_work_orders wo
+                JOIN inspector_inspections i ON wo.inspection_id = i.id
+                JOIN inspector_buildings b ON i.building_id = b.id
+                WHERE i.building_id = ?
+                AND wo.status = 'in_progress'
+                AND wo.builder_notes LIKE '%REJECTED%'
+                ORDER BY 
+                    CASE wo.urgency WHEN 'Urgent' THEN 1 WHEN 'High Priority' THEN 2 ELSE 3 END
+            """, conn, params=[building_id])
+            
+            if rejected_df.empty:
+                return None
+            
+            def extract_reason(notes):
+                if pd.isna(notes):
+                    return "No reason"
+                for entry in str(notes).split('\n\n---'):
+                    if 'REJECTED' in entry:
+                        for line in entry.split('\n'):
+                            if line.startswith('Reason:'):
+                                return line.replace('Reason:', '').strip()
+                return "No reason"
+            
+            rejected_df['rejection_reason'] = rejected_df['builder_notes'].apply(extract_reason)
+            
+            output = BytesIO()
+            
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                summary_data = {
+                    'Report': ['Rejected Items Report'],
+                    'Building': [rejected_df['building_name'].iloc[0]],
+                    'Total Rejected': [len(rejected_df)],
+                    'Urgent': [len(rejected_df[rejected_df['urgency'] == 'Urgent'])]
+                }
+                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+                
+                rejected_df[['unit', 'room', 'component', 'trade', 'urgency', 'rejection_reason']].to_excel(
+                    writer, sheet_name='All Rejected', index=False
+                )
+            
+            output.seek(0)
+            return output.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error generating rejected report: {e}")
+            return None
+
+
+    def _generate_completion_package(self, building_id):
+        """Generate completion package"""
+        try:
+            conn = self.db.connect()
+            
+            completion_df = pd.read_sql_query("""
+                SELECT 
+                    wo.unit, wo.room, wo.component, wo.trade, wo.urgency,
+                    wo.completed_date, b.name as building_name
+                FROM inspector_work_orders wo
+                JOIN inspector_inspections i ON wo.inspection_id = i.id
+                JOIN inspector_buildings b ON i.building_id = b.id
+                WHERE i.building_id = ?
+                AND wo.status = 'waiting_approval'
+                ORDER BY wo.completed_date DESC
+            """, conn, params=[building_id])
+            
+            if completion_df.empty:
+                return None
+            
+            output = BytesIO()
+            
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                cover_data = {
+                    'Document': ['BUILDER COMPLETION PACKAGE'],
+                    'Building': [completion_df['building_name'].iloc[0]],
+                    'Builder': [self.user_info.get('name', 'Builder')],
+                    'Date': [datetime.now().strftime('%d/%m/%Y')],
+                    'Items': [len(completion_df)]
+                }
+                pd.DataFrame(cover_data).to_excel(writer, sheet_name='Cover', index=False, header=False)
+                
+                completion_df[['unit', 'room', 'component', 'trade', 'urgency', 'completed_date']].to_excel(
+                    writer, sheet_name='Summary', index=False
+                )
+            
+            output.seek(0)
+            return output.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error generating completion package: {e}")
+            return None
+
+
+    def _generate_performance_report(self, building_id):
+        """Generate performance report"""
+        try:
+            conn = self.db.connect()
+            
+            perf_df = pd.read_sql_query("""
+                SELECT 
+                    wo.status, wo.builder_notes, b.name as building_name
+                FROM inspector_work_orders wo
+                JOIN inspector_inspections i ON wo.inspection_id = i.id
+                JOIN inspector_buildings b ON i.building_id = b.id
+                WHERE i.building_id = ?
+            """, conn, params=[building_id])
+            
+            if perf_df.empty:
+                return None
+            
+            total = len(perf_df)
+            approved = len(perf_df[perf_df['status'] == 'approved'])
+            rejected = len(perf_df[perf_df['builder_notes'].str.contains('REJECTED', na=False)])
+            
+            approval_rate = (approved / total * 100) if total > 0 else 0
+            rejection_rate = (rejected / total * 100) if total > 0 else 0
+            
+            output = BytesIO()
+            
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                summary_data = {
+                    'Metric': ['Total Items', 'Approved', 'Rejected', 'Approval Rate', 'Rejection Rate'],
+                    'Value': [total, approved, rejected, f'{approval_rate:.1f}%', f'{rejection_rate:.1f}%']
+                }
+                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+            
+            output.seek(0)
+            return output.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error generating performance report: {e}")
+            return None
+    
 def render_builder_interface(user_info=None, auth_manager=None):
     """Entry point"""
     if 'builder_int' not in st.session_state:

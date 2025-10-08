@@ -1274,57 +1274,97 @@ class InspectorInterface:
             return None
         
     def _process_with_hash(self, uploaded_csv, file_hash):
-        """Process inspection with file hash for duplicate tracking"""
-        
+        """Process inspection with file hash for duplicate tracking and ensure persistence."""
+
         try:
+            # --- Load CSV (with a safe fallback encoding) ---
             uploaded_csv.seek(0)
-            df = pd.read_csv(uploaded_csv)
-            original_filename = uploaded_csv.name
-            
-            user_info = st.session_state.get('user_info', {})
-            inspector_name = user_info.get('name', 'Inspector')
-            
+            try:
+                df = pd.read_csv(uploaded_csv)
+            except UnicodeDecodeError:
+                uploaded_csv.seek(0)
+                df = pd.read_csv(uploaded_csv, encoding="utf-8", errors="ignore")
+
+            original_filename = getattr(uploaded_csv, "name", "uploaded.csv")
+
+            # --- Context (inspector/building) ---
+            user_info = st.session_state.get("user_info", {}) or {}
+            inspector_name = user_info.get("name") or "Inspector"
+
             building_info = {
                 "name": "Building Complex",
                 "address": "Address not specified",
-                "date": datetime.now().strftime("%Y-%m-%d")
+                "date": datetime.now().strftime("%Y-%m-%d"),
             }
-            
+
+            trade_mapping = st.session_state.get("trade_mapping")
+
             with st.spinner("Processing..."):
+                # Run your processor (expected to return: df, metrics, inspection_id_or_None)
                 result = self.processor.process_inspection_data(
-                    df, st.session_state.trade_mapping, building_info, 
-                    inspector_name, original_filename, file_hash  # Pass hash
+                    df,
+                    trade_mapping,
+                    building_info,
+                    inspector_name,
+                    original_filename,
+                    file_hash,   # keep duplicate tracking
                 )
-                
-                if result and len(result) == 3:
-                    processed_df, metrics, inspection_id = result
-                    
-                    self.processed_data = processed_df
-                    self.metrics = metrics
-                    self.current_inspection_id = inspection_id
-                    
-                    st.success("Data processed successfully!")
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Total Units", metrics['total_units'])
-                    with col2:
-                        st.metric("Total Defects", metrics['total_defects'])
-                    with col3:
-                        st.metric("Ready Units", metrics['ready_units'])
-                    with col4:
-                        st.metric("Quality Score", f"{max(0, 100 - metrics['defect_rate']):.1f}/100")
-                    
-                    if inspection_id:
-                        st.info(f"Database ID: {inspection_id[:12]}... (saved)")
-                    
-                    st.rerun()
-                else:
-                    st.error("Processing failed")
-                    
+
+                if not (isinstance(result, tuple) and len(result) == 3):
+                    st.error("Processing failed (unexpected processor return).")
+                    return
+
+                processed_df, metrics, inspection_id = result
+
+                # --- Fallback save: if processor didn't persist, do it here ---
+                if not inspection_id and getattr(self, "db_manager", None):
+                    try:
+                        inspection_id = self.db_manager.save_inspector_data(
+                            processed_df, metrics, inspector_name, original_filename
+                        )
+                        if inspection_id:
+                            st.info(f"📊 Saved to database (fallback) – ID: {inspection_id[:12]}...")
+                        else:
+                            st.warning("Processed but not saved (no ID returned).")
+                    except Exception as db_err:
+                        st.error(f"DB save failed: {db_err}")
+
+                # --- Update UI state ---
+                self.processed_data = processed_df
+                self.metrics = metrics or {}
+                self.current_inspection_id = inspection_id
+
+                st.success("Data processed successfully!")
+
+                # Metrics (safe defaults)
+                m_total_units   = int(self.metrics.get("total_units", 0))
+                m_total_defects = int(self.metrics.get("total_defects", 0))
+                m_ready_units   = int(self.metrics.get("ready_units", 0))
+                defect_rate     = float(self.metrics.get("defect_rate", 0.0))
+                quality_score   = max(0.0, 100.0 - defect_rate)
+
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Units", m_total_units)
+                with col2:
+                    st.metric("Total Defects", m_total_defects)
+                with col3:
+                    st.metric("Ready Units", m_ready_units)
+                with col4:
+                    st.metric("Quality Score", f"{quality_score:.1f}/100")
+
+                # Show DB ID & (optionally) DB path if available — very helpful on cloud
+                if inspection_id:
+                    st.info(f"Database ID: {inspection_id[:12]}... (saved)")
+                if getattr(self, "db_manager", None) and getattr(self.db_manager, "db_path", None):
+                    st.caption(f"DB path: {self.db_manager.db_path}")
+
+                # Rerun to refresh any dependent views/lists
+                st.rerun()
+
         except Exception as e:
             st.error(f"Error: {e}")
-            
+           
     def _show_data_processing_section(self):
         """Data processing section with duplicate detection"""
         st.markdown("---")
@@ -1433,75 +1473,103 @@ class InspectorInterface:
                 st.error(f"Error: {e}")
 
     def _process_inspection_data_simplified(self, uploaded_csv):
-        """Simplified processing without unnecessary user input"""
-        
+        """Simplified processing without extra input, with guaranteed persistence fallback."""
         try:
+            # --- Read CSV robustly ---
             uploaded_csv.seek(0)
-            df = pd.read_csv(uploaded_csv)
-            original_filename = getattr(uploaded_csv, 'name', 'uploaded_file.csv')
-            
-            # Calculate file hash
+            try:
+                df = pd.read_csv(uploaded_csv)
+            except UnicodeDecodeError:
+                uploaded_csv.seek(0)
+                df = pd.read_csv(uploaded_csv, encoding="utf-8", errors="ignore")
+
+            original_filename = getattr(uploaded_csv, "name", "uploaded_file.csv")
+
+            # --- Compute file hash (for duplicate tracking) ---
             uploaded_csv.seek(0)
             file_bytes = uploaded_csv.read()
             file_hash = hashlib.md5(file_bytes).hexdigest()
             uploaded_csv.seek(0)
-            
-            # Get inspector info
-            user_info = st.session_state.get('user_info', {})
-            inspector_name = user_info.get('name', 'Inspector')
-            
+
+            # --- Context (inspector & building) ---
+            user_info = st.session_state.get("user_info", {}) or {}
+            inspector_name = user_info.get("name") or "Inspector"
+
             building_info = {
                 "name": "Building Complex",
                 "address": "Address not specified",
-                "date": datetime.now().strftime("%Y-%m-%d")
+                "date": datetime.now().strftime("%Y-%m-%d"),
             }
-            
+
+            trade_mapping = st.session_state.get("trade_mapping")
+
             with st.spinner("Processing inspection data..."):
+                # Expect (processed_df, metrics, inspection_id | None)
                 result = self.processor.process_inspection_data(
-                    df, st.session_state.trade_mapping, building_info, 
-                    inspector_name, original_filename, file_hash
+                    df, trade_mapping, building_info, inspector_name, original_filename, file_hash
                 )
-                
-                if result is None or not isinstance(result, tuple) or len(result) != 3:
-                    st.error("Processing failed")
+
+                if not (isinstance(result, tuple) and len(result) == 3):
+                    st.error("Processing failed (unexpected processor return).")
                     return
-                
+
                 processed_df, metrics, inspection_id = result
-                
-                # Update state
+
+                # --- Fallback DB save if processor didn't persist ---
+                if not inspection_id and getattr(self, "db_manager", None):
+                    try:
+                        inspection_id = self.db_manager.save_inspector_data(
+                            processed_df, metrics, inspector_name, original_filename
+                        )
+                        if inspection_id:
+                            st.info(f"📊 Saved to database (fallback) – ID: {inspection_id[:12]}...")
+                        else:
+                            st.warning("Processed but not saved (no ID returned).")
+                    except Exception as db_err:
+                        st.error(f"DB save failed: {db_err}")
+
+                # --- Update state ---
                 self.processed_data = processed_df
-                self.metrics = metrics
+                self.metrics = metrics or {}
                 self.current_inspection_id = inspection_id
-                
-                # Show success
+
                 st.success("✅ Data processed successfully!")
-                
-                # Show metrics
+
+                # --- Safe metrics render (avoid KeyError/TypeError) ---
+                m_total_units   = int(self.metrics.get("total_units", 0) or 0)
+                m_total_defects = int(self.metrics.get("total_defects", 0) or 0)
+                m_ready_units   = int(self.metrics.get("ready_units", 0) or 0)
+                defect_rate     = float(self.metrics.get("defect_rate", 0.0) or 0.0)
+                quality_score   = max(0.0, 100.0 - defect_rate)
+
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Total Units", metrics['total_units'])
+                    st.metric("Total Units", m_total_units)
                 with col2:
-                    st.metric("Total Defects", metrics['total_defects'])
+                    st.metric("Total Defects", m_total_defects)
                 with col3:
-                    st.metric("Ready Units", metrics['ready_units'])
+                    st.metric("Ready Units", m_ready_units)
                 with col4:
-                    st.metric("Quality Score", f"{max(0, 100 - metrics['defect_rate']):.1f}/100")
-                
+                    st.metric("Quality Score", f"{quality_score:.1f}/100")
+
                 if inspection_id:
-                    st.info(f"📊 Saved - ID: {inspection_id[:12]}...")
-                
-                # Clear the file uploader to prevent duplicate warning on rerun
-                if 'csv_uploader' in st.session_state:
-                    del st.session_state['csv_uploader']
-                
-                # Small delay before rerun to show success message
+                    st.info(f"📊 Saved – ID: {inspection_id[:12]}...")
+                if getattr(self, "db_manager", None) and getattr(self.db_manager, "db_path", None):
+                    st.caption(f"DB path: {self.db_manager.db_path}")
+
+                # Clear uploader to avoid duplicate warning on rerun
+                if "csv_uploader" in st.session_state:
+                    del st.session_state["csv_uploader"]
+
+                # Brief pause so success/info is visible before refresh
                 import time
-                time.sleep(1)
-                
+                time.sleep(0.8)
+
                 st.rerun()
-                        
+
         except Exception as e:
             st.error(f"❌ Error: {e}")
+
 
     # Optional: Admin-only processing log viewer
     def _show_admin_processing_log(self):

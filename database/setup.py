@@ -20,31 +20,37 @@ import uuid
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def _resolve_db_path(db_path: str | None) -> str:
+    # Allow override via env (works great on Streamlit Cloud)
+    env_path = os.environ.get("INSPECTION_DB_PATH") or os.environ.get("DB_PATH")
+    final = env_path or db_path or "building_inspection.db"
+    p = Path(final).expanduser().resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)  # ensure folder exists
+    return str(p)
+
 class DatabaseManager:
     """Enhanced database management system with Inspector integration"""
     
     def __init__(self, db_path: str = "building_inspection.db"):
-        self.db_path = db_path
+        self.db_path = _resolve_db_path(db_path)
         self.migrations_dir = Path("migrations")
         self.migrations_dir.mkdir(exist_ok=True)
         self.connection = None
         
     def connect(self) -> sqlite3.Connection:
-        """Establish database connection with optimizations"""
         if not self.connection:
             self.connection = sqlite3.connect(
                 self.db_path,
                 check_same_thread=False,
-                timeout=30.0
+                timeout=30.0,
+                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
             )
-            # Enable foreign keys and optimize settings
             self.connection.execute("PRAGMA foreign_keys = ON")
             self.connection.execute("PRAGMA journal_mode = WAL")
             self.connection.execute("PRAGMA synchronous = NORMAL")
-            self.connection.execute("PRAGMA cache_size = 10000")
-            self.connection.execute("PRAGMA temp_store = MEMORY")
-        
+            logger.info(f"🗄️ SQLite connected to: {self.db_path}")
         return self.connection
+
     
     def initialize_database(self, force_recreate: bool = False):
         """Initialize database with complete schema including Inspector integration"""

@@ -92,7 +92,8 @@ def init_database():
         logger.warning("Migration failed - recreating database")
         db_manager.initialize_database(force_recreate=True)
     
-    return db_manager
+    st.session_state["db_manager"] = db_manager
+    return db_manager   
 
 
 def _apply_schema_migrations(db_manager: DatabaseManager) -> bool:
@@ -437,10 +438,12 @@ def render_inspection_reports(user_info: dict, auth_manager):
         """, unsafe_allow_html=True)
         
         # Initialize inspector interface for data access
-        if 'inspection_viewer' not in st.session_state:
+        if "inspection_viewer" not in st.session_state:
             st.session_state.inspection_viewer = InspectorInterface(user_info=user_info)
-        
+
         inspector = st.session_state.inspection_viewer
+        if getattr(inspector, "db_manager", None) is None and "db_manager" in st.session_state:
+            inspector.db_manager = st.session_state["db_manager"]
         
         # Get inspection history
         try:
