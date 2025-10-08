@@ -98,7 +98,7 @@ class DatabaseManager:
                 ready_units INTEGER DEFAULT 0,
                 ready_pct REAL DEFAULT 0.0,
                 quality_score REAL DEFAULT 0.0,
-                unit_types TEXT, -- JSON array of unit types
+                unit_types TEXT,
                 status TEXT DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -106,7 +106,7 @@ class DatabaseManager:
             )
         """)
         
-        # Inspector inspection records (separate from main inspections for processed CSV data)
+        # Inspector inspection records
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inspector_inspections (
                 id TEXT PRIMARY KEY,
@@ -122,7 +122,7 @@ class DatabaseManager:
                 high_priority_defects INTEGER DEFAULT 0,
                 avg_defects_per_unit REAL DEFAULT 0.0,
                 original_filename TEXT,
-                processing_metadata TEXT, -- JSON
+                processing_metadata TEXT,
                 status TEXT DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -137,13 +137,15 @@ class DatabaseManager:
                 inspection_id TEXT NOT NULL,
                 unit TEXT NOT NULL,
                 unit_type TEXT,
+                inspection_date DATE,
                 room TEXT,
                 component TEXT,
                 trade TEXT,
                 status_class TEXT CHECK (status_class IN ('OK', 'Not OK', 'Blank')),
                 urgency TEXT CHECK (urgency IN ('Normal', 'High Priority', 'Urgent')),
                 planned_completion DATE,
-                original_status TEXT, -- Original status from CSV
+                owner_signoff_timestamp TIMESTAMP,
+                original_status TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (inspection_id) REFERENCES inspector_inspections (id)
             )
@@ -173,13 +175,13 @@ class DatabaseManager:
                 room TEXT,
                 urgency TEXT,
                 status TEXT DEFAULT 'pending' CHECK (status IN (
-                    'pending',           -- Initial state
-                    'in_progress',       -- Builder started work
-                    'waiting_approval',  -- Builder completed, awaiting owner approval
-                    'approved',          -- Owner approved
-                    'rejected',          -- Owner rejected
-                    'completed',         -- Finally completed
-                    'cancelled'          -- Work cancelled
+                    'pending',
+                    'in_progress',
+                    'waiting_approval',
+                    'approved',
+                    'rejected',
+                    'completed',
+                    'cancelled'
                 )),
                 assigned_to INTEGER,
                 planned_date DATE,
@@ -198,10 +200,33 @@ class DatabaseManager:
             )
         """)
         
-        # ADDED: Create index for better query performance
+        # Work order files/attachments (photos, documents)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS inspector_work_order_files (
+                id TEXT PRIMARY KEY,
+                work_order_id TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_type TEXT CHECK (file_type IN ('photo', 'document', 'before', 'after', 'other')),
+                file_size INTEGER,
+                mime_type TEXT,
+                description TEXT,
+                uploaded_by INTEGER,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (work_order_id) REFERENCES inspector_work_orders (id) ON DELETE CASCADE,
+                FOREIGN KEY (uploaded_by) REFERENCES users (id)
+            )
+        """)
+        
+        # Indexes for performance
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_work_orders_status_trade 
             ON inspector_work_orders(status, trade)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_work_order_files_work_order 
+            ON inspector_work_order_files(work_order_id)
         """)
         
         logger.info("✅ Inspector integration tables created with CORRECT status values")
@@ -227,7 +252,7 @@ class DatabaseManager:
             )
         """)
         
-        # Inspection metrics summary (for fast dashboard queries)
+        # Inspection metrics summary
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inspector_metrics_summary (
                 id TEXT PRIMARY KEY,
@@ -245,8 +270,10 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS inspector_csv_processing_log (
                 id TEXT PRIMARY KEY,
                 original_filename TEXT NOT NULL,
+                file_checksum TEXT,
                 file_size INTEGER,
-                inspector_id INTEGER NOT NULL,
+                inspector_name TEXT,
+                inspector_id INTEGER,
                 building_name TEXT,
                 total_rows INTEGER DEFAULT 0,
                 processed_rows INTEGER DEFAULT 0,
@@ -255,7 +282,7 @@ class DatabaseManager:
                 processing_time_seconds REAL,
                 status TEXT DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
                 error_message TEXT,
-                inspection_id TEXT, -- Link to created inspection
+                inspection_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 completed_at TIMESTAMP,
                 FOREIGN KEY (inspector_id) REFERENCES users (id),
@@ -937,23 +964,67 @@ class DatabaseManager:
     
     # NEW: Inspector Integration Methods
     def save_inspector_data(self, processed_data: pd.DataFrame, metrics: dict, 
-                       inspector_name: str, original_filename: str = None) -> Optional[str]:
-        """Save with inspection_date and owner_signoff_timestamp"""
+                   inspector_name: str, original_filename: str = None) -> Optional[str]:
+        """
+        Save inspection data with comprehensive error logging and validation
         
-        logger.info("=== STARTING DATABASE SAVE (WITH DATE AND SIGNOFF) ===")
-        logger.info(f"Rows: {len(processed_data)}")
+        Returns:
+            inspection_id if successful, None if failed
+        """
         
-        conn = self.connect()
-        cursor = conn.cursor()
+        logger.info("=" * 80)
+        logger.info("STARTING SAVE_INSPECTOR_DATA")
+        logger.info("=" * 80)
+        logger.info(f"Data rows: {len(processed_data)}")
+        logger.info(f"Inspector: {inspector_name}")
+        logger.info(f"Filename: {original_filename}")
+        
+        # Validate inputs
+        if processed_data is None or len(processed_data) == 0:
+            logger.error("❌ SAVE FAILED: processed_data is empty")
+            return None
+        
+        if not metrics:
+            logger.error("❌ SAVE FAILED: metrics dictionary is empty")
+            return None
+        
+        # Check required columns
+        required_cols = ['Unit', 'UnitType', 'Room', 'Component', 'Trade', 
+                        'StatusClass', 'Urgency', 'PlannedCompletion']
+        missing_cols = [col for col in required_cols if col not in processed_data.columns]
+        
+        if missing_cols:
+            logger.error(f"❌ SAVE FAILED: Missing required columns: {missing_cols}")
+            return None
+        
+        logger.info("✅ Input validation passed")
+        
+        # Get database connection
+        try:
+            conn = self.connect()
+            cursor = conn.cursor()
+            logger.info("✅ Database connection established")
+        except Exception as e:
+            logger.error(f"❌ SAVE FAILED: Cannot connect to database: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+        
+        # Generate IDs
+        building_id = str(uuid.uuid4())
+        inspection_id = str(uuid.uuid4())
+        logger.info(f"✅ Generated IDs - Building: {building_id[:8]}..., Inspection: {inspection_id[:8]}...")
         
         try:
-            building_id = str(uuid.uuid4())
-            inspection_id = str(uuid.uuid4())
-            
+            # Start transaction
             cursor.execute("BEGIN IMMEDIATE TRANSACTION")
+            logger.info("✅ Transaction started")
             
+            # STEP 1: Insert building
             try:
-                # Building record
+                inspection_date = metrics.get('inspection_date', datetime.now().strftime('%Y-%m-%d'))
+                
+                logger.info("Inserting building record...")
                 cursor.execute("""
                     INSERT INTO inspector_buildings (
                         id, name, address, inspection_date, total_units, total_defects, 
@@ -963,7 +1034,7 @@ class DatabaseManager:
                     building_id,
                     str(metrics.get('building_name', 'Unknown')),
                     str(metrics.get('address', '')),
-                    str(metrics.get('inspection_date', datetime.now().strftime('%Y-%m-%d'))),
+                    inspection_date,
                     int(metrics.get('total_units', 0)),
                     int(metrics.get('total_defects', 0)),
                     float(metrics.get('defect_rate', 0.0)),
@@ -973,8 +1044,15 @@ class DatabaseManager:
                     str(metrics.get('unit_types_str', '')),
                     'active'
                 ))
+                logger.info(f"✅ Building record inserted: {metrics.get('building_name')}")
                 
-                # Inspection record
+            except Exception as e:
+                logger.error(f"❌ Building insert failed: {e}")
+                raise
+            
+            # STEP 2: Insert inspection
+            try:
+                logger.info("Inserting inspection record...")
                 cursor.execute("""
                     INSERT INTO inspector_inspections (
                         id, building_id, inspection_date, inspector_name,
@@ -983,8 +1061,9 @@ class DatabaseManager:
                         original_filename, status
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    inspection_id, building_id,
-                    str(metrics.get('inspection_date', datetime.now().strftime('%Y-%m-%d'))),
+                    inspection_id, 
+                    building_id,
+                    inspection_date,
                     str(inspector_name),
                     int(metrics.get('total_units', 0)),
                     int(metrics.get('total_defects', 0)),
@@ -997,77 +1076,43 @@ class DatabaseManager:
                     str(original_filename or 'uploaded.csv'),
                     'active'
                 ))
+                logger.info(f"✅ Inspection record inserted")
                 
-                # Unit inspections with BOTH columns
-                unit_summary = []
-                for unit in processed_data['Unit'].unique():
-                    unit_data = processed_data[processed_data['Unit'] == unit]
-                    
-                    inspection_date = unit_data['InspectionDate'].iloc[0]
-                    signoff = unit_data['OwnerSignoffTimestamp'].iloc[0]
-                    if pd.notna(signoff):
-                        try:
-                            dt = pd.to_datetime(signoff, errors='coerce')
-                            # Store as ISO format which SQLite handles natively
-                            signoff_str = dt.isoformat() if pd.notna(dt) else None
-                        except:
-                            signoff_str = None
-                    else:
-                        signoff_str = None
-                    
-                    unit_summary.append((
-                        str(uuid.uuid4()),
-                        inspection_id,
-                        building_id,
-                        str(unit),
-                        str(unit_data['UnitType'].iloc[0]),
-                        str(inspection_date),
-                        inspector_name,
-                        len(unit_data),
-                        len(unit_data[unit_data['StatusClass'] == 'Not OK']),
-                        signoff_str,
-                        'completed',
-                        datetime.now()
-                    ))
-                
-                cursor.executemany("""
-                    INSERT INTO inspector_unit_inspections (
-                        id, inspection_id, building_id, unit, unit_type, inspection_date,
-                        inspector_name, items_count, defects_count, owner_signoff_timestamp,
-                        status, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, unit_summary)
-                
-                # Inspection items with BOTH columns
-                # Inspection items with BOTH columns
+            except Exception as e:
+                logger.error(f"❌ Inspection insert failed: {e}")
+                raise
+            
+            # STEP 3: Insert inspection items (REMOVED inspector_unit_inspections step)
+            try:
+                logger.info("Inserting inspection items...")
                 items_batch = []
+                
                 for _, row in processed_data.iterrows():
-                    signoff = row.get('OwnerSignoffTimestamp')
+                    # Handle inspection date
+                    inspection_date_val = row.get('InspectionDate', inspection_date)
                     
-                    # FIX: Handle timestamps with microseconds properly
-                    if pd.notna(signoff):
+                    # Handle signoff timestamp
+                    signoff_str = None
+                    if 'OwnerSignoffTimestamp' in row and pd.notna(row['OwnerSignoffTimestamp']):
                         try:
-                            dt = pd.to_datetime(signoff, errors='coerce')
-                            # Store as ISO format (handles microseconds automatically)
+                            dt = pd.to_datetime(row['OwnerSignoffTimestamp'], errors='coerce')
                             signoff_str = dt.isoformat() if pd.notna(dt) else None
                         except:
-                            signoff_str = None
-                    else:
-                        signoff_str = None
+                            pass
                     
                     items_batch.append((
                         str(uuid.uuid4()),
                         inspection_id,
                         str(row.get('Unit', '')),
                         str(row.get('UnitType', '')),
-                        str(row.get('InspectionDate', '')),
+                        str(inspection_date_val),
                         str(row.get('Room', '')),
                         str(row.get('Component', '')),
                         str(row.get('Trade', '')),
                         str(row.get('StatusClass', '')),
                         str(row.get('Urgency', '')),
                         str(row.get('PlannedCompletion', '')),
-                        signoff_str,  # Use the properly formatted timestamp
+                        signoff_str,
                         str(row.get('Status', '')),
                         datetime.now()
                     ))
@@ -1080,16 +1125,33 @@ class DatabaseManager:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, items_batch)
                 
-                conn.commit()
-                logger.info("✓✓✓ SAVE COMPLETE ✓✓✓")
-                return inspection_id
+                logger.info(f"✅ Inserted {len(items_batch)} inspection items")
                 
             except Exception as e:
-                conn.rollback()
+                logger.error(f"❌ Inspection items insert failed: {e}")
                 raise
-                
+            
+            # Commit transaction
+            conn.commit()
+            logger.info("✅ Transaction committed successfully")
+            
+            logger.info("=" * 80)
+            logger.info(f"✅ SAVE COMPLETE - Inspection ID: {inspection_id}")
+            logger.info("=" * 80)
+            
+            return inspection_id
+            
         except Exception as e:
-            logger.error(f"Save failed: {e}")
+            conn.rollback()
+            logger.error("=" * 80)
+            logger.error("❌ SAVE FAILED - Transaction rolled back")
+            logger.error(f"Error: {e}")
+            logger.error("=" * 80)
+            
+            import traceback
+            logger.error("Full traceback:")
+            logger.error(traceback.format_exc())
+            
             return None
         
     def check_save_readiness(self) -> Dict[str, Any]:
@@ -2020,7 +2082,99 @@ class DatabaseSeeder:
         result = cursor.fetchone()
         return result[0] if result else None
 
-
+def migrate_existing_database(db_path: str = "building_inspection.db"):
+    """
+    Migrate existing database to add missing columns
+    Run this once if you have an existing database
+    """
+    import os
+    
+    if not os.path.exists(db_path):
+        logger.info("No existing database found - no migration needed")
+        return
+    
+    logger.info("🔄 Starting database migration...")
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Check if inspector_csv_processing_log exists
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='inspector_csv_processing_log'
+        """)
+        
+        if cursor.fetchone():
+            # Add inspector_name column if missing
+            try:
+                cursor.execute("""
+                    ALTER TABLE inspector_csv_processing_log 
+                    ADD COLUMN inspector_name TEXT
+                """)
+                logger.info("✅ Added inspector_name column")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    logger.info("ℹ️  inspector_name column already exists")
+                else:
+                    raise
+            
+            # Add file_checksum column if missing
+            try:
+                cursor.execute("""
+                    ALTER TABLE inspector_csv_processing_log 
+                    ADD COLUMN file_checksum TEXT
+                """)
+                logger.info("✅ Added file_checksum column")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    logger.info("ℹ️  file_checksum column already exists")
+                else:
+                    raise
+        
+        # Check inspector_inspection_items table
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='inspector_inspection_items'
+        """)
+        
+        if cursor.fetchone():
+            # Add inspection_date column if missing
+            try:
+                cursor.execute("""
+                    ALTER TABLE inspector_inspection_items 
+                    ADD COLUMN inspection_date DATE
+                """)
+                logger.info("✅ Added inspection_date column to inspector_inspection_items")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    logger.info("ℹ️  inspection_date column already exists")
+                else:
+                    raise
+            
+            # Add owner_signoff_timestamp column if missing
+            try:
+                cursor.execute("""
+                    ALTER TABLE inspector_inspection_items 
+                    ADD COLUMN owner_signoff_timestamp TIMESTAMP
+                """)
+                logger.info("✅ Added owner_signoff_timestamp column to inspector_inspection_items")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    logger.info("ℹ️  owner_signoff_timestamp column already exists")
+                else:
+                    raise
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info("✅ Database migration completed successfully!")
+        
+    except Exception as e:
+        logger.error(f"❌ Migration failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
 # Main database setup function with Inspector integration
 def setup_database(db_path: str = "building_inspection.db", force_recreate: bool = False, 
                   seed_test_data: bool = False) -> DatabaseManager:
@@ -2036,6 +2190,10 @@ def setup_database(db_path: str = "building_inspection.db", force_recreate: bool
         DatabaseManager instance with Inspector integration
     """
     logger.info("🚀 Starting Building Inspection System V3 database setup with Inspector integration...")
+    
+    # Run migration first if database exists and not forcing recreate
+    if not force_recreate and os.path.exists(db_path):
+        migrate_existing_database(db_path)
     
     # Initialize database manager
     db_manager = DatabaseManager(db_path)
@@ -2063,7 +2221,6 @@ def setup_database(db_path: str = "building_inspection.db", force_recreate: bool
     
     logger.info("🎉 Database setup completed successfully with Inspector integration!")
     return db_manager
-
 
 # Example usage and testing
 if __name__ == "__main__":
