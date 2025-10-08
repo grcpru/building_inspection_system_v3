@@ -59,43 +59,49 @@ def load_system_settings() -> dict:
     }
 
 
-@st.cache_resource
-def init_database():
+# ✅ Pure, cache-safe resource factory (NO st.* calls here)
+@st.cache_resource(show_spinner=False)
+def get_db_manager():
     """
-    Initialize database with automatic schema migration
-    
-    This ensures the database schema is up-to-date even on Streamlit Cloud
-    where the database might have been created with an older schema.
+    Create (or open) the database and ensure it exists.
+    No UI calls here to keep cache replay safe.
     """
     db_manager = DatabaseManager("building_inspection.db")
-    
-    # Check if database file exists
-    db_exists = os.path.exists("building_inspection.db")
-    
-    if not db_exists:
-        # First time - create everything fresh WITHOUT seed data
+
+    # Ensure database exists; setup_database logs via logger (not st.*)
+    if not os.path.exists(db_manager.db_path):
         logger.info("Database doesn't exist - creating fresh")
-        from database.setup import setup_database
-        setup_database(seed_test_data=False)  # Changed to False - no test buildings
-        return db_manager
-    
-    # Database exists - apply migrations to ensure schema is up-to-date
-    logger.info("Database exists - checking for schema updates")
+        setup_database(db_path=db_manager.db_path, force_recreate=False, seed_test_data=False)
+    else:
+        # Open a connection so downstream code can use it immediately
+        db_manager.connect()
+
+    return db_manager
+
+
+def init_database_with_ui():
+    """
+    Wrapper that does UI work (toasts/warnings, session_state)
+    OUTSIDE of the cached function.
+    """
+    db_manager = get_db_manager()
+
+    # run schema checks/migrations (no st.* inside _apply_schema_migrations)
     migration_success, update_count = _apply_schema_migrations(db_manager)
-    
-    # Show toast notification outside of cached function
+
+    # UI feedback is safe here
     if update_count > 0:
         st.toast(f"✅ Applied {update_count} database updates", icon="🔧")
-    
+
     if not migration_success:
         st.warning("⚠️ Schema migration failed - attempting database recreation")
         logger.warning("Migration failed - recreating database")
         db_manager.initialize_database(force_recreate=True)
-    
+
+    # store the shared instance for other modules
     st.session_state["db_manager"] = db_manager
-    return db_manager   
-
-
+    return db_manager
+  
 def _apply_schema_migrations(db_manager: DatabaseManager) -> bool:
     """
     Apply schema migrations to existing database
@@ -607,7 +613,8 @@ def main():
     )
     
     # Initialize database with auto-migration
-    db_manager = init_database()
+    db_manager = init_database_with_ui()
+
     
     # Ensure demo users exist in database
     ensure_demo_users_exist()
