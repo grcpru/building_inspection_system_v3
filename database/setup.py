@@ -130,6 +130,36 @@ class DatabaseManager:
             )
         """)
         
+        # Unit-level inspection summaries (for detailed unit tracking)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS inspector_unit_inspections (
+                id TEXT PRIMARY KEY,
+                inspection_id TEXT NOT NULL,
+                building_id TEXT NOT NULL,
+                unit TEXT NOT NULL,
+                unit_type TEXT,
+                inspection_date DATE,
+                inspector_name TEXT,
+                items_count INTEGER DEFAULT 0,
+                defects_count INTEGER DEFAULT 0,
+                owner_signoff_timestamp TIMESTAMP,
+                status TEXT DEFAULT 'completed',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (inspection_id) REFERENCES inspector_inspections (id),
+                FOREIGN KEY (building_id) REFERENCES inspector_buildings (id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_unit_inspections_inspection 
+            ON inspector_unit_inspections(inspection_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_unit_inspections_unit 
+            ON inspector_unit_inspections(unit)
+        """)
+        
         # Inspector inspection items (detailed defect data from CSV processing)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inspector_inspection_items (
