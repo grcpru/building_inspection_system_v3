@@ -20,6 +20,64 @@ from roles.inspector import render_inspector_interface
 from roles.builder import render_builder_interface
 from roles.admin import render_admin_interface
 
+from database.connection_manager import get_connection_manager
+from database.postgres_adapter import PostgresAdapter
+from database.setup import DatabaseManager
+
+# ============================================================================
+# DATABASE INITIALIZATION - Add this section at the very top of main.py
+# ============================================================================
+
+def initialize_database():
+    """
+    Initialize database on first run
+    Works for both SQLite (local) and PostgreSQL (Streamlit Cloud)
+    """
+    try:
+        conn_manager = get_connection_manager()
+        db_type = conn_manager.get_db_type()
+        
+        st.sidebar.info(f"🗄️ Database: {db_type.upper()}")
+        
+        if db_type == "postgresql":
+            # PostgreSQL initialization
+            st.sidebar.info("Initializing PostgreSQL schema...")
+            postgres_adapter = PostgresAdapter()
+            postgres_adapter.initialize_schema()
+            postgres_adapter.create_default_users()
+            st.sidebar.success("✅ PostgreSQL ready!")
+            
+        else:
+            # SQLite initialization (local development)
+            st.sidebar.info("Initializing SQLite database...")
+            db_manager = DatabaseManager()
+            
+            try:
+                db_manager.initialize_database()
+                st.sidebar.success("✅ SQLite ready!")
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "view" in error_msg and "indexed" in error_msg:
+                    st.sidebar.warning("⚠️  Some indexes skipped (views cannot be indexed)")
+                    st.sidebar.success("✅ SQLite ready (with warnings)!")
+                else:
+                    raise e
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Database initialization failed: {e}")
+        st.stop()
+        return False
+
+
+# Initialize database once per session
+if 'db_initialized' not in st.session_state:
+    with st.spinner("Initializing database..."):
+        if initialize_database():
+            st.session_state.db_initialized = True
+            
+            
 def load_system_settings() -> dict:
     """Load system settings from file"""
     settings_file = Path("system_settings.json")

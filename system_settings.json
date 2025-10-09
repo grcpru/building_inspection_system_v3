@@ -1,0 +1,17 @@
+{
+  "system_name": "ECM Building Pre-Settlement Inspection System",
+  "default_urgency_threshold": 7,
+  "max_file_size_mb": 10,
+  "auto_work_order_creation": true,
+  "require_photo_evidence": false,
+  "enable_email_notifications": false,
+  "smtp_host": "",
+  "smtp_port": 587,
+  "smtp_username": "",
+  "smtp_password": "",
+  "from_email": "",
+  "require_builder_notes": true,
+  "auto_approve_threshold": 0,
+  "enable_quality_scoring": true,
+  "min_quality_score": 70
+}

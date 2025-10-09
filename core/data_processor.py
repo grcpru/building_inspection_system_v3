@@ -500,45 +500,63 @@ class InspectionDataProcessor:
             
             # Get inspection metadata
             inspection_query = """
-                SELECT i.*, b.name as building_name, b.address
+                SELECT i.id, i.building_id, i.inspection_date, 
+                    i.inspector_name, i.total_units, i.total_defects,
+                    i.ready_pct, i.original_filename,
+                    b.name as building_name, b.address
                 FROM inspector_inspections i
                 JOIN inspector_buildings b ON i.building_id = b.id
                 WHERE i.id = ?
             """
-            inspection_df = pd.read_sql_query(inspection_query, conn, params=[inspection_id])
+            
+            inspection_df = pd.read_sql_query(
+                inspection_query, 
+                conn, 
+                params=[inspection_id],
+                parse_dates=False  # Disable automatic date parsing
+            )
             
             if inspection_df.empty:
                 raise ValueError(f"Inspection {inspection_id} not found")
             
-            # Get inspection items
+            # Get inspection items with CORRECT column names
             items_query = """
-                SELECT unit as Unit, unit_type as UnitType, 
-                    inspection_date as InspectionDate,
+                SELECT 
+                    id,
+                    inspection_id,
+                    unit as Unit,
+                    unit_type as UnitType,
+                    room as Room,
+                    component as Component,
+                    trade as Trade,
+                    status_class as StatusClass,
+                    urgency as Urgency,
+                    planned_completion as PlannedCompletion,
                     owner_signoff_timestamp as OwnerSignoffTimestamp,
-                    room as Room, component as Component, 
-                    trade as Trade, status_class as StatusClass, 
-                    urgency as Urgency, planned_completion as PlannedCompletion
+                    inspection_date as InspectionDate,
+                    original_status,
+                    created_at
                 FROM inspector_inspection_items
                 WHERE inspection_id = ?
             """
-            items_df = pd.read_sql_query(items_query, conn, params=[inspection_id])
             
-            # Parse timestamps
-            if 'OwnerSignoffTimestamp' in items_df.columns:
-                items_df['OwnerSignoffTimestamp'] = pd.to_datetime(
-                    items_df['OwnerSignoffTimestamp'], 
-                    errors='coerce'
-                )
+            # Load without automatic date parsing to avoid conversion errors
+            items_df = pd.read_sql_query(
+                items_query, 
+                conn, 
+                params=[inspection_id],
+                parse_dates=False  # Keep dates as strings initially
+            )
             
-            if 'InspectionDate' in items_df.columns:
-                items_df['InspectionDate'] = pd.to_datetime(items_df['InspectionDate'], errors='coerce')
+            logger.info(f"Loaded {len(items_df)} inspection items from database")
             
-            if 'PlannedCompletion' in items_df.columns:
-                items_df['PlannedCompletion'] = pd.to_datetime(items_df['PlannedCompletion'], errors='coerce')
+            # Manually parse dates with error handling
+            # These dates are in different formats, so we'll keep them as strings for now
+            # and only parse when needed for calculations
             
             inspection_row = inspection_df.iloc[0]
             
-            # Recalculate metrics from actual data
+            # Calculate metrics from actual data
             defects_only = items_df[items_df["StatusClass"] == "Not OK"]
             total_units = len(items_df["Unit"].unique()) if len(items_df) > 0 else 1
             
@@ -570,30 +588,30 @@ class InspectionDataProcessor:
             urgent_defects = defects_only[defects_only["Urgency"] == "Urgent"] if len(defects_only) > 0 else pd.DataFrame()
             high_priority_defects = defects_only[defects_only["Urgency"] == "High Priority"] if len(defects_only) > 0 else pd.DataFrame()
             
-            # Extract date information
-            if 'InspectionDate' in items_df.columns:
-                inspection_dates = items_df['InspectionDate'].dropna()
-                if len(inspection_dates) > 0:
-                    primary_date = inspection_dates.mode()[0] if len(inspection_dates.mode()) > 0 else inspection_dates.iloc[0]
-                    min_date = inspection_dates.min()
-                    max_date = inspection_dates.max()
-                    
-                    inspection_date_str = primary_date.strftime('%Y-%m-%d')
-                    inspection_date_range = f"{min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}" if min_date != max_date else inspection_date_str
-                    is_multi_day = min_date != max_date
+            # Extract date information safely (keep as string)
+            inspection_date_str = str(inspection_row.get('inspection_date', '2025-01-01'))
+            if ' ' in inspection_date_str:
+                inspection_date_str = inspection_date_str.split(' ')[0]  # Take date part only
+            
+            # Check if there are multiple inspection dates in the items
+            if 'InspectionDate' in items_df.columns and len(items_df) > 0:
+                unique_dates = items_df['InspectionDate'].dropna().unique()
+                if len(unique_dates) > 1:
+                    # Convert to date strings for comparison
+                    date_strs = [str(d).split('T')[0].split(' ')[0] for d in unique_dates]
+                    inspection_date_range = f"{min(date_strs)} to {max(date_strs)}"
+                    is_multi_day = True
                 else:
-                    inspection_date_str = str(inspection_row.get('inspection_date', '2025-01-01'))
                     inspection_date_range = inspection_date_str
                     is_multi_day = False
             else:
-                inspection_date_str = str(inspection_row.get('inspection_date', '2025-01-01'))
                 inspection_date_range = inspection_date_str
                 is_multi_day = False
             
             # Build complete metrics dictionary
             metrics = {
                 'building_name': str(inspection_row['building_name']),
-                'address': str(inspection_row['address']),
+                'address': str(inspection_row.get('address', 'N/A')),
                 'inspection_date': inspection_date_str,
                 'inspection_date_range': inspection_date_range,
                 'is_multi_day_inspection': is_multi_day,
@@ -625,7 +643,13 @@ class InspectionDataProcessor:
                 metrics['summary_trade'] = defects_only.groupby("Trade").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False)
                 metrics['summary_unit'] = defects_only.groupby("Unit").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False)
                 metrics['summary_room'] = defects_only.groupby("Room").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False)
-                metrics['urgent_defects_table'] = urgent_defects[["Unit", "Room", "Component", "Trade", "PlannedCompletion"]].copy() if len(urgent_defects) > 0 else pd.DataFrame(columns=["Unit", "Room", "Component", "Trade", "PlannedCompletion"])
+                
+                # Create urgent defects table
+                if len(urgent_defects) > 0:
+                    urgent_cols = ["Unit", "Room", "Component", "Trade", "PlannedCompletion"]
+                    metrics['urgent_defects_table'] = urgent_defects[urgent_cols].copy()
+                else:
+                    metrics['urgent_defects_table'] = pd.DataFrame(columns=["Unit", "Room", "Component", "Trade", "PlannedCompletion"])
             else:
                 metrics['summary_trade'] = pd.DataFrame(columns=["Trade", "DefectCount"])
                 metrics['summary_unit'] = pd.DataFrame(columns=["Unit", "DefectCount"])
@@ -635,7 +659,9 @@ class InspectionDataProcessor:
             self.processed_data = items_df
             self.metrics = metrics
             
-            logger.info(f"Loaded inspection {inspection_id} from database")
+            conn.close()
+            
+            logger.info(f"✅ Successfully loaded inspection {inspection_id}")
             
             return items_df, metrics
             
