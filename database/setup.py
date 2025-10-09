@@ -20,31 +20,37 @@ import uuid
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def _resolve_db_path(db_path: str | None) -> str:
+    # Allow override via env (works great on Streamlit Cloud)
+    env_path = os.environ.get("INSPECTION_DB_PATH") or os.environ.get("DB_PATH")
+    final = env_path or db_path or "building_inspection.db"
+    p = Path(final).expanduser().resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)  # ensure folder exists
+    return str(p)
+
 class DatabaseManager:
     """Enhanced database management system with Inspector integration"""
     
     def __init__(self, db_path: str = "building_inspection.db"):
-        self.db_path = db_path
+        self.db_path = _resolve_db_path(db_path)
         self.migrations_dir = Path("migrations")
         self.migrations_dir.mkdir(exist_ok=True)
         self.connection = None
         
     def connect(self) -> sqlite3.Connection:
-        """Establish database connection with optimizations"""
         if not self.connection:
             self.connection = sqlite3.connect(
                 self.db_path,
                 check_same_thread=False,
-                timeout=30.0
+                timeout=30.0,
+                detect_types=0  # CHANGED: Disable automatic type detection to prevent timestamp parsing errors
             )
-            # Enable foreign keys and optimize settings
             self.connection.execute("PRAGMA foreign_keys = ON")
             self.connection.execute("PRAGMA journal_mode = WAL")
             self.connection.execute("PRAGMA synchronous = NORMAL")
-            self.connection.execute("PRAGMA cache_size = 10000")
-            self.connection.execute("PRAGMA temp_store = MEMORY")
-        
+            logger.info(f"🗄️ SQLite connected to: {self.db_path}")
         return self.connection
+
     
     def initialize_database(self, force_recreate: bool = False):
         """Initialize database with complete schema including Inspector integration"""
@@ -935,62 +941,92 @@ class DatabaseManager:
         """)
         
         logger.info("✅ Audit tables created")
-    
+
     def create_indexes(self):
         """Create database indexes for performance optimization"""
         conn = self.connect()
         cursor = conn.cursor()
         
-        # User indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active)")
+        # List of all indexes to create
+        indexes = [
+            # User indexes
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)",
+            "CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active)",
+            
+            # Inspection indexes - SKIP if inspections is a view
+            # "CREATE INDEX IF NOT EXISTS idx_inspections_date ON inspections(inspection_date)",
+            # "CREATE INDEX IF NOT EXISTS idx_inspections_inspector ON inspections(inspector_id)",
+            # "CREATE INDEX IF NOT EXISTS idx_inspections_status ON inspections(status)",
+            # "CREATE INDEX IF NOT EXISTS idx_inspections_project ON inspections(project_name)",
+            
+            # Defect indexes
+            "CREATE INDEX IF NOT EXISTS idx_defects_inspection ON defects(inspection_id)",
+            "CREATE INDEX IF NOT EXISTS idx_defects_status ON defects(status)",
+            "CREATE INDEX IF NOT EXISTS idx_defects_severity ON defects(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_defects_trade ON defects(trade)",
+            "CREATE INDEX IF NOT EXISTS idx_defects_assigned ON defects(assigned_to)",
+            "CREATE INDEX IF NOT EXISTS idx_defects_created ON defects(created_at)",
+            
+            # Inspector integration indexes
+            "CREATE INDEX IF NOT EXISTS idx_inspector_buildings_name ON inspector_buildings(name)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_inspections_building ON inspector_inspections(building_id)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_inspections_date ON inspector_inspections(inspection_date)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_items_inspection ON inspector_inspection_items(inspection_id)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_items_unit ON inspector_inspection_items(unit_number)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_items_status ON inspector_inspection_items(status)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_work_orders_status ON inspector_work_orders(status)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_work_orders_assigned ON inspector_work_orders(assigned_to)",
+            
+            # File storage indexes
+            "CREATE INDEX IF NOT EXISTS idx_file_storage_type ON file_storage(file_type)",
+            "CREATE INDEX IF NOT EXISTS idx_file_storage_related ON file_storage(related_type, related_id)",
+            
+            # Processing queue indexes
+            "CREATE INDEX IF NOT EXISTS idx_processing_queue_status ON processing_queue(status)",
+            
+            # Notification indexes
+            "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read)",
+            
+            # Audit indexes
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)",
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)",
+        ]
         
-        # Inspection indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_date ON inspections(inspection_date)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_inspector ON inspections(inspector_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_status ON inspections(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_project ON inspections(project_name)")
+        created_count = 0
+        failed_count = 0
         
-        # Defect indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_defects_inspection ON defects(inspection_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_defects_status ON defects(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_defects_severity ON defects(severity)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_defects_trade ON defects(trade)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_defects_assigned ON defects(assigned_to)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_defects_created ON defects(created_at)")
+        for index_sql in indexes:
+            try:
+                cursor.execute(index_sql)
+                created_count += 1
+                
+                # Extract index name for logging
+                if "idx_" in index_sql:
+                    index_name = index_sql.split("idx_")[1].split()[0]
+                    logger.info(f"✅ Created index: idx_{index_name}")
+                
+            except Exception as e:
+                failed_count += 1
+                error_msg = str(e).lower()
+                
+                # Only warn, don't fail completely
+                if "view" in error_msg and "indexed" in error_msg:
+                    logger.warning(f"⚠️  Skipped index (views cannot be indexed): {index_sql[:60]}...")
+                elif "already exists" in error_msg:
+                    logger.debug(f"Index already exists, skipping")
+                elif "no such table" in error_msg:
+                    logger.warning(f"⚠️  Table doesn't exist yet, skipping index: {index_sql[:60]}...")
+                else:
+                    logger.warning(f"⚠️  Failed to create index: {e}")
+                
+                # Continue with other indexes instead of stopping
+                continue
         
-        # NEW: Inspector integration indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_buildings_name ON inspector_buildings(name)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_inspections_building ON inspector_inspections(building_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_inspections_date ON inspector_inspections(inspection_date)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_items_inspection ON inspector_inspection_items(inspection_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_items_unit ON inspector_inspection_items(unit)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_items_trade ON inspector_inspection_items(trade)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_work_orders_trade ON inspector_work_orders(trade)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_work_orders_status ON inspector_work_orders(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_work_orders_assigned ON inspector_work_orders(assigned_to)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_progress_building ON inspector_project_progress(building_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspector_progress_date ON inspector_project_progress(progress_date)")
-        
-        # File storage indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_storage_type ON file_storage(file_type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_storage_related ON file_storage(related_type, related_id)")
-        
-        # Processing queue indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_processing_queue_status ON processing_queue(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_processing_queue_inspector ON processing_queue(inspector_id)")
-        
-        # Notification indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read)")
-        
-        # Audit indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)")
-        
-        logger.info("✅ Database indexes created")
+        conn.commit()
+        logger.info(f"✅ Index creation complete: {created_count} created, {failed_count} skipped")
     
     # NEW: Inspector Integration Methods
     def save_inspector_data(self, processed_data: pd.DataFrame, metrics: dict, 

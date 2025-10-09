@@ -1,7 +1,6 @@
 """
 Building Inspection System V3 - Main Application Entry Point
 With Inspection Reports Page for Developer Role
-Updated with Automatic Schema Migration for Streamlit Cloud
 """
 
 import streamlit as st
@@ -9,24 +8,76 @@ import sqlite3
 from pathlib import Path
 import sys
 import os
-import logging
 
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.append(str(project_root))
 
 # Import components
-from database.setup import setup_database, DatabaseManager
+from database.setup import setup_database
 from roles.inspector import render_inspector_interface
 # from roles.owner import render_owner_interface
 from roles.builder import render_builder_interface
 from roles.admin import render_admin_interface
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from database.connection_manager import get_connection_manager
+from database.postgres_adapter import PostgresAdapter
+from database.setup import DatabaseManager
+
+# ============================================================================
+# DATABASE INITIALIZATION - Add this section at the very top of main.py
+# ============================================================================
+
+def initialize_database():
+    """
+    Initialize database on first run
+    Works for both SQLite (local) and PostgreSQL (Streamlit Cloud)
+    """
+    try:
+        conn_manager = get_connection_manager()
+        db_type = conn_manager.get_db_type()
+        
+        st.sidebar.info(f"🗄️ Database: {db_type.upper()}")
+        
+        if db_type == "postgresql":
+            # PostgreSQL initialization
+            st.sidebar.info("Initializing PostgreSQL schema...")
+            postgres_adapter = PostgresAdapter()
+            postgres_adapter.initialize_schema()
+            postgres_adapter.create_default_users()
+            st.sidebar.success("✅ PostgreSQL ready!")
+            
+        else:
+            # SQLite initialization (local development)
+            st.sidebar.info("Initializing SQLite database...")
+            db_manager = DatabaseManager()
+            
+            try:
+                db_manager.initialize_database()
+                st.sidebar.success("✅ SQLite ready!")
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "view" in error_msg and "indexed" in error_msg:
+                    st.sidebar.warning("⚠️  Some indexes skipped (views cannot be indexed)")
+                    st.sidebar.success("✅ SQLite ready (with warnings)!")
+                else:
+                    raise e
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Database initialization failed: {e}")
+        st.stop()
+        return False
 
 
+# Initialize database once per session
+if 'db_initialized' not in st.session_state:
+    with st.spinner("Initializing database..."):
+        if initialize_database():
+            st.session_state.db_initialized = True
+            
+            
 def load_system_settings() -> dict:
     """Load system settings from file"""
     settings_file = Path("system_settings.json")
@@ -57,184 +108,6 @@ def load_system_settings() -> dict:
         'enable_quality_scoring': True,
         'min_quality_score': 70
     }
-
-
-@st.cache_resource
-def init_database():
-    """
-    Initialize database with automatic schema migration
-    
-    This ensures the database schema is up-to-date even on Streamlit Cloud
-    where the database might have been created with an older schema.
-    """
-    db_manager = DatabaseManager("building_inspection.db")
-    
-    # Check if database file exists
-    db_exists = os.path.exists("building_inspection.db")
-    
-    if not db_exists:
-        # First time - create everything fresh WITHOUT seed data
-        logger.info("Database doesn't exist - creating fresh")
-        from database.setup import setup_database
-        setup_database(seed_test_data=False)  # Changed to False - no test buildings
-        return db_manager
-    
-    # Database exists - apply migrations to ensure schema is up-to-date
-    logger.info("Database exists - checking for schema updates")
-    migration_success, update_count = _apply_schema_migrations(db_manager)
-    
-    # Show toast notification outside of cached function
-    if update_count > 0:
-        st.toast(f"✅ Applied {update_count} database updates", icon="🔧")
-    
-    if not migration_success:
-        st.warning("⚠️ Schema migration failed - attempting database recreation")
-        logger.warning("Migration failed - recreating database")
-        db_manager.initialize_database(force_recreate=True)
-    
-    return db_manager
-
-
-def _apply_schema_migrations(db_manager: DatabaseManager) -> bool:
-    """
-    Apply schema migrations to existing database
-    
-    This function adds any missing columns/tables without losing existing data.
-    Safe to run multiple times - only applies changes if needed.
-    
-    Returns:
-        True if migrations successful or not needed, False if failed
-    """
-    try:
-        conn = db_manager.connect()
-        cursor = conn.cursor()
-        
-        logger.info("Checking for schema updates...")
-        
-        # Track what was updated
-        updates_applied = []
-        
-        # ===================================================================
-        # MIGRATION 1: Add owner_signoff_timestamp to inspector_inspection_items
-        # ===================================================================
-        try:
-            cursor.execute("""
-                SELECT COUNT(*) FROM pragma_table_info('inspector_inspection_items') 
-                WHERE name='owner_signoff_timestamp'
-            """)
-            if cursor.fetchone()[0] == 0:
-                cursor.execute("""
-                    ALTER TABLE inspector_inspection_items 
-                    ADD COLUMN owner_signoff_timestamp TIMESTAMP
-                """)
-                updates_applied.append("Added owner_signoff_timestamp column")
-                logger.info("✅ Added owner_signoff_timestamp column")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" not in str(e).lower():
-                logger.warning(f"Could not add owner_signoff_timestamp: {e}")
-        
-        # ===================================================================
-        # MIGRATION 2: Add inspection_date to inspector_inspection_items
-        # ===================================================================
-        try:
-            cursor.execute("""
-                SELECT COUNT(*) FROM pragma_table_info('inspector_inspection_items') 
-                WHERE name='inspection_date'
-            """)
-            if cursor.fetchone()[0] == 0:
-                cursor.execute("""
-                    ALTER TABLE inspector_inspection_items 
-                    ADD COLUMN inspection_date DATE
-                """)
-                updates_applied.append("Added inspection_date column")
-                logger.info("✅ Added inspection_date column")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" not in str(e).lower():
-                logger.warning(f"Could not add inspection_date: {e}")
-        
-        # ===================================================================
-        # MIGRATION 3: Create inspector_unit_inspections table
-        # ===================================================================
-        cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name='inspector_unit_inspections'
-        """)
-        
-        if not cursor.fetchone():
-            cursor.execute("""
-                CREATE TABLE inspector_unit_inspections (
-                    id TEXT PRIMARY KEY,
-                    inspection_id TEXT NOT NULL,
-                    building_id TEXT NOT NULL,
-                    unit TEXT NOT NULL,
-                    unit_type TEXT,
-                    inspection_date DATE,
-                    inspector_name TEXT,
-                    items_count INTEGER DEFAULT 0,
-                    defects_count INTEGER DEFAULT 0,
-                    owner_signoff_timestamp TIMESTAMP,
-                    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (inspection_id) REFERENCES inspector_inspections (id),
-                    FOREIGN KEY (building_id) REFERENCES inspector_buildings (id)
-                )
-            """)
-            
-            # Create indexes
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_inspector_unit_inspections_inspection 
-                ON inspector_unit_inspections(inspection_id)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_inspector_unit_inspections_unit 
-                ON inspector_unit_inspections(unit)
-            """)
-            
-            updates_applied.append("Created inspector_unit_inspections table")
-            logger.info("✅ Created inspector_unit_inspections table")
-        
-        # ===================================================================
-        # MIGRATION 4: Add file_checksum to inspector_csv_processing_log
-        # ===================================================================
-        try:
-            cursor.execute("""
-                SELECT COUNT(*) FROM pragma_table_info('inspector_csv_processing_log') 
-                WHERE name='file_checksum'
-            """)
-            if cursor.fetchone()[0] == 0:
-                cursor.execute("""
-                    ALTER TABLE inspector_csv_processing_log 
-                    ADD COLUMN file_checksum TEXT
-                """)
-                updates_applied.append("Added file_checksum column")
-                logger.info("✅ Added file_checksum column")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" not in str(e).lower():
-                logger.warning(f"Could not add file_checksum: {e}")
-        
-        # Commit all changes
-        conn.commit()
-        
-        # Show results
-        if updates_applied:
-            logger.info(f"Applied {len(updates_applied)} schema updates:")
-            for update in updates_applied:
-                logger.info(f"  - {update}")
-            # Return info about updates (don't use st.toast in cached function)
-            return True, len(updates_applied)
-        else:
-            logger.info("✓ Database schema is up-to-date")
-            return True, 0
-        
-        return True, 0
-        
-    except Exception as e:
-        logger.error(f"Schema migration failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return False, 0
-
 
 def simple_authenticate(username: str, password: str) -> dict:
     """Authenticate against database with hardcoded fallback"""
@@ -296,7 +169,6 @@ def simple_authenticate(username: str, password: str) -> dict:
     
     return {"success": False}
 
-
 def get_database_connection():
     """Get database connection and handle errors gracefully"""
     try:
@@ -305,7 +177,6 @@ def get_database_connection():
     except Exception as e:
         st.error(f"Database connection error: {e}")
         return None
-
 
 def get_user_info_from_db(user_id: int) -> dict:
     """Get user information from database"""
@@ -353,7 +224,6 @@ def get_user_info_from_db(user_id: int) -> dict:
             "role": st.session_state.get('user_role', 'unknown')
         }
 
-
 def ensure_demo_users_exist():
     """Ensure demo users exist in database"""
     try:
@@ -395,7 +265,6 @@ def ensure_demo_users_exist():
     except Exception as e:
         print(f"Error creating demo users: {e}")
 
-
 class SimpleAuthManager:
     """Simple authentication manager for the demo"""
     
@@ -421,7 +290,6 @@ class SimpleAuthManager:
             return result and result[0] == 1
         except:
             return True
-
 
 def render_inspection_reports(user_info: dict, auth_manager):
     """Render inspection reports page for developers (read-only view)"""
@@ -588,7 +456,6 @@ def render_inspection_reports(user_info: dict, auth_manager):
         st.error("Inspector module not available for viewing reports")
         st.info("Please ensure the inspector interface is properly configured")
 
-
 def main():
     """Main application entry point"""
     
@@ -603,8 +470,12 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Initialize database with auto-migration
-    db_manager = init_database()
+    # Initialize database
+    if not os.path.exists("building_inspection.db"):
+        with st.spinner("Setting up database for first time..."):
+            setup_database(seed_test_data=True)
+        st.success("Database setup complete!")
+        st.rerun()
     
     # Ensure demo users exist in database
     ensure_demo_users_exist()
@@ -783,7 +654,6 @@ Admin: admin / admin123
             """)
         
         st.info("💡 **Tip**: Use the sidebar login form to access the system with any of the credentials above.")
-
 
 if __name__ == "__main__":
     main()
