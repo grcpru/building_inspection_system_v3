@@ -1,8 +1,6 @@
 """
-Builder Interface - Complete with Rejected Status
-=================================================
-
-Fixed: Manual tab control, file preview, Start workflow, Rejected items view
+Builder Interface - Fixed: Removed duplicate report sections
+============================================================
 """
 
 import pandas as pd
@@ -12,6 +10,7 @@ import logging
 from pathlib import Path
 import os
 import uuid
+from reports.builder_report import add_builder_report_ui
 
 try:
     from database.setup import DatabaseManager
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class BuilderInterface:
-    """Working builder interface with rejected items support"""
+    """Working builder interface with rejected items support and report generation"""
     
     def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
         self.user_info = user_info or {}
@@ -43,11 +42,11 @@ class BuilderInterface:
         st.markdown("""
         <div style="background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%); 
                     color: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem;">
-            <h2 style="margin: 0;">Builder Work Management</h2>
+            <h2 style="margin: 0;">🏗️ Builder Work Management</h2>
             <p style="margin: 0.5rem 0 0 0;">Welcome, {}</p>
         </div>
         """.format(self.user_info.get('name', 'Builder')), unsafe_allow_html=True)
-        
+                
         # Building selector
         building_id = self._select_building()
         if not building_id:
@@ -57,8 +56,29 @@ class BuilderInterface:
         # Get all work orders once
         all_orders = self._get_orders(building_id)
         if all_orders.empty:
-            st.warning("No work orders found")
+            st.warning("No work orders found for this building")
             return
+        
+        # ============================================================
+        # REPORTS SECTION - Single location before tabs
+        # ============================================================
+        st.markdown("---")
+        
+        with st.expander("📊 Generate Defect Management Report", expanded=False):
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #4ECDC4 0%, #44A08D 100%); 
+                        color: white; padding: 0.8rem; border-radius: 8px; margin-bottom: 1rem;">
+                <h4 style="margin: 0;">📊 Reports & Analytics</h4>
+                <p style="margin: 0.3rem 0 0 0; font-size: 0.85rem;">
+                    Generate comprehensive Excel reports with defect analysis
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            add_builder_report_ui(self.db)
+        
+        st.markdown("---")
+        # ============================================================
         
         # Show tabs with manual control
         self._show_tabs(all_orders, building_id)
@@ -103,7 +123,7 @@ class BuilderInterface:
         """, conn, params=[building_id])
     
     def _show_tabs(self, all_orders, building_id):
-        """Manual tabs with buttons for switching - INCLUDES REJECTED TAB"""
+        """Manual tabs with buttons for switching"""
         
         # Filter by status - SEPARATE REJECTED FROM IN_PROGRESS
         pending = all_orders[all_orders['status'] == 'pending']
@@ -123,7 +143,7 @@ class BuilderInterface:
         waiting = all_orders[all_orders['status'] == 'waiting_approval']
         approved = all_orders[all_orders['status'] == 'approved']
         
-        # Tab buttons - ADDED REJECTED BUTTON
+        # Tab buttons
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
@@ -141,7 +161,6 @@ class BuilderInterface:
                 st.rerun()
         
         with col3:
-            # REJECTED TAB
             if st.button(f"❌ Rejected ({len(rejected)})", 
                         type="primary" if st.session_state.b_active_tab == 'rejected' else "secondary",
                         use_container_width=True):
@@ -164,7 +183,7 @@ class BuilderInterface:
         
         st.markdown("---")
         
-        # Show content based on active tab - ADDED REJECTED CASE
+        # Show content based on active tab
         if st.session_state.b_active_tab == 'pending':
             self._show_list(pending, 'pending', building_id)
         elif st.session_state.b_active_tab == 'in_progress':
@@ -175,9 +194,14 @@ class BuilderInterface:
             self._show_list(waiting, 'waiting_approval', building_id)
         elif st.session_state.b_active_tab == 'approved':
             self._show_list(approved, 'approved', building_id)
-    
+        
+        # ============================================================
+        # REMOVED: Duplicate report section that was here (lines 183-203)
+        # Reports are now ONLY shown in the expander before tabs
+        # ============================================================
+
     def _show_rejected_list(self, orders, building_id):
-        """Show rejected work orders list - SPECIAL HANDLING"""
+        """Show rejected work orders list"""
         
         if orders.empty:
             st.success("✅ No rejected items - excellent work quality!")
@@ -227,7 +251,7 @@ class BuilderInterface:
             self._render_rejected_item(order, idx)
     
     def _render_rejected_item(self, order, idx):
-        """Render rejected work order item - WITH REJECTION DETAILS"""
+        """Render rejected work order item"""
         
         oid = order['id']
         is_open = st.session_state.b_open_form == oid
@@ -264,7 +288,7 @@ class BuilderInterface:
         }
         priority_icon = priority_colors.get(order['urgency'], '⚪')
         
-        # Item row with rejection warning
+        # Item row
         col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
         
         with col1:
@@ -276,7 +300,6 @@ class BuilderInterface:
             st.caption(f"🕒 {rejection_date}")
         
         with col3:
-            # Empty column
             pass
         
         with col4:
@@ -289,7 +312,6 @@ class BuilderInterface:
                     st.session_state.b_open_form = oid
                 st.rerun()
         
-        # Show form INLINE when opened
         if is_open:
             st.markdown("---")
             with st.container():
@@ -304,13 +326,11 @@ class BuilderInterface:
         
         oid = order['id']
         
-        # Show rejection details prominently
         st.error(f"**Developer Feedback:** {rejection_reason}")
         st.info("**Action Required:** Address the rejection reason, update your work, and resubmit")
         
         st.markdown("---")
         
-        # DEFECT INFO
         with st.container():
             st.markdown(f"### 🔧 {order['unit']} - {order['room']} - {order['component']}")
             col1, col2 = st.columns(2)
@@ -321,11 +341,9 @@ class BuilderInterface:
         
         st.markdown("---")
         
-        # MAIN FORM
         col_left, col_right = st.columns([3, 2])
         
         with col_left:
-            # Work Notes - for rework
             notes = st.text_area(
                 "**Rework Notes:**", 
                 height=150, 
@@ -333,7 +351,6 @@ class BuilderInterface:
                 key=f"rej_notes_{oid}_{idx}"
             )
             
-            # File Upload
             st.markdown("**Upload New Photos/Files:**")
             files = st.file_uploader(
                 "Select files", 
@@ -343,7 +360,6 @@ class BuilderInterface:
                 label_visibility="collapsed"
             )
             
-            # File Preview
             if files and len(files) > 0:
                 st.success(f"✓ {len(files)} new file(s) selected")
                 cols = st.columns(3)
@@ -354,14 +370,12 @@ class BuilderInterface:
                         st.caption(f"{file.name[:20]}...")
         
         with col_right:
-            # Planned Finish Date
             target = st.date_input(
                 "**Updated Completion Date:**", 
                 datetime.now().date(), 
                 key=f"rej_date_{oid}_{idx}"
             )
             
-            # Completion Status
             st.markdown("**Status:**")
             mark_complete = st.checkbox(
                 "Work Fixed & Ready",
@@ -369,12 +383,10 @@ class BuilderInterface:
                 help="Check when all issues are resolved"
             )
             
-            # Work History with rejection highlighted
             if pd.notna(order.get('builder_notes')):
                 file_count = self._get_file_count(oid)
                 
                 with st.expander(f"📋 Full History ({file_count} files)", expanded=False):
-                    # Parse and display history with rejection highlighted
                     notes_text = str(order['builder_notes'])
                     entries = notes_text.split('\n\n---')
                     
@@ -392,7 +404,6 @@ class BuilderInterface:
                         st.markdown("**Previous Files:**")
                         self._show_files(oid)
         
-        # Form Buttons
         with st.form(f"rej_form_{oid}_{idx}", clear_on_submit=False):
             col1, col2, col3 = st.columns([2, 1, 1])
             
@@ -405,7 +416,6 @@ class BuilderInterface:
             with col3:
                 cancel_btn = st.form_submit_button("Cancel", use_container_width=True)
             
-            # Handle submission
             if submit_btn:
                 files_to_save = st.session_state.get(f"rej_files_{oid}_{idx}", None)
                 
@@ -441,7 +451,6 @@ class BuilderInterface:
             st.info(f"No {status.replace('_', ' ')} items")
             return
         
-        # Filters
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -460,7 +469,6 @@ class BuilderInterface:
             priorities = ['All'] + sorted(orders['urgency'].unique().tolist())
             priority_filter = st.selectbox("Priority:", priorities, key=f"p_{status}")
         
-        # Apply filters
         filtered = orders.copy()
         if unit_filter != 'All':
             filtered = filtered[filtered['unit'] == unit_filter]
@@ -473,7 +481,6 @@ class BuilderInterface:
         
         st.caption(f"Showing {len(filtered)} of {len(orders)} items (sorted by last modified)")
         
-        # Render all items in order
         for idx, (_, order) in enumerate(filtered.iterrows()):
             self._render_item(order, idx, status)
     
@@ -483,7 +490,6 @@ class BuilderInterface:
         oid = order['id']
         is_open = st.session_state.b_open_form == oid
         
-        # Item row
         col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
         
         with col1:
@@ -544,7 +550,6 @@ class BuilderInterface:
                         st.session_state.b_open_form = oid
                     st.rerun()
         
-        # Show form INLINE when opened
         if is_open:
             st.markdown("---")
             with st.container():
@@ -564,7 +569,7 @@ class BuilderInterface:
         oid = order['id']
         
         with st.container():
-            st.markdown(f"### 🔍 {order['unit']} - {order['room']} - {order['component']}")
+            st.markdown(f"### 📝 {order['unit']} - {order['room']} - {order['component']}")
             col1, col2 = st.columns(2)
             with col1:
                 st.caption(f"**Trade:** {order['trade']}")
@@ -573,7 +578,6 @@ class BuilderInterface:
         
         st.markdown("---")
         
-        # Show status
         if order['status'] == 'approved':
             st.success("✅ Work approved by developer")
         else:

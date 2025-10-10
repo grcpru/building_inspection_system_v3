@@ -30,8 +30,8 @@ from database.setup import DatabaseManager
 
 def initialize_database():
     """
-    Initialize database on first run
-    Works for both SQLite (local) and PostgreSQL (Streamlit Cloud)
+    Initialize database ONLY if tables don't exist
+    Prevents data loss on app restarts
     """
     try:
         conn_manager = get_connection_manager()
@@ -40,33 +40,50 @@ def initialize_database():
         st.sidebar.info(f"🗄️ Database: {db_type.upper()}")
         
         if db_type == "postgresql":
-            # PostgreSQL initialization
-            st.sidebar.info("Initializing PostgreSQL schema...")
-            postgres_adapter = PostgresAdapter()
-            postgres_adapter.initialize_schema()
-            postgres_adapter.create_default_users()
-            st.sidebar.success("✅ PostgreSQL ready!")
+            # ✅ Check if tables already exist
+            conn = conn_manager.get_connection()
+            cursor = conn.cursor()
+            
+            # Check if critical table exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'inspector_inspections'
+                );
+            """)
+            tables_exist = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            
+            if not tables_exist:
+                # Tables don't exist - create them
+                st.sidebar.warning("⚙️ First run detected - creating tables...")
+                postgres_adapter = PostgresAdapter()
+                postgres_adapter.initialize_schema()
+                postgres_adapter.create_default_users()
+                st.sidebar.success("✅ PostgreSQL initialized!")
+            else:
+                # Tables exist - don't recreate!
+                st.sidebar.success("✅ PostgreSQL connected!")
             
         else:
             # SQLite initialization (local development)
             st.sidebar.info("Initializing SQLite database...")
             db_manager = DatabaseManager()
             
-            try:
+            # Check if database exists
+            if not os.path.exists(db_manager.db_path):
                 db_manager.initialize_database()
-                st.sidebar.success("✅ SQLite ready!")
-            except Exception as e:
-                error_msg = str(e).lower()
-                if "view" in error_msg and "indexed" in error_msg:
-                    st.sidebar.warning("⚠️  Some indexes skipped (views cannot be indexed)")
-                    st.sidebar.success("✅ SQLite ready (with warnings)!")
-                else:
-                    raise e
+                st.sidebar.success("✅ SQLite created!")
+            else:
+                st.sidebar.success("✅ SQLite connected!")
         
         return True
         
     except Exception as e:
         st.error(f"❌ Database initialization failed: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         st.stop()
         return False
 

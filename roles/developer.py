@@ -1250,7 +1250,7 @@ class DeveloperInterface:
             return 0
     
     def _show_files(self, oid):
-        """Display uploaded files from database"""
+        """Display uploaded files from database with download capability"""
         try:
             conn = self.db.connect()
             cursor = conn.cursor()
@@ -1279,42 +1279,126 @@ class DeveloperInterface:
                     return
                 
                 images = []
-                others = []
+                documents = []
                 
                 for fname, fpath, ftype in files:
                     if not fpath or fpath == 'NULL' or fpath == 'None':
                         if fname:
-                            others.append(f"{fname} (no path)")
+                            documents.append({
+                                'name': fname,
+                                'path': None,
+                                'status': 'no path'
+                            })
                         continue
                     
                     fpath_str = str(fpath)
-                    if os.path.exists(fpath_str):
-                        if ftype and 'image' in str(ftype).lower():
-                            images.append((fname or "Image", fpath_str))
-                        else:
-                            others.append(fname or "File")
+                    file_exists = os.path.exists(fpath_str)
+                    
+                    if ftype and 'image' in str(ftype).lower():
+                        images.append({
+                            'name': fname or "Image",
+                            'path': fpath_str if file_exists else None,
+                            'status': 'ok' if file_exists else 'missing'
+                        })
                     else:
-                        others.append(f"{fname or 'File'} (missing)")
+                        documents.append({
+                            'name': fname or "File",
+                            'path': fpath_str if file_exists else None,
+                            'status': 'ok' if file_exists else 'missing',
+                            'type': ftype
+                        })
                 
+                # Display images
                 if images:
                     st.markdown("**Images:**")
                     cols = st.columns(2)
-                    for i, (fname, fpath) in enumerate(images):
+                    for i, img_info in enumerate(images):
                         with cols[i % 2]:
-                            try:
-                                st.image(fpath, caption=fname, use_container_width=True)
-                            except Exception as e:
-                                logger.error(f"Error displaying {fpath}: {e}")
-                                st.caption(f"📄 {fname} (can't display)")
+                            if img_info['status'] == 'ok' and img_info['path']:
+                                try:
+                                    st.image(img_info['path'], 
+                                        caption=img_info['name'], 
+                                        use_container_width=True)
+                                except Exception as e:
+                                    logger.error(f"Error displaying {img_info['path']}: {e}")
+                                    st.caption(f"📄 {img_info['name']} (can't display)")
+                            else:
+                                st.caption(f"📄 {img_info['name']} ({img_info['status']})")
                 
-                if others:
+                # Display documents with download buttons
+                if documents:
                     if images:
-                        st.markdown("**Other Files:**")
-                    for fname in others:
-                        st.caption(f"📄 {fname}")
+                        st.markdown("**Documents:**")
+                    
+                    for idx, doc_info in enumerate(documents):
+                        if doc_info['status'] == 'ok' and doc_info['path']:
+                            # Create download button for the file
+                            try:
+                                # Read file content
+                                with open(doc_info['path'], 'rb') as f:
+                                    file_data = f.read()
+                                
+                                # Get file extension for mime type
+                                file_ext = doc_info['name'].split('.')[-1].lower() if '.' in doc_info['name'] else ''
+                                
+                                # Determine mime type
+                                mime_types = {
+                                    'pdf': 'application/pdf',
+                                    'doc': 'application/msword',
+                                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                    'xls': 'application/vnd.ms-excel',
+                                    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                    'txt': 'text/plain',
+                                    'csv': 'text/csv',
+                                    'zip': 'application/zip'
+                                }
+                                mime_type = mime_types.get(file_ext, 'application/octet-stream')
+                                
+                                # Get file size
+                                file_size = len(file_data)
+                                if file_size < 1024:
+                                    size_str = f"{file_size} B"
+                                elif file_size < 1024 * 1024:
+                                    size_str = f"{file_size / 1024:.1f} KB"
+                                else:
+                                    size_str = f"{file_size / (1024 * 1024):.1f} MB"
+                                
+                                # File type icon
+                                icon = "📄"
+                                if file_ext == 'pdf':
+                                    icon = "📄"
+                                elif file_ext in ['doc', 'docx']:
+                                    icon = "📝"
+                                elif file_ext in ['xls', 'xlsx']:
+                                    icon = "📊"
+                                elif file_ext in ['zip', 'rar']:
+                                    icon = "📦"
+                                elif file_ext in ['mp4', 'avi', 'mov']:
+                                    icon = "🎥"
+                                
+                                # Display file info and download button
+                                col1, col2 = st.columns([3, 1])
+                                with col1:
+                                    st.caption(f"{icon} {doc_info['name']} ({size_str})")
+                                with col2:
+                                    st.download_button(
+                                        label="📥",
+                                        data=file_data,
+                                        file_name=doc_info['name'],
+                                        mime=mime_type,
+                                        key=f"download_{oid}_{idx}",
+                                        help=f"Download {doc_info['name']}"
+                                    )
+                                
+                            except Exception as e:
+                                logger.error(f"Error reading file {doc_info['path']}: {e}")
+                                st.caption(f"📄 {doc_info['name']} (error reading file)")
+                        else:
+                            st.caption(f"📄 {doc_info['name']} ({doc_info['status']})")
                         
         except Exception as e:
             logger.error(f"File display error: {e}")
+            st.error(f"Error loading files: {e}")
 
 
 def render_developer_interface(user_info=None, auth_manager=None):
