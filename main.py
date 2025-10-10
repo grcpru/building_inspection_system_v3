@@ -40,41 +40,58 @@ def initialize_database():
         st.sidebar.info(f"🗄️ Database: {db_type.upper()}")
         
         if db_type == "postgresql":
-            # ✅ Check if tables already exist
+            # ✅ Check if tables already exist BEFORE creating them
             conn = conn_manager.get_connection()
             cursor = conn.cursor()
             
-            # Check if critical table exists
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'inspector_inspections'
-                );
-            """)
-            tables_exist = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
+            try:
+                # Check if critical table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public'
+                        AND table_name = 'inspector_inspections'
+                    );
+                """)
+                result = cursor.fetchone()
+                
+                # ✅ FIX: Handle both tuple and dict cursor results
+                if isinstance(result, dict):
+                    tables_exist = result.get('exists', False)
+                elif isinstance(result, (list, tuple)):
+                    tables_exist = result[0] if result else False
+                else:
+                    tables_exist = bool(result)
+                
+                st.sidebar.info(f"Tables exist: {tables_exist}")
+                
+            except Exception as check_error:
+                st.sidebar.warning(f"Table check error: {check_error}")
+                tables_exist = False
+            finally:
+                cursor.close()
+                conn.close()
             
             if not tables_exist:
-                # Tables don't exist - create them
-                st.sidebar.warning("⚙️ First run detected - creating tables...")
+                # First run - create tables
+                st.sidebar.warning("⚙️ First run detected - creating database schema...")
                 postgres_adapter = PostgresAdapter()
                 postgres_adapter.initialize_schema()
                 postgres_adapter.create_default_users()
-                st.sidebar.success("✅ PostgreSQL initialized!")
+                st.sidebar.success("✅ PostgreSQL schema created!")
             else:
-                # Tables exist - don't recreate!
-                st.sidebar.success("✅ PostgreSQL connected!")
+                # Tables already exist - just connect
+                st.sidebar.success("✅ PostgreSQL connected (existing data preserved)!")
             
         else:
             # SQLite initialization (local development)
-            st.sidebar.info("Initializing SQLite database...")
             db_manager = DatabaseManager()
             
-            # Check if database exists
+            # Check if database file exists
             if not os.path.exists(db_manager.db_path):
+                st.sidebar.info("Creating new SQLite database...")
                 db_manager.initialize_database()
-                st.sidebar.success("✅ SQLite created!")
+                st.sidebar.success("✅ SQLite database created!")
             else:
                 st.sidebar.success("✅ SQLite connected!")
         
@@ -83,10 +100,10 @@ def initialize_database():
     except Exception as e:
         st.error(f"❌ Database initialization failed: {e}")
         import traceback
+        st.error("Full error trace:")
         st.code(traceback.format_exc())
         st.stop()
         return False
-
 
 # Initialize database once per session
 if 'db_initialized' not in st.session_state:
