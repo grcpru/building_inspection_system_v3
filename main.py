@@ -25,7 +25,9 @@ from database.postgres_adapter import PostgresAdapter
 from database.setup import DatabaseManager
 
 # ============================================================================
-# DATABASE INITIALIZATION - Add this section at the very top of main.py
+# ============================================================================
+# DATABASE INITIALIZATION
+# ============================================================================
 
 def initialize_database():
     """
@@ -61,8 +63,6 @@ def initialize_database():
                     tables_exist = result[0] if result else False
                 else:
                     tables_exist = bool(result)
-                
-                st.sidebar.info(f"Tables exist: {tables_exist}")
                 
             except Exception as check_error:
                 st.sidebar.warning(f"Table check error: {check_error}")
@@ -103,67 +103,47 @@ def initialize_database():
         st.code(traceback.format_exc())
         st.stop()
         return False
+
+
 # Initialize database once per session
 if 'db_initialized' not in st.session_state:
     with st.spinner("Initializing database..."):
         if initialize_database():
             st.session_state.db_initialized = True
 
-# ✅ ADD THIS: Permanent data monitoring in sidebar
+
+# ✅ Data monitoring in sidebar (shows after authentication)
 if st.session_state.get('db_initialized') and st.session_state.get('authenticated'):
     try:
         from database.connection_manager import get_connection_manager
         conn = get_connection_manager().get_connection()
         cursor = conn.cursor()
         
+        # Get inspection count
         cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
         result = cursor.fetchone()
-        insp_count = result[0] if isinstance(result, (list, tuple)) else 0
+        insp_count = result[0] if isinstance(result, (list, tuple)) else (result.get('count', 0) if result else 0)
         
+        # Get building count
         cursor.execute("SELECT COUNT(*) FROM inspector_buildings")
         result = cursor.fetchone()
-        bldg_count = result[0] if isinstance(result, (list, tuple)) else 0
+        bldg_count = result[0] if isinstance(result, (list, tuple)) else (result.get('count', 0) if result else 0)
         
         cursor.close()
         conn.close()
         
         # Show in sidebar
         if insp_count > 0 or bldg_count > 0:
-            st.sidebar.metric("📊 Data Check", f"{insp_count} inspections")
-        
-    except:
-        pass  # Silent fail - don't break app
-    
-# In main.py, after initialize_database()
-if st.session_state.get('authenticated'):
-    try:
-        conn = get_connection_manager().get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
-        insp_count = cursor.fetchone()[0] if isinstance(cursor.fetchone(), (list, tuple)) else 0
-        
-        cursor.execute("SELECT COUNT(*) FROM inspector_buildings")  
-        bldg_count = cursor.fetchone()[0] if isinstance(cursor.fetchone(), (list, tuple)) else 0
-        
-        cursor.close()
-        conn.close()
-        
-        if insp_count > 0 or bldg_count > 0:
-            st.sidebar.success(f"📊 Data: {insp_count} inspections, {bldg_count} buildings")
+            st.sidebar.success(f"📊 {insp_count} inspections, {bldg_count} buildings")
         else:
-            st.sidebar.warning("⚠️ No data in database")
-            
+            st.sidebar.info("💡 Upload your first inspection to get started")
+        
     except Exception as e:
-        st.sidebar.error(f"Cannot check data: {e}")
+        # Silent fail - don't break app, but log it
+        import logging
+        logging.error(f"Data check failed: {e}")
 
-# Initialize database once per session
-if 'db_initialized' not in st.session_state:
-    with st.spinner("Initializing database..."):
-        if initialize_database():
-            st.session_state.db_initialized = True
-            
-            
+
 def load_system_settings() -> dict:
     """Load system settings from file"""
     settings_file = Path("system_settings.json")
@@ -194,7 +174,7 @@ def load_system_settings() -> dict:
         'enable_quality_scoring': True,
         'min_quality_score': 70
     }
-
+    
 def simple_authenticate(username: str, password: str) -> dict:
     """Authenticate against database with hardcoded fallback"""
     
