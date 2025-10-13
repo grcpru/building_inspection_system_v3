@@ -569,7 +569,7 @@ def main():
     
     # Initialize auth manager
     auth_manager = SimpleAuthManager()
-    
+
     # Sidebar navigation
     with st.sidebar:
         st.title(f"🏗️ {system_name}")
@@ -604,16 +604,44 @@ def main():
             with st.expander("🔑 Demo Credentials"):
                 st.write("**Available Users:**")
                 st.code("""
-Inspector: inspector / test123
-Developer: developer / test123
-Builder: builder / test123
-Admin: admin / admin123
+    Inspector: inspector / test123
+    Developer: developer / test123
+    Builder: builder / test123
+    Admin: admin / admin123
                 """)
         
         else:
             # User info
             st.success(f"✅ Logged in as: **{st.session_state.user_role.title()}**")
             st.write(f"👤 User: {st.session_state.username}")
+            
+            st.divider()
+            
+            # ✅ DATA MONITORING - Only after authenticated
+            try:
+                from database.connection_manager import get_connection_manager
+                conn = get_connection_manager().get_connection()
+                cursor = conn.cursor()
+                
+                # Get counts
+                cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
+                result = cursor.fetchone()
+                insp_count = result['count'] if result else 0
+                
+                cursor.execute("SELECT COUNT(*) FROM inspector_buildings")
+                result = cursor.fetchone()
+                bldg_count = result['count'] if result else 0
+                
+                cursor.close()
+                conn.close()
+                
+                # Display
+                if insp_count > 0 or bldg_count > 0:
+                    st.success(f"📊 {insp_count} inspections, {bldg_count} buildings")
+                else:
+                    st.info("💡 Upload first inspection")
+            except Exception as e:
+                st.warning(f"⚠️ Data check failed")
             
             st.divider()
             
