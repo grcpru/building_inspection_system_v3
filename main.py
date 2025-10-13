@@ -27,6 +27,78 @@ from database.setup import DatabaseManager
 # ============================================================================
 # DATABASE INITIALIZATION - Add this section at the very top of main.py
 # ============================================================================
+# === EMERGENCY DEBUG - ADD THIS TEMPORARILY ===
+
+st.set_page_config(page_title="Debug", layout="wide")
+
+st.title("🔍 EMERGENCY DATABASE DIAGNOSTIC")
+
+from database.connection_manager import get_connection_manager
+
+conn_mgr = get_connection_manager()
+st.write(f"**Database Type:** {conn_mgr.get_db_type()}")
+
+if conn_mgr.get_db_type() == "postgresql":
+    st.write("**DATABASE_URL from secrets:**")
+    if "DATABASE_URL" in st.secrets:
+        url = str(st.secrets["DATABASE_URL"])
+        # Hide password
+        if "@" in url:
+            parts = url.split("@")
+            st.code(f"postgresql://...@{parts[1]}")
+        st.success("✅ DATABASE_URL found")
+    else:
+        st.error("❌ DATABASE_URL NOT FOUND!")
+    
+    # Check tables
+    try:
+        conn = conn_mgr.get_connection()
+        cursor = conn.cursor()
+        
+        # List all tables
+        cursor.execute("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+            ORDER BY table_name;
+        """)
+        tables = cursor.fetchall()
+        
+        st.write("**Tables in Database:**")
+        if tables:
+            for table in tables:
+                table_name = table[0] if isinstance(table, (list, tuple)) else table.get('table_name')
+                st.write(f"  - {table_name}")
+        else:
+            st.error("❌ NO TABLES FOUND!")
+        
+        # Count data
+        try:
+            cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
+            result = cursor.fetchone()
+            count = result[0] if isinstance(result, (list, tuple)) else result.get('count', 0)
+            st.metric("Inspections Count", count)
+        except Exception as e:
+            st.error(f"Cannot count inspections: {e}")
+        
+        try:
+            cursor.execute("SELECT COUNT(*) FROM inspector_buildings")
+            result = cursor.fetchone()
+            count = result[0] if isinstance(result, (list, tuple)) else result.get('count', 0)
+            st.metric("Buildings Count", count)
+        except Exception as e:
+            st.error(f"Cannot count buildings: {e}")
+        
+        cursor.close()
+        conn.close()
+        
+    except Exception as e:
+        st.error(f"Database query failed: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+st.stop()  # Stop here for now
+# === END DEBUG ===
 
 def initialize_database():
     """
