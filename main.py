@@ -119,29 +119,50 @@ if st.session_state.get('db_initialized') and st.session_state.get('authenticate
         conn = get_connection_manager().get_connection()
         cursor = conn.cursor()
         
-        # Get inspection count
+        # Get inspection count with debug
         cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
         result = cursor.fetchone()
-        insp_count = result[0] if isinstance(result, (list, tuple)) else (result.get('count', 0) if result else 0)
+        
+        # DEBUG: Show what we got
+        st.sidebar.write(f"**DEBUG:** Result type: {type(result)}")
+        st.sidebar.write(f"**DEBUG:** Result value: {result}")
+        
+        if isinstance(result, dict):
+            insp_count = result.get('count', 0)
+            st.sidebar.write(f"**DEBUG:** Dict - count: {insp_count}")
+        elif isinstance(result, (list, tuple)):
+            insp_count = result[0] if result and len(result) > 0 else 0
+            st.sidebar.write(f"**DEBUG:** Tuple - count: {insp_count}")
+        else:
+            insp_count = 0
+            st.sidebar.write(f"**DEBUG:** Unknown type - count: 0")
         
         # Get building count
         cursor.execute("SELECT COUNT(*) FROM inspector_buildings")
         result = cursor.fetchone()
-        bldg_count = result[0] if isinstance(result, (list, tuple)) else (result.get('count', 0) if result else 0)
+        
+        if isinstance(result, dict):
+            bldg_count = result.get('count', 0)
+        elif isinstance(result, (list, tuple)):
+            bldg_count = result[0] if result and len(result) > 0 else 0
+        else:
+            bldg_count = 0
         
         cursor.close()
         conn.close()
         
         # Show in sidebar
+        st.sidebar.write(f"**Final counts:** {insp_count} inspections, {bldg_count} buildings")
+        
         if insp_count > 0 or bldg_count > 0:
             st.sidebar.success(f"📊 {insp_count} inspections, {bldg_count} buildings")
         else:
             st.sidebar.info("💡 Upload your first inspection to get started")
         
     except Exception as e:
-        # Silent fail - don't break app, but log it
-        import logging
-        logging.error(f"Data check failed: {e}")
+        st.sidebar.error(f"Data check failed: {e}")
+        import traceback
+        st.sidebar.code(traceback.format_exc())
 
 
 def load_system_settings() -> dict:
