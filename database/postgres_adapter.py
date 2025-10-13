@@ -14,12 +14,31 @@ class PostgresAdapter:
         self.conn_manager = get_connection_manager()
     
     def initialize_schema(self):
-        """Create all tables in PostgreSQL"""
+        """Create all tables in PostgreSQL - ONLY IF THEY DON'T EXIST"""
         
         conn = self.conn_manager.get_connection()
         cursor = conn.cursor()
         
         try:
+            # ✅ CHECK: Do tables already exist?
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'inspector_inspections';
+            """)
+            result = cursor.fetchone()
+            count = result[0] if isinstance(result, (list, tuple)) else result.get('count', 0)
+            
+            if count > 0:
+                print("✅ Schema already exists - skipping initialization")
+                cursor.close()
+                conn.close()
+                return  # ✅ STOP HERE - Don't recreate anything!
+            
+            # Only create if tables don't exist
+            print("⚙️ First run - creating schema...")
+            
             # Enable UUID extension if available
             try:
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
@@ -63,7 +82,6 @@ class PostgresAdapter:
         except Exception as e:
             conn.rollback()
             print(f"❌ Error initializing PostgreSQL schema: {e}")
-            st.error(f"Database initialization error: {e}")
             raise
         finally:
             cursor.close()
