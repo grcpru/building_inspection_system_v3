@@ -25,7 +25,6 @@ from database.postgres_adapter import PostgresAdapter
 from database.setup import DatabaseManager
 
 # ============================================================================
-# ============================================================================
 # DATABASE INITIALIZATION
 # ============================================================================
 
@@ -41,49 +40,50 @@ def initialize_database():
         st.sidebar.info(f"🗄️ Database: {db_type.upper()}")
         
         if db_type == "postgresql":
-            # ✅ Check if tables already exist BEFORE creating them
-            conn = conn_manager.get_connection()
-            cursor = conn.cursor()
+            # PostgreSQL - check if schema exists, don't recreate
+            st.sidebar.info("🔍 Checking PostgreSQL schema...")
             
+            postgres_adapter = PostgresAdapter()
+            postgres_adapter.initialize_schema()  # Has built-in table existence check
+            
+            # Check if users exist, create if needed
             try:
-                # Check if critical table exists
-                cursor.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_schema = 'public'
-                        AND table_name = 'inspector_inspections'
-                    );
-                """)
+                conn = conn_manager.get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) as user_count FROM users;")
                 result = cursor.fetchone()
                 
-                # ✅ FIX: Handle both tuple and dict cursor results
-                if isinstance(result, dict):
-                    tables_exist = result.get('exists', False)
-                elif isinstance(result, (list, tuple)):
-                    tables_exist = result[0] if result else False
+                if result:
+                    if isinstance(result, dict):
+                        user_count = result.get('user_count', result.get('count', 0))
+                    elif isinstance(result, (list, tuple)):
+                        user_count = result[0] if result else 0
+                    else:
+                        user_count = 0
                 else:
-                    tables_exist = bool(result)
+                    user_count = 0
                 
-            except Exception as check_error:
-                st.sidebar.warning(f"Table check error: {check_error}")
-                tables_exist = False
-            finally:
                 cursor.close()
                 conn.close()
-            
-            if not tables_exist:
-                # First run - create tables
-                st.sidebar.warning("⚙️ First run detected - creating database schema...")
-                postgres_adapter = PostgresAdapter()
-                postgres_adapter.initialize_schema()
-                postgres_adapter.create_default_users()
-                st.sidebar.success("✅ PostgreSQL schema created!")
-            else:
-                # Tables already exist - just connect
-                st.sidebar.success("✅ PostgreSQL connected (existing data preserved)!")
+                
+                if user_count == 0:
+                    st.sidebar.info("👥 Creating default users...")
+                    postgres_adapter.create_default_users()
+                    st.sidebar.success("✅ Default users created!")
+                else:
+                    st.sidebar.success(f"✅ PostgreSQL connected ({user_count} users)!")
+                    
+            except Exception as user_check_error:
+                st.sidebar.warning(f"⚠️ User check: {user_check_error}")
+                # Try creating users anyway
+                try:
+                    postgres_adapter.create_default_users()
+                except:
+                    pass
             
         else:
-            # SQLite initialization (local development)
+            # SQLite initialization (local development only)
+            st.sidebar.info("📁 Using SQLite (local mode)")
             db_manager = DatabaseManager()
             
             # Check if database file exists
@@ -119,26 +119,19 @@ if st.session_state.get('db_initialized') and st.session_state.get('authenticate
         conn = get_connection_manager().get_connection()
         cursor = conn.cursor()
         
-        # Get inspection count with debug
-        cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
+        # Get inspection count
+        cursor.execute("SELECT COUNT(*) as count FROM inspector_inspections")
         result = cursor.fetchone()
-        
-        # DEBUG: Show what we got
-        st.sidebar.write(f"**DEBUG:** Result type: {type(result)}")
-        st.sidebar.write(f"**DEBUG:** Result value: {result}")
         
         if isinstance(result, dict):
             insp_count = result.get('count', 0)
-            st.sidebar.write(f"**DEBUG:** Dict - count: {insp_count}")
         elif isinstance(result, (list, tuple)):
             insp_count = result[0] if result and len(result) > 0 else 0
-            st.sidebar.write(f"**DEBUG:** Tuple - count: {insp_count}")
         else:
             insp_count = 0
-            st.sidebar.write(f"**DEBUG:** Unknown type - count: 0")
         
         # Get building count
-        cursor.execute("SELECT COUNT(*) FROM inspector_buildings")
+        cursor.execute("SELECT COUNT(*) as count FROM inspector_buildings")
         result = cursor.fetchone()
         
         if isinstance(result, dict):
@@ -152,17 +145,13 @@ if st.session_state.get('db_initialized') and st.session_state.get('authenticate
         conn.close()
         
         # Show in sidebar
-        st.sidebar.write(f"**Final counts:** {insp_count} inspections, {bldg_count} buildings")
-        
         if insp_count > 0 or bldg_count > 0:
             st.sidebar.success(f"📊 {insp_count} inspections, {bldg_count} buildings")
         else:
             st.sidebar.info("💡 Upload your first inspection to get started")
         
     except Exception as e:
-        st.sidebar.error(f"Data check failed: {e}")
-        import traceback
-        st.sidebar.code(traceback.format_exc())
+        st.sidebar.warning(f"⚠️ Data check: {str(e)[:50]}...")
 
 
 def load_system_settings() -> dict:
@@ -201,19 +190,53 @@ def simple_authenticate(username: str, password: str) -> dict:
     
     # Try database first
     try:
-        db = get_database_connection()
-        if db is not None:
-            cursor = db.cursor()
+        conn_manager = get_connection_manager()
+        conn = conn_manager.get_connection()
+        cursor = conn.cursor()
+        
+        # PostgreSQL query
+        if conn_manager.get_db_type() == "postgresql":
+            cursor.execute("""
+                SELECT id, username, password_hash, role, full_name, is_active
+                FROM users
+                WHERE username = %s
+            """, (username,))
+        else:
+            # SQLite query
             cursor.execute("""
                 SELECT id, username, password_hash, salt, role, first_name, last_name, is_active
                 FROM users
                 WHERE username = ?
             """, (username,))
-            
-            result = cursor.fetchone()
-            db.close()
-            
-            if result:
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if result:
+            if conn_manager.get_db_type() == "postgresql":
+                # PostgreSQL result
+                user_id, db_username, password_hash, role, full_name, is_active = result if isinstance(result, tuple) else (
+                    result.get('id'), result.get('username'), result.get('password_hash'),
+                    result.get('role'), result.get('full_name'), result.get('is_active')
+                )
+                
+                # Check if user is active
+                if not is_active:
+                    return {"success": False}
+                
+                # Verify password with werkzeug
+                from werkzeug.security import check_password_hash
+                if check_password_hash(password_hash, password):
+                    return {
+                        "success": True,
+                        "role": role,
+                        "user_id": user_id,
+                        "username": db_username,
+                        "name": full_name or db_username
+                    }
+            else:
+                # SQLite result
                 user_id, db_username, password_hash, salt, role, first_name, last_name, is_active = result
                 
                 # Check if user is active
@@ -234,6 +257,8 @@ def simple_authenticate(username: str, password: str) -> dict:
                     }
     except Exception as e:
         print(f"Database authentication error: {e}")
+        import traceback
+        print(traceback.format_exc())
     
     # Fallback to hardcoded users
     hardcoded_users = {
@@ -259,8 +284,8 @@ def simple_authenticate(username: str, password: str) -> dict:
 def get_database_connection():
     """Get database connection and handle errors gracefully"""
     try:
-        db = sqlite3.connect("building_inspection.db")
-        return db
+        conn_manager = get_connection_manager()
+        return conn_manager.get_connection()
     except Exception as e:
         st.error(f"Database connection error: {e}")
         return None
@@ -268,33 +293,61 @@ def get_database_connection():
 def get_user_info_from_db(user_id: int) -> dict:
     """Get user information from database"""
     try:
-        db = get_database_connection()
-        if db is None:
+        conn = get_database_connection()
+        if conn is None:
             return {}
         
-        cursor = db.cursor()
-        cursor.execute("""
-            SELECT u.username, u.first_name, u.last_name, u.email, u.role,
-                   p.company, p.job_title, p.phone
-            FROM users u
-            LEFT JOIN user_profiles p ON u.id = p.user_id
-            WHERE u.id = ?
-        """, (user_id,))
+        cursor = conn.cursor()
+        conn_manager = get_connection_manager()
+        
+        if conn_manager.get_db_type() == "postgresql":
+            cursor.execute("""
+                SELECT username, full_name, email, role
+                FROM users
+                WHERE id = %s
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT u.username, u.first_name, u.last_name, u.email, u.role,
+                       p.company, p.job_title, p.phone
+                FROM users u
+                LEFT JOIN user_profiles p ON u.id = p.user_id
+                WHERE u.id = ?
+            """, (user_id,))
         
         result = cursor.fetchone()
-        db.close()
+        cursor.close()
+        conn.close()
         
         if result:
-            return {
-                "user_id": user_id,
-                "username": result[0],
-                "name": f"{result[1]} {result[2]}".strip(),
-                "email": result[3],
-                "role": result[4],
-                "company": result[5] or "Not specified",
-                "job_title": result[6] or "Not specified",
-                "phone": result[7] or "Not specified"
-            }
+            if conn_manager.get_db_type() == "postgresql":
+                if isinstance(result, dict):
+                    return {
+                        "user_id": user_id,
+                        "username": result.get('username'),
+                        "name": result.get('full_name', result.get('username', 'Unknown')),
+                        "email": result.get('email'),
+                        "role": result.get('role')
+                    }
+                else:
+                    return {
+                        "user_id": user_id,
+                        "username": result[0],
+                        "name": result[1] or result[0],
+                        "email": result[2],
+                        "role": result[3]
+                    }
+            else:
+                return {
+                    "user_id": user_id,
+                    "username": result[0],
+                    "name": f"{result[1]} {result[2]}".strip(),
+                    "email": result[3],
+                    "role": result[4],
+                    "company": result[5] or "Not specified",
+                    "job_title": result[6] or "Not specified",
+                    "phone": result[7] or "Not specified"
+                }
         else:
             return {
                 "user_id": user_id,
@@ -311,70 +364,40 @@ def get_user_info_from_db(user_id: int) -> dict:
             "role": st.session_state.get('user_role', 'unknown')
         }
 
-def ensure_demo_users_exist():
-    """Ensure demo users exist in database"""
-    try:
-        db = get_database_connection()
-        if db is None:
-            return
-        
-        cursor = db.cursor()
-        import hashlib
-        import secrets
-        
-        demo_users = [
-            ("admin", "admin123", "admin", "System", "Administrator"),
-            ("inspector", "test123", "inspector", "John", "Smith"),
-            ("developer", "test123", "developer", "Mike", "Chen"),
-            ("builder", "test123", "builder", "David", "Wilson"),
-        ]
-        
-        for username, password, role, first_name, last_name in demo_users:
-            # Check if user exists
-            cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
-            if cursor.fetchone():
-                continue  # User already exists
-            
-            # Create user with salt and hash
-            salt = secrets.token_hex(16)
-            password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-            
-            cursor.execute("""
-                INSERT INTO users (username, email, password_hash, salt, role, is_active, 
-                                   first_name, last_name, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-            """, (username, f"{username}@test.com", password_hash, salt, role, 1, 
-                  first_name, last_name))
-        
-        db.commit()
-        db.close()
-        
-    except Exception as e:
-        print(f"Error creating demo users: {e}")
-
 class SimpleAuthManager:
     """Simple authentication manager for the demo"""
     
     def __init__(self):
-        self.db_path = "building_inspection.db"
+        self.conn_manager = get_connection_manager()
     
     def get_database_connection(self):
         """Get database connection"""
-        return get_database_connection()
+        return self.conn_manager.get_connection()
     
     def validate_user(self, user_id: int) -> bool:
         """Validate if user exists and is active"""
         try:
-            db = self.get_database_connection()
-            if db is None:
+            conn = self.get_database_connection()
+            if conn is None:
                 return False
             
-            cursor = db.cursor()
-            cursor.execute("SELECT is_active FROM users WHERE id = ?", (user_id,))
-            result = cursor.fetchone()
-            db.close()
+            cursor = conn.cursor()
             
-            return result and result[0] == 1
+            if self.conn_manager.get_db_type() == "postgresql":
+                cursor.execute("SELECT is_active FROM users WHERE id = %s", (user_id,))
+            else:
+                cursor.execute("SELECT is_active FROM users WHERE id = ?", (user_id,))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            if isinstance(result, dict):
+                return result.get('is_active', False)
+            elif isinstance(result, (list, tuple)):
+                return result[0] == 1 if result else False
+            else:
+                return bool(result)
         except:
             return True
 
@@ -400,7 +423,8 @@ def render_inspection_reports(user_info: dict, auth_manager):
         # Get inspection history
         try:
             import pandas as pd
-            conn = inspector.db_manager.connect()
+            conn_manager = get_connection_manager()
+            conn = conn_manager.get_connection()
             
             inspections_df = pd.read_sql_query("""
                 SELECT 
@@ -411,7 +435,6 @@ def render_inspection_reports(user_info: dict, auth_manager):
                     i.total_units,
                     i.total_defects,
                     i.ready_pct,
-                    i.urgent_defects,
                     i.original_filename,
                     i.created_at
                 FROM inspector_inspections i
@@ -419,6 +442,8 @@ def render_inspection_reports(user_info: dict, auth_manager):
                 WHERE i.original_filename IS NOT NULL
                 ORDER BY i.created_at DESC
             """, conn)
+            
+            conn.close()
             
             if inspections_df.empty:
                 st.info("No inspection reports available yet")
@@ -496,7 +521,6 @@ def render_inspection_reports(user_info: dict, auth_manager):
                     with col2:
                         st.metric("Total Units", inspection['total_units'])
                         st.metric("Total Defects", inspection['total_defects'])
-                        st.metric("Urgent Defects", inspection['urgent_defects'])
                         st.metric("Ready Rate", f"{inspection['ready_pct']:.1f}%")
                     
                     st.markdown("---")
@@ -557,15 +581,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Initialize database
-    if not os.path.exists("building_inspection.db"):
-        with st.spinner("Setting up database for first time..."):
-            setup_database(seed_test_data=True)
-        st.success("Database setup complete!")
-        st.rerun()
-    
-    # Ensure demo users exist in database
-    ensure_demo_users_exist()
+    # ✅ REMOVED OLD SQLite CHECK - Let initialize_database() handle it
     
     # Initialize auth manager
     auth_manager = SimpleAuthManager()
@@ -604,44 +620,16 @@ def main():
             with st.expander("🔑 Demo Credentials"):
                 st.write("**Available Users:**")
                 st.code("""
-    Inspector: inspector / test123
-    Developer: developer / test123
-    Builder: builder / test123
-    Admin: admin / admin123
+Inspector: inspector / test123
+Developer: developer / test123
+Builder: builder / test123
+Admin: admin / admin123
                 """)
         
         else:
             # User info
             st.success(f"✅ Logged in as: **{st.session_state.user_role.title()}**")
             st.write(f"👤 User: {st.session_state.username}")
-            
-            st.divider()
-            
-            # ✅ DATA MONITORING - Only after authenticated
-            try:
-                from database.connection_manager import get_connection_manager
-                conn = get_connection_manager().get_connection()
-                cursor = conn.cursor()
-                
-                # Get counts
-                cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
-                result = cursor.fetchone()
-                insp_count = result['count'] if result else 0
-                
-                cursor.execute("SELECT COUNT(*) FROM inspector_buildings")
-                result = cursor.fetchone()
-                bldg_count = result['count'] if result else 0
-                
-                cursor.close()
-                conn.close()
-                
-                # Display
-                if insp_count > 0 or bldg_count > 0:
-                    st.success(f"📊 {insp_count} inspections, {bldg_count} buildings")
-                else:
-                    st.info("💡 Upload first inspection")
-            except Exception as e:
-                st.warning(f"⚠️ Data check failed")
             
             st.divider()
             
