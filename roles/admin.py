@@ -23,6 +23,28 @@ from typing import Dict, List, Optional
 import hashlib
 from typing import Tuple
 
+# At the top of your admin dashboard
+import sys
+sys.path.append('.')
+from database.diagnostics import run_diagnostics
+
+# In your admin dashboard UI
+st.header("🔧 System Diagnostics")
+
+if st.button("🔍 Run Database Diagnostics"):
+    st.subheader("Running diagnostics...")
+    
+    # Capture output
+    import io
+    from contextlib import redirect_stdout
+    
+    output = io.StringIO()
+    with redirect_stdout(output):
+        run_diagnostics()
+    
+    # Display results
+    st.code(output.getvalue(), language="text")
+
 try:
     from database.setup import DatabaseManager
     DATABASE_AVAILABLE = True

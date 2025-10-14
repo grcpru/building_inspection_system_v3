@@ -22,16 +22,36 @@ class PostgresAdapter:
         try:
             # ✅ CHECK: Do tables already exist?
             cursor.execute("""
-                SELECT COUNT(*) 
+                SELECT COUNT(*) as table_count
                 FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                 AND table_name = 'inspector_inspections';
             """)
             result = cursor.fetchone()
-            count = result[0] if isinstance(result, (list, tuple)) else result.get('count', 0)
+            
+            # 🔧 FIX: Handle RealDictRow, tuple, or dict properly
+            if result is None:
+                count = 0
+            elif isinstance(result, dict):
+                # RealDictRow behaves like a dict
+                count = result.get('table_count', result.get('count', 0))
+            elif isinstance(result, (list, tuple)):
+                count = result[0]
+            else:
+                # Fallback: try to access as dict first, then as index
+                try:
+                    count = result['table_count']
+                except (TypeError, KeyError):
+                    try:
+                        count = result[0]
+                    except (TypeError, IndexError):
+                        count = 0
+            
+            print(f"🔍 Table check result: {result} -> count={count}")
             
             if count > 0:
                 print("✅ Schema already exists - skipping initialization")
+                print(f"   inspector_inspections table found in database")
                 cursor.close()
                 conn.close()
                 return  # ✅ STOP HERE - Don't recreate anything!
@@ -82,6 +102,8 @@ class PostgresAdapter:
         except Exception as e:
             conn.rollback()
             print(f"❌ Error initializing PostgreSQL schema: {e}")
+            import traceback
+            print(traceback.format_exc())
             raise
         finally:
             cursor.close()
