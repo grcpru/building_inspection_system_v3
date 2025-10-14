@@ -14,7 +14,6 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 import logging
-import sqlite3
 import os
 import shutil
 import json
@@ -27,6 +26,9 @@ from typing import Tuple
 import sys
 sys.path.append('.')
 from database.diagnostics import run_diagnostics
+
+# ✅ CRITICAL FIX: Use connection manager instead of direct SQLite
+from database.connection_manager import get_connection_manager
 
 # In your admin dashboard UI
 st.header("🔧 System Diagnostics")
@@ -66,7 +68,10 @@ class AdminInterface:
     def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
         self.user_info = user_info or {}
         self.db_path = db_path
-        self.db = DatabaseManager(db_path) if DATABASE_AVAILABLE else None
+        # ✅ Use connection manager
+        self.conn_manager = get_connection_manager()
+        self.db_type = self.conn_manager.get_db_type()
+        self.db = DatabaseManager(db_path) if DATABASE_AVAILABLE and self.db_type == "sqlite" else None
         
         # Session state initialization
         if 'admin_active_tab' not in st.session_state:
@@ -75,6 +80,41 @@ class AdminInterface:
             st.session_state.admin_selected_user = None
         if 'admin_edit_mode' not in st.session_state:
             st.session_state.admin_edit_mode = False
+    
+    def _get_connection(self):
+        """Get database connection using connection manager"""
+        return self.conn_manager.get_connection()
+    
+    def _execute_query(self, query: str, params: tuple = None, fetch: str = None):
+        """Execute query with proper parameter style for database type"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Convert ? to %s for PostgreSQL
+            if self.db_type == "postgresql" and "?" in query:
+                query = query.replace("?", "%s")
+            
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            if fetch == "one":
+                result = cursor.fetchone()
+            elif fetch == "all":
+                result = cursor.fetchall()
+            else:
+                result = None
+            
+            cursor.close()
+            conn.close()
+            return result
+            
+        except Exception as e:
+            cursor.close()
+            conn.close()
+            raise e
     
     def show(self):
         """Main admin dashboard"""
@@ -213,27 +253,44 @@ class AdminInterface:
         """Load users from database"""
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             
-            query = """
-                SELECT 
-                    u.id,
-                    u.username,
-                    u.email,
-                    u.role,
-                    u.is_active,
-                    u.created_at,
-                    u.last_login,
-                    COALESCE(u.first_name || ' ' || u.last_name, u.username) as name,
-                    COALESCE(p.company, '') as company,
-                    COALESCE(p.job_title, '') as job_title,
-                    COALESCE(p.phone, '') as phone
-                FROM users u
-                LEFT JOIN user_profiles p ON u.id = p.user_id
-            """
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT 
+                        u.id,
+                        u.username,
+                        u.email,
+                        u.role,
+                        u.is_active,
+                        u.created_at,
+                        u.last_login,
+                        COALESCE(u.full_name, u.username) as name,
+                        '' as company,
+                        '' as job_title,
+                        '' as phone
+                    FROM users u
+                """
+            else:
+                query = """
+                    SELECT 
+                        u.id,
+                        u.username,
+                        u.email,
+                        u.role,
+                        u.is_active,
+                        u.created_at,
+                        u.last_login,
+                        COALESCE(u.first_name || ' ' || u.last_name, u.username) as name,
+                        COALESCE(p.company, '') as company,
+                        COALESCE(p.job_title, '') as job_title,
+                        COALESCE(p.phone, '') as phone
+                    FROM users u
+                    LEFT JOIN user_profiles p ON u.id = p.user_id
+                """
             
             if not show_inactive:
-                query += " WHERE u.is_active = 1"
+                query += " WHERE u.is_active = " + ("TRUE" if self.db_type == "postgresql" else "1")
             
             query += " ORDER BY u.created_at DESC"
             
@@ -250,7 +307,7 @@ class AdminInterface:
         """Render individual user card"""
         
         user_id = user['id']
-        is_active = user['is_active'] == 1
+        is_active = user['is_active'] if self.db_type == "postgresql" else (user['is_active'] == 1)
         
         # Role color coding
         role_colors = {
@@ -279,7 +336,7 @@ class AdminInterface:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                if user['company']:
+                if user.get('company'):
                     st.caption(f"🏢 {user['company']}")
             
             with col3:
@@ -298,245 +355,74 @@ class AdminInterface:
                     st.session_state.admin_selected_user = user_id
                     st.rerun()
         
-        st.divider()
-    
-    def _show_user_form(self):
-        """Show user create/edit form"""
-        
-        mode = st.session_state.admin_edit_mode
-        
-        # Get user_id early for use in keys
-        if mode == 'edit':
-            user_id = st.session_state.admin_selected_user
-        else:
-            user_id = 'new'
-        
-        st.markdown("---")
-        
-        if mode == 'create':
-            st.markdown("### ➕ Create New User")
-            user_data = {}
-        else:
-            st.markdown("### ✏️ Edit User")
-            
-            # Load existing user data
-            if st.session_state.admin_selected_user:
-                user_data = self._load_user_details(st.session_state.admin_selected_user)
-                
-                if not user_data:
-                    st.error(f"Could not load user with ID: {st.session_state.admin_selected_user}")
-                    
-                    if st.button("Back to User List"):
-                        st.session_state.admin_edit_mode = False
-                        st.session_state.admin_selected_user = None
-                        st.rerun()
-                    return
-                
-                st.info(f"Editing user: {user_data.get('username', 'Unknown')}")
-            else:
-                st.error("No user selected for editing")
-                
-                if st.button("Back to User List"):
-                    st.session_state.admin_edit_mode = False
-                    st.rerun()
-                return
-        
-        with st.form("user_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**Account Information**")
-                
-                username = st.text_input(
-                    "Username*",
-                    value=user_data.get('username', ''),
-                    disabled=(mode == 'edit'),
-                    help="Username cannot be changed after creation"
-                )
-                
-                email = st.text_input(
-                    "Email*",
-                    value=user_data.get('email', '')
-                )
-                
-                role = st.selectbox(
-                    "Role*",
-                    options=['inspector', 'developer', 'builder', 'owner','admin'],  # Removed 'owner'
-                    index=['inspector', 'developer', 'builder', 'owner', 'admin'].index(
-                        user_data.get('role', 'inspector')
-                    ) if user_data.get('role') else 0
-                )
-                
-                is_active = st.checkbox(
-                    "Active User",
-                    value=user_data.get('is_active', True)
-                )
-                
-                # PASSWORD SECTION - SIMPLE AND CLEAR
-                st.markdown("---")
-                
-                if mode == 'create':
-                    st.markdown("**Password** (Required)")
-                    password = st.text_input("Password*", type="password", key=f"pwd_{user_id}")
-                    confirm_password = st.text_input("Confirm Password*", type="password", key=f"pwd_confirm_{user_id}")
-                else:
-                    st.markdown("**Change Password** (Optional)")
-                    st.caption("Leave blank to keep current password")
-                    password = st.text_input(
-                        "New Password", 
-                        type="password", 
-                        key=f"new_pwd_{user_id}",
-                        placeholder="Enter new password or leave blank"
-                    )
-                    confirm_password = st.text_input(
-                        "Confirm New Password", 
-                        type="password", 
-                        key=f"confirm_pwd_{user_id}",
-                        placeholder="Confirm new password"
-                    )
-            
-            with col2:
-                st.markdown("**Profile Information**")
-                
-                first_name = st.text_input(
-                    "First Name",
-                    value=user_data.get('first_name', '')
-                )
-                
-                last_name = st.text_input(
-                    "Last Name",
-                    value=user_data.get('last_name', '')
-                )
-                
-                company = st.text_input(
-                    "Company",
-                    value=user_data.get('company', '')
-                )
-                
-                job_title = st.text_input(
-                    "Job Title",
-                    value=user_data.get('job_title', '')
-                )
-                
-                phone = st.text_input(
-                    "Phone",
-                    value=user_data.get('phone', '')
-                )
-            
-            st.markdown("---")
-            
-            col1, col2, col3 = st.columns([2, 1, 1])
-            
-            with col1:
-                submit = st.form_submit_button(
-                    "Create User" if mode == 'create' else "Update User",
-                    type="primary",
-                    use_container_width=True
-                )
-            
-            with col3:
-                cancel = st.form_submit_button("Cancel", use_container_width=True)
-            
-            if submit:
-                # Validation
-                errors = []
-                
-                if not username:
-                    errors.append("Username is required")
-                if not email:
-                    errors.append("Email is required")
-                
-                # Password validation for create mode
-                if mode == 'create':
-                    if not password:
-                        errors.append("Password is required for new users")
-                    elif len(password) < 6:
-                        errors.append("Password must be at least 6 characters")
-                    elif password != confirm_password:
-                        errors.append("Passwords do not match")
-                
-                # Password validation for edit mode (only if they entered something)
-                if mode == 'edit' and password:
-                    if len(password) < 6:
-                        errors.append("New password must be at least 6 characters")
-                    elif password != confirm_password:
-                        errors.append("Passwords do not match")
-                
-                # If editing and no password entered, set to None (keep existing)
-                if mode == 'edit' and not password:
-                    password = None
-                
-                if errors:
-                    for error in errors:
-                        st.error(error)
-                else:
-                    # Save user
-                    try:
-                        success = self._save_user(
-                            mode=mode,
-                            user_id=st.session_state.admin_selected_user if mode == 'edit' else None,
-                            username=username,
-                            email=email,
-                            password=password,
-                            role=role,
-                            is_active=is_active,
-                            first_name=first_name,
-                            last_name=last_name,
-                            company=company,
-                            job_title=job_title,
-                            phone=phone
-                        )
-                        
-                        if success:
-                            st.success(f"User {'created' if mode == 'create' else 'updated'} successfully!")
-                            st.session_state.admin_edit_mode = False
-                            st.session_state.admin_selected_user = None
-                            import time
-                            time.sleep(1)
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Unexpected error: {str(e)}")
-                        logger.error(f"Form submission error: {e}")
-            
-            if cancel:
-                st.session_state.admin_edit_mode = False
-                st.session_state.admin_selected_user = None
-                st.rerun()
-    
-    def _load_user_details(self, user_id: int) -> dict:
+        st.divider()def _load_user_details(self, user_id: int) -> dict:
         """Load detailed user information"""
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             
-            # Get user data from users table (first_name, last_name are here)
-            cursor.execute("""
-                SELECT u.username, u.email, u.role, u.is_active,
-                    u.first_name, u.last_name,
-                    COALESCE(p.company, '') as company, 
-                    COALESCE(p.job_title, '') as job_title, 
-                    COALESCE(p.phone, '') as phone
-                FROM users u
-                LEFT JOIN user_profiles p ON u.id = p.user_id
-                WHERE u.id = ?
-            """, (user_id,))
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT username, email, role, is_active, full_name
+                    FROM users
+                    WHERE id = %s
+                """
+            else:
+                query = """
+                    SELECT u.username, u.email, u.role, u.is_active,
+                        u.first_name, u.last_name,
+                        COALESCE(p.company, '') as company, 
+                        COALESCE(p.job_title, '') as job_title, 
+                        COALESCE(p.phone, '') as phone
+                    FROM users u
+                    LEFT JOIN user_profiles p ON u.id = p.user_id
+                    WHERE u.id = ?
+                """
             
+            cursor.execute(query, (user_id,))
             result = cursor.fetchone()
+            cursor.close()
             conn.close()
             
             if result:
-                return {
-                    'username': result[0],
-                    'email': result[1],
-                    'role': result[2],
-                    'is_active': result[3] == 1,
-                    'first_name': result[4] or '',
-                    'last_name': result[5] or '',
-                    'company': result[6] or '',
-                    'job_title': result[7] or '',
-                    'phone': result[8] or ''
-                }
+                if self.db_type == "postgresql":
+                    if isinstance(result, dict):
+                        return {
+                            'username': result.get('username'),
+                            'email': result.get('email'),
+                            'role': result.get('role'),
+                            'is_active': result.get('is_active'),
+                            'first_name': result.get('full_name', '').split()[0] if result.get('full_name') else '',
+                            'last_name': ' '.join(result.get('full_name', '').split()[1:]) if result.get('full_name') else '',
+                            'company': '',
+                            'job_title': '',
+                            'phone': ''
+                        }
+                    else:
+                        return {
+                            'username': result[0],
+                            'email': result[1],
+                            'role': result[2],
+                            'is_active': result[3],
+                            'first_name': result[4].split()[0] if result[4] else '',
+                            'last_name': ' '.join(result[4].split()[1:]) if result[4] else '',
+                            'company': '',
+                            'job_title': '',
+                            'phone': ''
+                        }
+                else:
+                    return {
+                        'username': result[0],
+                        'email': result[1],
+                        'role': result[2],
+                        'is_active': result[3] == 1,
+                        'first_name': result[4] or '',
+                        'last_name': result[5] or '',
+                        'company': result[6] or '',
+                        'job_title': result[7] or '',
+                        'phone': result[8] or ''
+                    }
             
             return {}
             
@@ -545,123 +431,129 @@ class AdminInterface:
             st.error(f"Error loading user details: {e}")
             return {}
     
+    # Keep your existing _show_user_form implementation (it's long but doesn't need changes for DB access)
+    # Just update the _save_user method:
+    
     def _save_user(self, mode: str, user_id: Optional[int], username: str, email: str,
-               password: Optional[str], role: str, is_active: bool, first_name: str,
-               last_name: str, company: str, job_title: str, phone: str) -> bool:
-        """Save user to database"""
+                   password: Optional[str], role: str, is_active: bool, first_name: str,
+                   last_name: str, company: str, job_title: str, phone: str) -> bool:
+        """Save user to database - FIXED for PostgreSQL"""
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             
             if mode == 'create':
-                # Check if username already exists
-                cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+                # Check if username exists
+                check_query = "SELECT id FROM users WHERE username = " + ("%s" if self.db_type == "postgresql" else "?")
+                cursor.execute(check_query, (username,))
+                
                 if cursor.fetchone():
                     st.error(f"Username '{username}' already exists")
+                    cursor.close()
                     conn.close()
                     return False
                 
-                # Generate salt and hash password
-                import secrets
-                salt = secrets.token_hex(16)
-                password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-                
-                # Provide default values for first_name and last_name if empty
-                fn = first_name if first_name else username
-                ln = last_name if last_name else ""
-                
-                # Insert user with first_name and last_name
-                cursor.execute("""
-                    INSERT INTO users (username, email, password_hash, salt, role, is_active, 
-                                    first_name, last_name, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (username, email, password_hash, salt, role, 1 if is_active else 0, 
-                    fn, ln, datetime.now().isoformat()))
-                
-                new_user_id = cursor.lastrowid
-                
-                # Check if user_profiles table exists and insert additional profile data
-                cursor.execute("""
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='user_profiles'
-                """)
-                
-                if cursor.fetchone():
-                    # user_profiles only has: user_id, company, job_title, phone
-                    cursor.execute("""
-                        INSERT INTO user_profiles (user_id, company, job_title, phone)
-                        VALUES (?, ?, ?, ?)
-                    """, (new_user_id, company, job_title, phone))
+                # Handle password
+                if self.db_type == "postgresql":
+                    from werkzeug.security import generate_password_hash
+                    password_hash = generate_password_hash(password)
+                    
+                    insert_query = """
+                        INSERT INTO users (username, email, password_hash, role, is_active, full_name, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """
+                    full_name = f"{first_name} {last_name}".strip() or username
+                    cursor.execute(insert_query, (username, email, password_hash, role, is_active, full_name))
                 else:
-                    logger.warning("user_profiles table does not exist")
-                
-            else:  # edit mode
-                # Check if user exists
-                cursor.execute("SELECT salt FROM users WHERE id = ?", (user_id,))
-                result = cursor.fetchone()
-                
-                if not result:
-                    st.error(f"User ID {user_id} not found")
-                    conn.close()
-                    return False
-                
-                # Provide default values for first_name and last_name if empty
-                fn = first_name if first_name else username
-                ln = last_name if last_name else ""
-                
-                # Update user
-                if password:
-                    # Generate new salt for password change
                     import secrets
                     salt = secrets.token_hex(16)
                     password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
                     
-                    cursor.execute("""
-                        UPDATE users 
-                        SET email = ?, password_hash = ?, salt = ?, role = ?, is_active = ?,
-                            first_name = ?, last_name = ?
-                        WHERE id = ?
-                    """, (email, password_hash, salt, role, 1 if is_active else 0, 
-                        fn, ln, user_id))
-                else:
-                    cursor.execute("""
-                        UPDATE users 
-                        SET email = ?, role = ?, is_active = ?, first_name = ?, last_name = ?
-                        WHERE id = ?
-                    """, (email, role, 1 if is_active else 0, fn, ln, user_id))
-                
-                # Update user_profiles if it exists
-                cursor.execute("""
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='user_profiles'
-                """)
-                
-                if cursor.fetchone():
-                    cursor.execute("SELECT user_id FROM user_profiles WHERE user_id = ?", (user_id,))
+                    insert_query = """
+                        INSERT INTO users (username, email, password_hash, salt, role, is_active, 
+                                        first_name, last_name, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                    fn = first_name if first_name else username
+                    ln = last_name if last_name else ""
+                    cursor.execute(insert_query, (username, email, password_hash, salt, role, 
+                                                 1 if is_active else 0, fn, ln, datetime.now().isoformat()))
                     
+                    # Handle user_profiles for SQLite
+                    new_user_id = cursor.lastrowid
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_profiles'")
                     if cursor.fetchone():
-                        # user_profiles only has: company, job_title, phone (no names)
-                        cursor.execute("""
-                            UPDATE user_profiles 
-                            SET company = ?, job_title = ?, phone = ?
-                            WHERE user_id = ?
-                        """, (company, job_title, phone, user_id))
-                    else:
                         cursor.execute("""
                             INSERT INTO user_profiles (user_id, company, job_title, phone)
                             VALUES (?, ?, ?, ?)
-                        """, (user_id, company, job_title, phone))
+                        """, (new_user_id, company, job_title, phone))
+                
+            else:  # edit mode
+                if self.db_type == "postgresql":
+                    if password:
+                        from werkzeug.security import generate_password_hash
+                        password_hash = generate_password_hash(password)
+                        full_name = f"{first_name} {last_name}".strip() or username
+                        
+                        update_query = """
+                            UPDATE users 
+                            SET email = %s, password_hash = %s, role = %s, is_active = %s, full_name = %s
+                            WHERE id = %s
+                        """
+                        cursor.execute(update_query, (email, password_hash, role, is_active, full_name, user_id))
+                    else:
+                        full_name = f"{first_name} {last_name}".strip() or username
+                        update_query = """
+                            UPDATE users 
+                            SET email = %s, role = %s, is_active = %s, full_name = %s
+                            WHERE id = %s
+                        """
+                        cursor.execute(update_query, (email, role, is_active, full_name, user_id))
+                else:
+                    fn = first_name if first_name else username
+                    ln = last_name if last_name else ""
+                    
+                    if password:
+                        import secrets
+                        salt = secrets.token_hex(16)
+                        password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+                        
+                        cursor.execute("""
+                            UPDATE users 
+                            SET email = ?, password_hash = ?, salt = ?, role = ?, is_active = ?,
+                                first_name = ?, last_name = ?
+                            WHERE id = ?
+                        """, (email, password_hash, salt, role, 1 if is_active else 0, fn, ln, user_id))
+                    else:
+                        cursor.execute("""
+                            UPDATE users 
+                            SET email = ?, role = ?, is_active = ?, first_name = ?, last_name = ?
+                            WHERE id = ?
+                        """, (email, role, 1 if is_active else 0, fn, ln, user_id))
+                    
+                    # Update user_profiles for SQLite
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_profiles'")
+                    if cursor.fetchone():
+                        cursor.execute("SELECT user_id FROM user_profiles WHERE user_id = ?", (user_id,))
+                        if cursor.fetchone():
+                            cursor.execute("""
+                                UPDATE user_profiles 
+                                SET company = ?, job_title = ?, phone = ?
+                                WHERE user_id = ?
+                            """, (company, job_title, phone, user_id))
+                        else:
+                            cursor.execute("""
+                                INSERT INTO user_profiles (user_id, company, job_title, phone)
+                                VALUES (?, ?, ?, ?)
+                            """, (user_id, company, job_title, phone))
             
             conn.commit()
+            cursor.close()
             conn.close()
             
             return True
             
-        except sqlite3.IntegrityError as e:
-            logger.error(f"Database integrity error: {e}")
-            st.error(f"Database error: {str(e)}")
-            return False
         except Exception as e:
             logger.error(f"Error saving user: {e}")
             st.error(f"Error details: {str(e)}")
@@ -674,31 +566,45 @@ class AdminInterface:
         
         with st.expander("User Statistics", expanded=True):
             try:
-                conn = sqlite3.connect(self.db_path)
+                conn = self._get_connection()
                 
                 # Role distribution
-                role_df = pd.read_sql_query("""
+                role_query = """
                     SELECT role, COUNT(*) as count
                     FROM users
-                    WHERE is_active = 1
+                    WHERE is_active = """ + ("TRUE" if self.db_type == "postgresql" else "1") + """
                     GROUP BY role
                     ORDER BY count DESC
-                """, conn)
+                """
+                role_df = pd.read_sql_query(role_query, conn)
                 
                 # Activity stats
                 cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
-                active_users = cursor.fetchone()[0]
+                active_cond = "TRUE" if self.db_type == "postgresql" else "1"
+                inactive_cond = "FALSE" if self.db_type == "postgresql" else "0"
                 
-                cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 0")
-                inactive_users = cursor.fetchone()[0]
+                cursor.execute(f"SELECT COUNT(*) as count FROM users WHERE is_active = {active_cond}")
+                result = cursor.fetchone()
+                active_users = result['count'] if isinstance(result, dict) else result[0]
                 
-                cursor.execute("""
-                    SELECT COUNT(*) FROM users 
-                    WHERE last_login >= date('now', '-7 days')
-                """)
-                recent_logins = cursor.fetchone()[0]
+                cursor.execute(f"SELECT COUNT(*) as count FROM users WHERE is_active = {inactive_cond}")
+                result = cursor.fetchone()
+                inactive_users = result['count'] if isinstance(result, dict) else result[0]
                 
+                if self.db_type == "postgresql":
+                    cursor.execute("""
+                        SELECT COUNT(*) as count FROM users 
+                        WHERE last_login >= NOW() - INTERVAL '7 days'
+                    """)
+                else:
+                    cursor.execute("""
+                        SELECT COUNT(*) as count FROM users 
+                        WHERE last_login >= date('now', '-7 days')
+                    """)
+                result = cursor.fetchone()
+                recent_logins = result['count'] if isinstance(result, dict) else result[0]
+                
+                cursor.close()
                 conn.close()
                 
                 col1, col2, col3 = st.columns(3)
@@ -1098,117 +1004,65 @@ class AdminInterface:
                     else:
                         st.error(message)
 
-
     def _remove_seed_data(self) -> Tuple[bool, str]:
-        """Remove seed/test data from database"""
+        """Remove seed/test data from database - FIXED for PostgreSQL"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             
             # Get seed building IDs
-            cursor.execute("""
+            query = """
                 SELECT id, name FROM inspector_buildings
-                WHERE name IN (
-                    'Harbour Views Apartments',
-                    'City Central Complex',
-                    'Test Building - Schema Verification'
-                )
-            """)
+                WHERE name IN (%s, %s, %s)
+            """ if self.db_type == "postgresql" else """
+                SELECT id, name FROM inspector_buildings
+                WHERE name IN (?, ?, ?)
+            """
+            
+            cursor.execute(query, (
+                'Harbour Views Apartments',
+                'City Central Complex',
+                'Test Building - Schema Verification'
+            ))
             
             seed_buildings = cursor.fetchall()
             
             if not seed_buildings:
+                cursor.close()
                 conn.close()
                 return True, "✓ No seed data found - database is already clean"
-            
-            # Start transaction
-            cursor.execute("BEGIN TRANSACTION")
             
             removed_count = 0
             
             # Delete in correct order (respecting foreign keys)
-            for building_id, name in seed_buildings:
+            for building_row in seed_buildings:
+                building_id = building_row['id'] if isinstance(building_row, dict) else building_row[0]
                 
-                # Get inspection IDs for this building
-                cursor.execute("""
-                    SELECT id FROM inspector_inspections
-                    WHERE building_id = ?
-                """, (building_id,))
+                # Get inspection IDs
+                insp_query = "SELECT id FROM inspector_inspections WHERE building_id = " + ("%s" if self.db_type == "postgresql" else "?")
+                cursor.execute(insp_query, (building_id,))
+                inspection_ids = [row['id'] if isinstance(row, dict) else row[0] for row in cursor.fetchall()]
                 
-                inspection_ids = [row[0] for row in cursor.fetchall()]
-                
-                # Delete work orders
+                # Delete related data
                 for inspection_id in inspection_ids:
-                    cursor.execute("""
-                        DELETE FROM inspector_work_orders
-                        WHERE inspection_id = ?
-                    """, (inspection_id,))
-                
-                # Delete inspection items
-                for inspection_id in inspection_ids:
-                    cursor.execute("""
-                        DELETE FROM inspector_inspection_items
-                        WHERE inspection_id = ?
-                    """, (inspection_id,))
-                
-                # Delete unit inspections (if table exists)
-                try:
-                    for inspection_id in inspection_ids:
-                        cursor.execute("""
-                            DELETE FROM inspector_unit_inspections
-                            WHERE inspection_id = ?
-                        """, (inspection_id,))
-                except:
-                    pass  # Table might not exist
-                
-                # Delete metrics summary (if table exists)
-                try:
-                    for inspection_id in inspection_ids:
-                        cursor.execute("""
-                            DELETE FROM inspector_metrics_summary
-                            WHERE inspection_id = ?
-                        """, (inspection_id,))
-                except:
-                    pass  # Table might not exist
+                    del_query = "DELETE FROM inspector_work_orders WHERE inspection_id = " + ("%s" if self.db_type == "postgresql" else "?")
+                    cursor.execute(del_query, (inspection_id,))
+                    
+                    del_query = "DELETE FROM inspector_inspection_items WHERE inspection_id = " + ("%s" if self.db_type == "postgresql" else "?")
+                    cursor.execute(del_query, (inspection_id,))
                 
                 # Delete inspections
-                cursor.execute("""
-                    DELETE FROM inspector_inspections
-                    WHERE building_id = ?
-                """, (building_id,))
-                
-                # Delete project progress (if table exists)
-                try:
-                    cursor.execute("""
-                        DELETE FROM inspector_project_progress
-                        WHERE building_id = ?
-                    """, (building_id,))
-                except:
-                    pass  # Table might not exist
+                del_query = "DELETE FROM inspector_inspections WHERE building_id = " + ("%s" if self.db_type == "postgresql" else "?")
+                cursor.execute(del_query, (building_id,))
                 
                 # Delete building
-                cursor.execute("""
-                    DELETE FROM inspector_buildings
-                    WHERE id = ?
-                """, (building_id,))
+                del_query = "DELETE FROM inspector_buildings WHERE id = " + ("%s" if self.db_type == "postgresql" else "?")
+                cursor.execute(del_query, (building_id,))
                 
                 removed_count += 1
             
-            # Clean up CSV processing log for test files
-            try:
-                cursor.execute("""
-                    DELETE FROM inspector_csv_processing_log
-                    WHERE building_name IN (
-                        'Harbour Views Apartments',
-                        'City Central Complex',
-                        'Test Building - Schema Verification'
-                    )
-                """)
-            except:
-                pass  # Table might not exist
-            
-            # Commit changes
             conn.commit()
+            cursor.close()
             conn.close()
             
             return True, f"✅ Removed {removed_count} seed buildings successfully"
@@ -1216,6 +1070,7 @@ class AdminInterface:
         except Exception as e:
             try:
                 conn.rollback()
+                cursor.close()
                 conn.close()
             except:
                 pass
@@ -1388,54 +1243,115 @@ class AdminInterface:
                 st.error(f"Integrity check failed: {e}")
     
     def _show_database_statistics(self):
-        """Show detailed database statistics"""
+        """Show detailed database statistics - FIXED for PostgreSQL"""
         
         with st.expander("Database Statistics", expanded=True):
             try:
-                if self.db:
-                    stats = self.db.get_database_stats()
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("**Core Tables:**")
-                        st.metric("Users", stats.get('users_count', 0))
-                        st.metric("Buildings", stats.get('inspector_buildings_count', 0))
-                        st.metric("Inspections", stats.get('inspector_inspections_count', 0))
-                    
-                    with col2:
-                        st.markdown("**Work Management:**")
-                        st.metric("Work Orders", stats.get('inspector_work_orders_count', 0))
-                        st.metric("Progress Records", stats.get('inspector_project_progress_count', 0))
-                        st.metric("Processing Logs", stats.get('inspector_csv_processing_log_count', 0))
-                    
-                    # Table sizes
-                    st.markdown("**Table Sizes:**")
-                    
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    
+                # ✅ Use connection manager instead of direct SQLite
+                from database.connection_manager import get_connection_manager
+                conn_manager = get_connection_manager()
+                conn = conn_manager.get_connection()
+                
+                # Get basic stats
+                cursor = conn.cursor()
+                
+                stats = {}
+                
+                # Core tables
+                tables_to_count = [
+                    'users',
+                    'inspector_buildings', 
+                    'inspector_inspections',
+                    'inspector_inspection_items',
+                    'inspector_work_orders',
+                    'inspector_project_progress'
+                ]
+                
+                for table in tables_to_count:
+                    try:
+                        cursor.execute(f"SELECT COUNT(*) as count FROM {table}")
+                        result = cursor.fetchone()
+                        
+                        # Handle both dict and tuple results
+                        if isinstance(result, dict):
+                            count = result.get('count', 0)
+                        elif isinstance(result, (list, tuple)):
+                            count = result[0] if result else 0
+                        else:
+                            count = 0
+                        
+                        stats[f'{table}_count'] = count
+                    except Exception as e:
+                        print(f"Could not count {table}: {e}")
+                        stats[f'{table}_count'] = 0
+                
+                cursor.close()
+                conn.close()
+                
+                # Display stats
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Core Tables:**")
+                    st.metric("Users", stats.get('users_count', 0))
+                    st.metric("Buildings", stats.get('inspector_buildings_count', 0))
+                    st.metric("Inspections", stats.get('inspector_inspections_count', 0))
+                
+                with col2:
+                    st.markdown("**Work Management:**")
+                    st.metric("Inspection Items", stats.get('inspector_inspection_items_count', 0))
+                    st.metric("Work Orders", stats.get('inspector_work_orders_count', 0))
+                    st.metric("Progress Records", stats.get('inspector_project_progress_count', 0))
+                
+                # Table sizes
+                st.markdown("---")
+                st.markdown("**All Tables:**")
+                
+                conn = conn_manager.get_connection()
+                cursor = conn.cursor()
+                
+                # Get all tables
+                if conn_manager.get_db_type() == "postgresql":
                     cursor.execute("""
-                        SELECT name FROM sqlite_master 
+                        SELECT table_name 
+                        FROM information_schema.tables 
+                        WHERE table_schema = 'public'
+                        ORDER BY table_name
+                    """)
+                else:
+                    cursor.execute("""
+                        SELECT name as table_name
+                        FROM sqlite_master 
                         WHERE type='table' 
                         ORDER BY name
                     """)
+                
+                tables = cursor.fetchall()
+                
+                table_sizes = []
+                for table_row in tables:
+                    table_name = table_row['table_name'] if isinstance(table_row, dict) else table_row[0]
                     
-                    tables = cursor.fetchall()
-                    
-                    table_sizes = []
-                    for (table_name,) in tables:
-                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                        count = cursor.fetchone()[0]
+                    try:
+                        cursor.execute(f"SELECT COUNT(*) as count FROM {table_name}")
+                        result = cursor.fetchone()
+                        count = result['count'] if isinstance(result, dict) else result[0]
                         table_sizes.append({'Table': table_name, 'Rows': count})
-                    
-                    conn.close()
-                    
+                    except:
+                        table_sizes.append({'Table': table_name, 'Rows': 'Error'})
+                
+                cursor.close()
+                conn.close()
+                
+                if table_sizes:
                     sizes_df = pd.DataFrame(table_sizes)
                     st.dataframe(sizes_df, use_container_width=True)
                     
             except Exception as e:
                 st.error(f"Error loading statistics: {e}")
+                import traceback
+                with st.expander("Error Details"):
+                    st.code(traceback.format_exc())
     
     def _show_existing_backups(self):
         """Show list of existing backups"""
