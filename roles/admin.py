@@ -22,10 +22,6 @@ from typing import Dict, List, Optional
 import hashlib
 from typing import Tuple
 
-# At the top of your admin dashboard
-import sys
-sys.path.append('.')
-
 # ✅ CRITICAL FIX: Use connection manager instead of direct SQLite
 from database.connection_manager import get_connection_manager
 
@@ -135,7 +131,7 @@ class AdminInterface:
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Refresh", use_container_width=True):
+            if st.button("🔄 Refresh", use_container_width=True, key="refresh_users"):
                 st.rerun()
         
         with col3:
@@ -149,7 +145,7 @@ class AdminInterface:
                 st.rerun()
         
         with col4:
-            if st.button("📊 User Statistics", use_container_width=True):
+            if st.button("📊 User Statistics", use_container_width=True, key="show_user_stats"):
                 self._show_user_statistics()
         
         st.markdown("---")
@@ -345,7 +341,7 @@ class AdminInterface:
                 if not user_data:
                     st.error(f"Could not load user with ID: {st.session_state.admin_selected_user}")
                     
-                    if st.button("Back to User List"):
+                    if st.button("Back to User List", key="back_to_list_error"):
                         st.session_state.admin_edit_mode = False
                         st.session_state.admin_selected_user = None
                         st.rerun()
@@ -355,7 +351,7 @@ class AdminInterface:
             else:
                 st.error("No user selected for editing")
                 
-                if st.button("Back to User List"):
+                if st.button("Back to User List", key="back_to_list_no_selection"):
                     st.session_state.admin_edit_mode = False
                     st.rerun()
                 return
@@ -838,11 +834,11 @@ class AdminInterface:
             st.metric("Database Type", self.db_type.upper())
         
         with col2:
-            if st.button("📊 View Statistics", use_container_width=True):
+            if st.button("📊 View Statistics", use_container_width=True, key="view_db_stats"):
                 self._show_database_statistics()
         
         with col3:
-            if st.button("🔄 Refresh", use_container_width=True):
+            if st.button("🔄 Refresh", use_container_width=True, key="refresh_db"):
                 st.rerun()
     
     def _show_database_statistics(self):
@@ -996,7 +992,7 @@ class AdminInterface:
             st.markdown("- City Central Complex")
             st.markdown("- Test Building - Schema Verification")
             
-            if st.button("🗑️ Remove Seed Data", type="secondary", use_container_width=True):
+            if st.button("🗑️ Remove Seed Data", type="secondary", use_container_width=True, key="remove_seed_data"):
                 with st.spinner("Removing seed data..."):
                     success, message = self._remove_seed_data()
                     if success:
@@ -1011,7 +1007,7 @@ class AdminInterface:
             
             confirm_clear = st.checkbox("I understand this will delete everything")
             
-            if st.button("🔥 Clear All Data", type="primary", disabled=not confirm_clear, use_container_width=True):
+            if st.button("🔥 Clear All Data", type="primary", disabled=not confirm_clear, use_container_width=True, key="clear_all_data"):
                 with st.spinner("Clearing all data..."):
                     success, message = self._clear_all_data()
                     if success:
