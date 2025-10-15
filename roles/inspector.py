@@ -239,38 +239,81 @@ class InspectorInterface:
                 st.success("No urgent defects found!")
                 
     def _show_enhanced_database_status(self):
-        """Role-based database status - remove V3 references"""
+        """Role-based database status - FIXED for connection manager"""
         
         user_role = self.get_current_user_role()
         
-        if DATABASE_AVAILABLE and self.db_manager:
+        # ✅ Check connection manager (not old db_manager)
+        if hasattr(self, 'conn_manager') and self.conn_manager:
+            db_type = self.db_type.upper()
+            
             if user_role == 'admin':
                 # Full status for admin
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.success("Database Connected")
-                    
+                    st.success(f"✅ Database: {db_type}")
+                
                 with col2:
+                    # Try to get statistics
                     try:
-                        stats = self.db_manager.get_database_stats()
-                        st.info(f"Inspector Data: {stats.get('inspector_inspections_count', 0)} inspections")
-                    except:
-                        st.info("Inspector Data: Available")
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("SELECT COUNT(*) as count FROM inspector_inspections")
+                        result = cursor.fetchone()
+                        insp_count = result['count'] if isinstance(result, dict) else result[0]
+                        
+                        cursor.close()
+                        conn.close()
+                        
+                        st.info(f"📊 Inspections: {insp_count}")
+                    except Exception as e:
+                        st.info("📊 Inspections: Available")
                 
                 with col3:
+                    # Try to get work order count
                     try:
-                        stats = self.db_manager.get_database_stats()
-                        st.info(f"Work Orders: {stats.get('inspector_work_orders_count', 0)} created")
-                    except:
-                        st.info("Work Orders: Available")
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("SELECT COUNT(*) as count FROM inspector_work_orders")
+                        result = cursor.fetchone()
+                        wo_count = result['count'] if isinstance(result, dict) else result[0]
+                        
+                        cursor.close()
+                        conn.close()
+                        
+                        st.info(f"📋 Work Orders: {wo_count}")
+                    except Exception as e:
+                        st.info("📋 Work Orders: Available")
                 
-                st.caption("Data will be saved for Builder and Developer access with tracking")
+                st.caption(f"Connected to {db_type} - Data saved for cross-role access")
+            
             else:
                 # Simplified status for inspector
-                st.success("Database Connected - Data will be saved automatically")
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    st.success(f"✅ Database Connected: {db_type}")
+                    st.caption("Your data will be saved automatically and available to Builder/Developer")
+                
+                with col2:
+                    # Show connection health
+                    try:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT 1")
+                        cursor.close()
+                        conn.close()
+                        st.success("🟢 Healthy")
+                    except:
+                        st.warning("🟡 Check Connection")
+        
         else:
-            st.warning("Database not available - Data will only be stored in current session")
+            # No connection manager available
+            st.warning("⚠️ Database not available - Data will only be stored in current session")
+            st.caption("PostgreSQL connection not configured")
     
     def _show_previous_inspections_section(self):
         """Show previous inspections from real processed data only - FIXED for PostgreSQL"""
