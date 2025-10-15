@@ -321,99 +321,149 @@ class InspectorInterface:
             st.caption("PostgreSQL connection not configured")
     
     def _show_previous_inspections_section(self):
-        """Show previous inspections from real processed data only - FIXED for PostgreSQL"""
+        """Show list of previous inspections"""
         
-        st.markdown("### Previous Inspections")
-        
-        # ✅ CRITICAL DEBUG
-        st.write(f"DEBUG: conn_manager exists? {hasattr(self, 'conn_manager')}")
-        st.write(f"DEBUG: db_manager exists? {hasattr(self, 'db_manager')}")
-        
-        if hasattr(self, 'conn_manager'):
-            st.write(f"DEBUG: Database type: {self.conn_manager.get_db_type()}")
-        
-        # Check if we have connection manager
-        if not hasattr(self, 'conn_manager'):
-            st.error("❌ Connection manager not initialized!")
-            st.warning("The inspector interface was not properly initialized with connection manager")
-            return
+        st.header("📋 Previous Inspections")
         
         try:
-            # ✅ Use connection manager
+            # ✅ Use connection manager instead of db_manager
             conn = self._get_connection()
-            st.success(f"✅ Connected to: {self.db_type}")
             
-            # Simple query - works with both PostgreSQL and SQLite
-            query = """
-                SELECT i.id, i.inspection_date, b.name as building_name,
-                    i.total_units, i.total_defects, i.ready_pct, i.inspector_name,
-                    i.original_filename, i.created_at
-                FROM inspector_inspections i
-                JOIN inspector_buildings b ON i.building_id = b.id
-                WHERE i.original_filename IS NOT NULL
-                ORDER BY i.created_at DESC
-                LIMIT 10
-            """
+            # Build query based on database type
+            if self.conn_manager.get_db_type() == "postgresql":
+                query = """
+                    SELECT 
+                        i.id,
+                        i.inspection_date,
+                        b.name as building_name,
+                        i.total_units,
+                        i.total_defects,
+                        i.ready_pct,
+                        i.created_at
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    ORDER BY i.inspection_date DESC, i.created_at DESC
+                    LIMIT 20
+                """
+            else:
+                query = """
+                    SELECT 
+                        i.id,
+                        i.inspection_date,
+                        b.name as building_name,
+                        i.total_units,
+                        i.total_defects,
+                        i.ready_pct,
+                        i.created_at
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    ORDER BY i.inspection_date DESC, i.created_at DESC
+                    LIMIT 20
+                """
             
-            recent_inspections = pd.read_sql_query(query, conn)
+            # Execute query - using psycopg2 connection directly
+            cursor = conn.cursor()
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            
+            # Convert to DataFrame manually (avoids SQLAlchemy warning)
+            if len(rows) > 0:
+                recent_inspections = pd.DataFrame(rows, columns=[
+                    'id', 'inspection_date', 'building_name', 'total_units',
+                    'total_defects', 'ready_pct', 'created_at'
+                ])
+            else:
+                recent_inspections = pd.DataFrame()
+            
+            cursor.close()
             conn.close()
             
-            if len(recent_inspections) > 0:
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    selected_inspection = st.selectbox(
-                        "Load previous inspection:",
-                        options=[""] + recent_inspections['id'].tolist(),
-                        format_func=lambda x: "" if x == "" else (
-                            f"{recent_inspections[recent_inspections['id']==x].iloc[0]['building_name']} - "
-                            f"({recent_inspections[recent_inspections['id']==x].iloc[0]['total_defects']} defects, "
-                            f"{recent_inspections[recent_inspections['id']==x].iloc[0]['ready_pct']:.1f}% ready)"
-                        ),
-                        key="previous_inspection_selector"
-                    )
-                
-                with col2:
-                    if selected_inspection and st.button("Load Inspection", type="primary", key="load_real_inspection"):
-                        self._load_previous_inspection(selected_inspection)
-                
-                with st.expander("Recent Real Inspections", expanded=False):
-                    if len(recent_inspections) > 0:
-                        col_a, col_b, col_c, col_d = st.columns(4)
-                        with col_a:
-                            st.metric("Real Inspections", len(recent_inspections))
-                        with col_b:
-                            avg_defects = recent_inspections['total_defects'].mean()
-                            st.metric("Avg Defects", f"{avg_defects:.1f}")
-                        with col_c:
-                            avg_ready = recent_inspections['ready_pct'].mean()
-                            st.metric("Avg Ready %", f"{avg_ready:.1f}%")
-                        with col_d:
-                            total_units = recent_inspections['total_units'].sum()
-                            st.metric("Total Units", total_units)
+            if len(recent_inspections) == 0:
+                st.info("No previous inspections found. Upload a CSV to get started!")
+                return
+            
+            st.write(f"Found {len(recent_inspections)} previous inspection(s)")
+            
+            # Display inspections
+            for idx, inspection in recent_inspections.iterrows():
+                with st.expander(
+                    f"🏢 {inspection['building_name']} - {inspection['inspection_date']}"
+                ):
+                    col1, col2, col3 = st.columns(3)
                     
-                    display_inspections = recent_inspections.copy()
-                    display_inspections['File'] = display_inspections['original_filename'].fillna('Unknown')
-                    display_inspections['Processed'] = pd.to_datetime(display_inspections['created_at']).dt.strftime('%Y-%m-%d %H:%M')
+                    with col1:
+                        st.metric("Total Units", int(inspection['total_units']))
                     
-                    display_cols = ['building_name', 'File', 'total_units', 'total_defects', 'ready_pct', 'Processed']
-                    display_inspections = display_inspections[display_cols]
-                    display_inspections.columns = ['Building', 'CSV File', 'Units', 'Defects', 'Ready %', 'Processed At']
+                    with col2:
+                        st.metric("Total Defects", int(inspection['total_defects']))
                     
-                    display_inspections.index = range(1, len(display_inspections) + 1)
-                    st.dataframe(display_inspections, use_container_width=True)
-            else:
-                st.info("No real inspection data found. Upload and process a CSV file to see previous inspections here.")
-                st.caption("Only inspections processed through CSV upload will appear in this list.")
-                
-        except Exception as e:
-            st.error(f"Error loading real inspection data: {e}")
-            import traceback
-            with st.expander("Error Details"):
-                st.code(traceback.format_exc())
-            st.info("If you haven't processed any CSV files yet, this list will be empty.")
+                    with col3:
+                        ready_pct = float(inspection['ready_pct'])
+                        st.metric("Settlement Ready", f"{ready_pct:.1f}%")
+                    
+                    # Load button
+                    if st.button(
+                        "📂 Load This Inspection",
+                        key=f"load_{inspection['id']}",
+                        type="primary"
+                    ):
+                        try:
+                            st.info("Loading inspection data...")
+                            
+                            # Load the inspection
+                            loaded_df, loaded_metrics = self.processor.load_inspection_from_database(
+                                inspection['id']
+                            )
+                            
+                            if loaded_df is not None:
+                                st.success(f"✅ Loaded inspection: {inspection['building_name']}")
+                                
+                                # Show summary
+                                st.subheader("📊 Inspection Summary")
+                                
+                                summary_col1, summary_col2, summary_col3 = st.columns(3)
+                                
+                                with summary_col1:
+                                    st.metric("Total Items", len(loaded_df))
+                                
+                                with summary_col2:
+                                    defects = loaded_df[loaded_df['StatusClass'] == 'Not OK']
+                                    st.metric("Defects", len(defects))
+                                
+                                with summary_col3:
+                                    if 'Urgency' in loaded_df.columns:
+                                        urgent = defects[defects['Urgency'] == 'Urgent']
+                                        st.metric("Urgent", len(urgent))
+                                
+                                # Show data
+                                st.dataframe(
+                                    loaded_df.head(100),
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                                
+                                # Download option
+                                csv = loaded_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Full Data",
+                                    data=csv,
+                                    file_name=f"inspection_{inspection['id'][:8]}.csv",
+                                    mime="text/csv"
+                                )
+                            else:
+                                st.error("Failed to load inspection data")
+                                
+                        except Exception as e:
+                            st.error(f"Error loading inspection: {e}")
+                            logger.error(f"Load error: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
         
-        st.markdown("---")
+        except Exception as e:
+            st.error(f"Error retrieving previous inspections: {e}")
+            logger.error(f"Previous inspections error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def _show_trade_mapping_section(self):
         """Enhanced trade mapping section with V3 database integration"""
@@ -1498,10 +1548,158 @@ class InspectorInterface:
                     st.dataframe(preview_df.head(10), use_container_width=True)
                 
                 # Process button
-                if st.button("🚀 Process Inspection Data", type="primary", use_container_width=True):
-                    st.session_state.pop(allow_key, None)
-                    st.session_state['last_processed_hash'] = file_hash  # Mark as just processed
-                    self._process_inspection_data_simplified(uploaded_csv)
+                if st.button("🔄 Process Inspection Data", type="primary", use_container_width=True):
+    
+                    # Create progress tracker
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    try:
+                        status_text.text("⏳ Step 1/5: Reading CSV file...")
+                        progress_bar.progress(0.1)
+                        
+                        # Read CSV
+                        df = pd.read_csv(uploaded_file)
+                        st.success(f"✅ CSV loaded: {len(df)} rows")
+                        
+                        status_text.text("⏳ Step 2/5: Checking for duplicates...")
+                        progress_bar.progress(0.2)
+                        
+                        # Check for duplicates
+                        uploaded_file.seek(0)
+                        file_bytes = uploaded_file.read()
+                        uploaded_file.seek(0)
+                        
+                        duplicate_info = self.processor.check_duplicate_file(
+                            file_bytes, 
+                            uploaded_file.name
+                        )
+                        
+                        if duplicate_info and duplicate_info.get('is_duplicate'):
+                            st.warning(f"""
+                            ⚠️ **Duplicate File Detected**
+                            
+                            This exact file was already processed:
+                            - Building: {duplicate_info['building_name']}
+                            - Date: {duplicate_info['processed_date']}
+                            - Inspection ID: {duplicate_info['inspection_id'][:8]}...
+                            
+                            Processing anyway will create a duplicate record.
+                            """)
+                            
+                            if not st.checkbox("⚠️ Process anyway (create duplicate)"):
+                                st.stop()
+                        
+                        status_text.text("⏳ Step 3/5: Loading trade mappings...")
+                        progress_bar.progress(0.3)
+                        
+                        # Load mappings
+                        mapping_df = load_master_trade_mapping()
+                        st.info(f"Loaded {len(mapping_df)} trade mappings")
+                        
+                        status_text.text("⏳ Step 4/5: Processing inspection data...")
+                        progress_bar.progress(0.4)
+                        
+                        # Calculate file hash
+                        file_hash = hashlib.md5(file_bytes).hexdigest()
+                        
+                        # Process data with timeout protection
+                        import signal
+                        
+                        def timeout_handler(signum, frame):
+                            raise TimeoutError("Processing took too long (>60s)")
+                        
+                        # Set 60 second timeout (only works on Unix)
+                        try:
+                            signal.signal(signal.SIGALRM, timeout_handler)
+                            signal.alarm(60)
+                        except:
+                            pass  # Windows doesn't support SIGALRM
+                        
+                        try:
+                            processed_df, metrics, inspection_id = self.processor.process_inspection_data(
+                                df=df,
+                                mapping=mapping_df,
+                                building_info={
+                                    "name": building_name,
+                                    "address": address,
+                                    "date": inspection_date.strftime("%Y-%m-%d")
+                                },
+                                inspector_name=inspector_name,
+                                original_filename=uploaded_file.name,
+                                file_hash=file_hash
+                            )
+                        finally:
+                            try:
+                                signal.alarm(0)  # Cancel alarm
+                            except:
+                                pass
+                        
+                        progress_bar.progress(0.8)
+                        
+                        if processed_df is None or metrics is None:
+                            st.error("❌ Processing failed - check logs for details")
+                            status_text.text("❌ Failed")
+                            st.stop()
+                        
+                        status_text.text("⏳ Step 5/5: Finalizing...")
+                        progress_bar.progress(0.9)
+                        
+                        # Store in session state
+                        st.session_state['processed_data'] = processed_df
+                        st.session_state['metrics'] = metrics
+                        st.session_state['inspection_id'] = inspection_id
+                        
+                        progress_bar.progress(1.0)
+                        status_text.text("✅ Complete!")
+                        
+                        # Success message
+                        st.success(f"""
+                        ✅ **Processing Complete!**
+                        
+                        - **Building:** {metrics['building_name']}
+                        - **Inspection ID:** `{inspection_id[:16]}...`
+                        - **Total Units:** {metrics['total_units']}
+                        - **Total Defects:** {metrics['total_defects']}
+                        - **Settlement Ready:** {metrics['ready_pct']:.1f}%
+                        - **Work Orders Created:** {metrics.get('work_orders_created', 0)}
+                        """)
+                        
+                        # Clear progress indicators after 2 seconds
+                        import time
+                        time.sleep(2)
+                        progress_bar.empty()
+                        status_text.empty()
+                        
+                    except TimeoutError as e:
+                        progress_bar.empty()
+                        status_text.empty()
+                        st.error(f"""
+                        ⏱️ **Processing Timeout**
+                        
+                        The operation took longer than 60 seconds. This usually indicates:
+                        - Database connection issues
+                        - Very large CSV file
+                        - Network problems with Supabase
+                        
+                        **Try:**
+                        1. Refresh the page and try again
+                        2. Check if the file was partially saved
+                        3. Contact support if issue persists
+                        """)
+                        logger.error(f"Timeout error: {e}")
+                        
+                    except Exception as e:
+                        progress_bar.empty()
+                        status_text.empty()
+                        st.error(f"❌ Error: {str(e)}")
+                        logger.error(f"Processing error: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        
+                        # Show detailed error in expander
+                        with st.expander("🔍 Error Details"):
+                            st.code(traceback.format_exc())
                     
             except Exception as e:
                 st.error(f"Error: {e}")

@@ -79,7 +79,7 @@ class InspectionDataProcessor:
     
     # ✅ Add this method to save inspection data using connection manager
     def _save_to_database_with_conn_manager(self, inspection_data: Dict) -> Optional[str]:
-        """Save inspection to database using connection manager
+        """Save inspection to database using connection manager with timeout protection
         
         Returns:
             inspection_id if successful, None otherwise
@@ -88,7 +88,13 @@ class InspectionDataProcessor:
             logger.warning("No connection manager available")
             return None
         
+        conn = None
+        cursor = None
+        
         try:
+            logger.info(f"📊 Preparing to save {len(inspection_data.get('inspection_items', []))} items...")
+            
+            # Get connection with timeout
             conn = self._get_connection()
             cursor = conn.cursor()
             
@@ -96,87 +102,139 @@ class InspectionDataProcessor:
             inspection_id = str(uuid.uuid4())
             building_id = str(uuid.uuid4())
             
-            # Insert building
+            logger.info(f"🏢 Saving building: {inspection_data['building_name']}")
+            
+            # Insert building (with conflict handling)
             if self.db_type == "postgresql":
                 cursor.execute("""
                     INSERT INTO inspector_buildings (id, name, address, total_units, created_at)
                     VALUES (%s, %s, %s, %s, NOW())
                     ON CONFLICT (id) DO NOTHING
                 """, (building_id, inspection_data['building_name'], 
-                      inspection_data.get('address', ''), inspection_data['total_units']))
+                    inspection_data.get('address', ''), inspection_data['total_units']))
             else:
                 cursor.execute("""
                     INSERT OR IGNORE INTO inspector_buildings (id, name, address, total_units, created_at)
                     VALUES (?, ?, ?, ?, datetime('now'))
                 """, (building_id, inspection_data['building_name'], 
-                      inspection_data.get('address', ''), inspection_data['total_units']))
+                    inspection_data.get('address', ''), inspection_data['total_units']))
+            
+            logger.info(f"📝 Saving inspection metadata (ID: {inspection_id[:8]}...)")
             
             # Insert inspection
             if self.db_type == "postgresql":
                 cursor.execute("""
                     INSERT INTO inspector_inspections 
                     (id, building_id, inspection_date, inspector_name, total_units, 
-                     total_defects, ready_pct, original_filename, created_at)
+                    total_defects, ready_pct, original_filename, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 """, (inspection_id, building_id, inspection_data['inspection_date'],
-                      inspection_data['inspector_name'], inspection_data['total_units'],
-                      inspection_data['total_defects'], inspection_data['ready_pct'],
-                      inspection_data.get('original_filename', '')))
+                    inspection_data['inspector_name'], inspection_data['total_units'],
+                    inspection_data['total_defects'], inspection_data['ready_pct'],
+                    inspection_data.get('original_filename', '')))
             else:
                 cursor.execute("""
                     INSERT INTO inspector_inspections 
                     (id, building_id, inspection_date, inspector_name, total_units, 
-                     total_defects, ready_pct, original_filename, created_at)
+                    total_defects, ready_pct, original_filename, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 """, (inspection_id, building_id, inspection_data['inspection_date'],
-                      inspection_data['inspector_name'], inspection_data['total_units'],
-                      inspection_data['total_defects'], inspection_data['ready_pct'],
-                      inspection_data.get('original_filename', '')))
+                    inspection_data['inspector_name'], inspection_data['total_units'],
+                    inspection_data['total_defects'], inspection_data['ready_pct'],
+                    inspection_data.get('original_filename', '')))
             
-            # Insert inspection items
-            if 'inspection_items' in inspection_data and len(inspection_data['inspection_items']) > 0:
-                for item in inspection_data['inspection_items']:
-                    item_id = str(uuid.uuid4())
+            # Insert inspection items in BATCHES (much faster)
+            items = inspection_data.get('inspection_items', [])
+            if len(items) > 0:
+                logger.info(f"💾 Saving {len(items)} inspection items in batches...")
+                
+                batch_size = 100  # Process 100 items at a time
+                total_saved = 0
+                
+                for i in range(0, len(items), batch_size):
+                    batch = items[i:i + batch_size]
                     
                     if self.db_type == "postgresql":
-                        cursor.execute("""
+                        # Use executemany for PostgreSQL
+                        values = [
+                            (str(uuid.uuid4()), inspection_id, building_id,
+                            item.get('unit', ''), item.get('unit_type', ''),
+                            item.get('room', ''), item.get('component', ''),
+                            item.get('trade', ''), item.get('status', 'pending'),
+                            item.get('urgency', 'Normal'),
+                            item.get('planned_completion'),
+                            item.get('inspection_date'),
+                            item.get('owner_signoff_timestamp'),
+                            item.get('description', ''))
+                            for item in batch
+                        ]
+                        
+                        cursor.executemany("""
                             INSERT INTO inspector_inspection_items
-                            (id, inspection_id, building_id, unit_number, room, 
-                             item_description, defect_type, status, created_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                        """, (item_id, inspection_id, building_id, 
-                              item.get('unit', ''), item.get('room', ''),
-                              item.get('description', ''), item.get('defect_type', ''),
-                              item.get('status', 'pending')))
+                            (id, inspection_id, building_id, unit, unit_type, room, 
+                            component, trade, status_class, urgency, 
+                            planned_completion, inspection_date, owner_signoff_timestamp,
+                            original_status, created_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        """, values)
                     else:
-                        cursor.execute("""
-                            INSERT INTO inspector_inspection_items
-                            (id, inspection_id, building_id, unit_number, room, 
-                             item_description, defect_type, status, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                        """, (item_id, inspection_id, building_id, 
-                              item.get('unit', ''), item.get('room', ''),
-                              item.get('description', ''), item.get('defect_type', ''),
-                              item.get('status', 'pending')))
+                        # SQLite version
+                        for item in batch:
+                            cursor.execute("""
+                                INSERT INTO inspector_inspection_items
+                                (id, inspection_id, building_id, unit, unit_type, room, 
+                                component, trade, status_class, urgency, 
+                                planned_completion, inspection_date, owner_signoff_timestamp,
+                                original_status, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                            """, (str(uuid.uuid4()), inspection_id, building_id,
+                                item.get('unit', ''), item.get('unit_type', ''),
+                                item.get('room', ''), item.get('component', ''),
+                                item.get('trade', ''), item.get('status', 'pending'),
+                                item.get('urgency', 'Normal'),
+                                item.get('planned_completion'),
+                                item.get('inspection_date'),
+                                item.get('owner_signoff_timestamp'),
+                                item.get('description', '')))
+                    
+                    total_saved += len(batch)
+                    logger.info(f"  ✓ Saved {total_saved}/{len(items)} items...")
             
+            logger.info("💫 Committing transaction...")
             conn.commit()
-            cursor.close()
-            conn.close()
             
-            logger.info(f"✅ Saved inspection to {self.db_type.upper()}: {inspection_id}")
+            logger.info(f"✅ Successfully saved inspection {inspection_id[:8]}... to {self.db_type.upper()}")
+            
             return inspection_id
             
         except Exception as e:
             logger.error(f"❌ Error saving to database: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            try:
-                conn.rollback()
-                cursor.close()
-                conn.close()
-            except:
-                pass
+            
+            # Rollback on error
+            if conn:
+                try:
+                    logger.warning("⚠️ Rolling back transaction...")
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Rollback failed: {rollback_error}")
+            
             return None
+            
+        finally:
+            # Always close cursor and connection
+            if cursor:
+                try:
+                    cursor.close()
+                except:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                    logger.info("🔌 Database connection closed")
+                except:
+                    pass
     
     def check_duplicate_file(self, file_bytes: bytes, filename: str) -> Optional[Dict]:
         """
