@@ -8,7 +8,9 @@ while maintaining all existing functionality for image upload and report generat
 
 import pandas as pd
 import streamlit as st
-from datetime import datetime
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 import logging
 from io import BytesIO, StringIO
 from typing import Dict, Any, Tuple, Optional
@@ -21,6 +23,8 @@ from database.connection_manager import get_connection_manager
 # Import the enhanced modules
 from core.data_processor import InspectionDataProcessor, load_master_trade_mapping
 from core.trade_mapper import TradeMapper
+
+logger = logging.getLogger(__name__)
 
 
 # Import enhanced database manager
@@ -1547,9 +1551,56 @@ class InspectorInterface:
                 with st.expander("📋 Data Preview"):
                     st.dataframe(preview_df.head(10), use_container_width=True)
                 
+                # ✅ ADD BUILDING INFORMATION FORM HERE
+                st.markdown("---")
+                st.subheader("🏢 Building Information")
+                st.caption("Enter building details for this inspection")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    building_name = st.text_input(
+                        "Building Name *",
+                        value="",
+                        placeholder="e.g., Sunrise Apartments",
+                        help="Enter the building or project name (required)",
+                        key="building_name_input"
+                    )
+                    
+                    inspector_name = st.text_input(
+                        "Inspector Name",
+                        value=st.session_state.get('user_info', {}).get('name', 'Inspector'),
+                        placeholder="e.g., John Smith",
+                        help="Name of the person conducting the inspection",
+                        key="inspector_name_input"
+                    )
+                
+                with col2:
+                    address = st.text_input(
+                        "Building Address",
+                        value="",
+                        placeholder="e.g., 123 Main St, Sydney NSW",
+                        help="Full address of the building (optional)",
+                        key="building_address_input"
+                    )
+                    
+                    inspection_date = st.date_input(
+                        "Inspection Date",
+                        value=datetime.now().date(),
+                        help="Date when the inspection was conducted",
+                        key="inspection_date_input"
+                    )
+                
+                # Validation
+                if not building_name or building_name.strip() == "":
+                    st.warning("⚠️ Please enter a building name before processing")
+                    st.stop()
+                
+                st.markdown("---")
+                
                 # Process button
                 if st.button("🔄 Process Inspection Data", type="primary", use_container_width=True):
-    
+
                     # Create progress tracker
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -1559,81 +1610,41 @@ class InspectorInterface:
                         progress_bar.progress(0.1)
                         
                         # Read CSV
+                        uploaded_csv.seek(0)
                         df = pd.read_csv(uploaded_csv)
                         st.success(f"✅ CSV loaded: {len(df)} rows")
                         
-                        status_text.text("⏳ Step 2/5: Checking for duplicates...")
+                        status_text.text("⏳ Step 2/5: Verifying data...")
                         progress_bar.progress(0.2)
-                        
-                        # Check for duplicates
-                        uploaded_csv.seek(0)
-                        file_bytes = uploaded_csv.read()
-                        uploaded_csv.seek(0)
-                        
-                        duplicate_info = self.processor.check_duplicate_file(
-                            file_bytes, 
-                            uploaded_csv.name
-                        )
-                        
-                        if duplicate_info and duplicate_info.get('is_duplicate'):
-                            st.warning(f"""
-                            ⚠️ **Duplicate File Detected**
-                            
-                            This exact file was already processed:
-                            - Building: {duplicate_info['building_name']}
-                            - Date: {duplicate_info['processed_date']}
-                            - Inspection ID: {duplicate_info['inspection_id'][:8]}...
-                            
-                            Processing anyway will create a duplicate record.
-                            """)
-                            
-                            if not st.checkbox("⚠️ Process anyway (create duplicate)"):
-                                st.stop()
                         
                         status_text.text("⏳ Step 3/5: Loading trade mappings...")
                         progress_bar.progress(0.3)
                         
-                        # Load mappings
-                        mapping_df = load_master_trade_mapping()
-                        st.info(f"Loaded {len(mapping_df)} trade mappings")
+                        # Use session state mapping
+                        mapping_df = st.session_state.trade_mapping
                         
                         status_text.text("⏳ Step 4/5: Processing inspection data...")
                         progress_bar.progress(0.4)
                         
                         # Calculate file hash
+                        uploaded_csv.seek(0)
+                        file_bytes = uploaded_csv.read()
                         file_hash = hashlib.md5(file_bytes).hexdigest()
+                        uploaded_csv.seek(0)
                         
-                        # Process data with timeout protection
-                        import signal
-                        
-                        def timeout_handler(signum, frame):
-                            raise TimeoutError("Processing took too long (>60s)")
-                        
-                        # Set 60 second timeout (only works on Unix)
-                        try:
-                            signal.signal(signal.SIGALRM, timeout_handler)
-                            signal.alarm(60)
-                        except:
-                            pass  # Windows doesn't support SIGALRM
-                        
-                        try:
-                            processed_df, metrics, inspection_id = self.processor.process_inspection_data(
-                                df=df,
-                                mapping=mapping_df,
-                                building_info={
-                                    "name": building_name,
-                                    "address": address,
-                                    "date": inspection_date.strftime("%Y-%m-%d")
-                                },
-                                inspector_name=inspector_name,
-                                original_filename=uploaded_csv.name,
-                                file_hash=file_hash
-                            )
-                        finally:
-                            try:
-                                signal.alarm(0)  # Cancel alarm
-                            except:
-                                pass
+                        # Process data
+                        processed_df, metrics, inspection_id = self.processor.process_inspection_data(
+                            df=df,
+                            mapping=mapping_df,
+                            building_info={
+                                "name": building_name,
+                                "address": address,
+                                "date": inspection_date.strftime("%Y-%m-%d")
+                            },
+                            inspector_name=inspector_name,
+                            original_filename=uploaded_csv.name,
+                            file_hash=file_hash
+                        )
                         
                         progress_bar.progress(0.8)
                         
@@ -1649,11 +1660,18 @@ class InspectorInterface:
                         st.session_state['processed_data'] = processed_df
                         st.session_state['metrics'] = metrics
                         st.session_state['inspection_id'] = inspection_id
+                        st.session_state['last_processed_hash'] = file_hash
+                        
+                        # Update instance variables
+                        self.processed_data = processed_df
+                        self.metrics = metrics
+                        self.current_inspection_id = inspection_id
                         
                         progress_bar.progress(1.0)
                         status_text.text("✅ Complete!")
                         
                         # Success message
+                        work_orders = metrics.get('work_orders_created', 0)
                         st.success(f"""
                         ✅ **Processing Complete!**
                         
@@ -1662,7 +1680,7 @@ class InspectorInterface:
                         - **Total Units:** {metrics['total_units']}
                         - **Total Defects:** {metrics['total_defects']}
                         - **Settlement Ready:** {metrics['ready_pct']:.1f}%
-                        - **Work Orders Created:** {metrics.get('work_orders_created', 0)}
+                        - **Work Orders Created:** {work_orders}
                         """)
                         
                         # Clear progress indicators after 2 seconds
@@ -1671,23 +1689,8 @@ class InspectorInterface:
                         progress_bar.empty()
                         status_text.empty()
                         
-                    except TimeoutError as e:
-                        progress_bar.empty()
-                        status_text.empty()
-                        st.error(f"""
-                        ⏱️ **Processing Timeout**
-                        
-                        The operation took longer than 60 seconds. This usually indicates:
-                        - Database connection issues
-                        - Very large CSV file
-                        - Network problems with Supabase
-                        
-                        **Try:**
-                        1. Refresh the page and try again
-                        2. Check if the file was partially saved
-                        3. Contact support if issue persists
-                        """)
-                        logger.error(f"Timeout error: {e}")
+                        # Force rerun to show results
+                        st.rerun()
                         
                     except Exception as e:
                         progress_bar.empty()
@@ -1703,6 +1706,9 @@ class InspectorInterface:
                     
             except Exception as e:
                 st.error(f"Error: {e}")
+                logger.error(f"File upload error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
 
     def _process_inspection_data_simplified(self, uploaded_csv):
         """Simplified processing without unnecessary user input"""
