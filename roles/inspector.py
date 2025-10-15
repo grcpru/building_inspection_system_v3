@@ -16,11 +16,12 @@ import tempfile
 import os
 import zipfile
 import hashlib
+from database.connection_manager import get_connection_manager
 
 # Import the enhanced modules
 from core.data_processor import InspectionDataProcessor, load_master_trade_mapping
 from core.trade_mapper import TradeMapper
-from database.connection_manager import get_connection_manager
+
 
 # Import enhanced database manager
 try:
@@ -273,14 +274,26 @@ class InspectorInterface:
     
     def _show_previous_inspections_section(self):
         """Show previous inspections from real processed data only - FIXED for PostgreSQL"""
-        if not self.db_manager and not hasattr(self, 'conn_manager'):
-            return
         
         st.markdown("### Previous Inspections")
+        
+        # ✅ CRITICAL DEBUG
+        st.write(f"DEBUG: conn_manager exists? {hasattr(self, 'conn_manager')}")
+        st.write(f"DEBUG: db_manager exists? {hasattr(self, 'db_manager')}")
+        
+        if hasattr(self, 'conn_manager'):
+            st.write(f"DEBUG: Database type: {self.conn_manager.get_db_type()}")
+        
+        # Check if we have connection manager
+        if not hasattr(self, 'conn_manager'):
+            st.error("❌ Connection manager not initialized!")
+            st.warning("The inspector interface was not properly initialized with connection manager")
+            return
         
         try:
             # ✅ Use connection manager
             conn = self._get_connection()
+            st.success(f"✅ Connected to: {self.db_type}")
             
             # Simple query - works with both PostgreSQL and SQLite
             query = """
