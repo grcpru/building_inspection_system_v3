@@ -20,6 +20,7 @@ import hashlib
 # Import the enhanced modules
 from core.data_processor import InspectionDataProcessor, load_master_trade_mapping
 from core.trade_mapper import TradeMapper
+from database.connection_manager import get_connection_manager
 
 # Import enhanced database manager
 try:
@@ -61,11 +62,15 @@ class InspectorInterface:
         self.metrics = None
         self.trade_mapping = None
         self.current_inspection_id = None
-        self.user_info = user_info  # Store user context
-        self.auth_manager = None   # Will be set by render function
+        self.user_info = user_info
+        self.auth_manager = None
         
-        # Initialize enhanced database manager if available
-        if DATABASE_AVAILABLE:
+        # ✅ ADD THESE LINES:
+        self.conn_manager = get_connection_manager()
+        self.db_type = self.conn_manager.get_db_type()
+        
+        # MODIFY THIS LINE:
+        if DATABASE_AVAILABLE and self.db_type == "sqlite":
             self.db_manager = DatabaseManager(db_path)
             logger.info("Inspector interface initialized with enhanced V3 database support")
         else:
@@ -79,6 +84,10 @@ class InspectorInterface:
                 'cover': None
             }
     
+    def _get_connection(self):
+        """Get database connection using connection manager"""
+        return self.conn_manager.get_connection()
+
     # ADD THE AUTHENTICATION METHODS HERE:
     def get_current_user_role(self):
         """Get current user role from authentication system"""
@@ -263,16 +272,17 @@ class InspectorInterface:
             st.warning("Database not available - Data will only be stored in current session")
     
     def _show_previous_inspections_section(self):
-        """Show previous inspections from real processed data only"""
-        if not self.db_manager:
+        """Show previous inspections from real processed data only - FIXED for PostgreSQL"""
+        if not self.db_manager and not hasattr(self, 'conn_manager'):
             return
         
         st.markdown("### Previous Inspections")
         
         try:
-            conn = self.db_manager.connect()
+            # ✅ Use connection manager
+            conn = self._get_connection()
             
-            # Simple query - just use what exists in your database
+            # Simple query - works with both PostgreSQL and SQLite
             query = """
                 SELECT i.id, i.inspection_date, b.name as building_name,
                     i.total_units, i.total_defects, i.ready_pct, i.inspector_name,
@@ -285,6 +295,7 @@ class InspectorInterface:
             """
             
             recent_inspections = pd.read_sql_query(query, conn)
+            conn.close()
             
             if len(recent_inspections) > 0:
                 col1, col2 = st.columns([3, 1])
@@ -295,7 +306,6 @@ class InspectorInterface:
                         options=[""] + recent_inspections['id'].tolist(),
                         format_func=lambda x: "" if x == "" else (
                             f"{recent_inspections[recent_inspections['id']==x].iloc[0]['building_name']} - "
-                            # f"{recent_inspections[recent_inspections['id']==x].iloc[0]['inspection_date']} "
                             f"({recent_inspections[recent_inspections['id']==x].iloc[0]['total_defects']} defects, "
                             f"{recent_inspections[recent_inspections['id']==x].iloc[0]['ready_pct']:.1f}% ready)"
                         ),
@@ -337,6 +347,9 @@ class InspectorInterface:
                 
         except Exception as e:
             st.error(f"Error loading real inspection data: {e}")
+            import traceback
+            with st.expander("Error Details"):
+                st.code(traceback.format_exc())
             st.info("If you haven't processed any CSV files yet, this list will be empty.")
         
         st.markdown("---")
