@@ -1559,20 +1559,20 @@ class InspectorInterface:
                         progress_bar.progress(0.1)
                         
                         # Read CSV
-                        df = pd.read_csv(uploaded_file)
+                        df = pd.read_csv(uploaded_csv)
                         st.success(f"✅ CSV loaded: {len(df)} rows")
                         
                         status_text.text("⏳ Step 2/5: Checking for duplicates...")
                         progress_bar.progress(0.2)
                         
                         # Check for duplicates
-                        uploaded_file.seek(0)
-                        file_bytes = uploaded_file.read()
-                        uploaded_file.seek(0)
+                        uploaded_csv.seek(0)
+                        file_bytes = uploaded_csv.read()
+                        uploaded_csv.seek(0)
                         
                         duplicate_info = self.processor.check_duplicate_file(
                             file_bytes, 
-                            uploaded_file.name
+                            uploaded_csv.name
                         )
                         
                         if duplicate_info and duplicate_info.get('is_duplicate'):
@@ -1626,7 +1626,7 @@ class InspectorInterface:
                                     "date": inspection_date.strftime("%Y-%m-%d")
                                 },
                                 inspector_name=inspector_name,
-                                original_filename=uploaded_file.name,
+                                original_filename=uploaded_csv.name,
                                 file_hash=file_hash
                             )
                         finally:
