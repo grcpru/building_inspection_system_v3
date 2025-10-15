@@ -1551,54 +1551,9 @@ class InspectorInterface:
                 with st.expander("📋 Data Preview"):
                     st.dataframe(preview_df.head(10), use_container_width=True)
                 
-                # ✅ ADD BUILDING INFORMATION FORM HERE
-                st.markdown("---")
-                st.subheader("🏢 Building Information")
-                st.caption("Enter building details for this inspection")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    building_name = st.text_input(
-                        "Building Name *",
-                        value="",
-                        placeholder="e.g., Sunrise Apartments",
-                        help="Enter the building or project name (required)",
-                        key="building_name_input"
-                    )
-                    
-                    inspector_name = st.text_input(
-                        "Inspector Name",
-                        value=st.session_state.get('user_info', {}).get('name', 'Inspector'),
-                        placeholder="e.g., John Smith",
-                        help="Name of the person conducting the inspection",
-                        key="inspector_name_input"
-                    )
-                
-                with col2:
-                    address = st.text_input(
-                        "Building Address",
-                        value="",
-                        placeholder="e.g., 123 Main St, Sydney NSW",
-                        help="Full address of the building (optional)",
-                        key="building_address_input"
-                    )
-                    
-                    inspection_date = st.date_input(
-                        "Inspection Date",
-                        value=datetime.now().date(),
-                        help="Date when the inspection was conducted",
-                        key="inspection_date_input"
-                    )
-                
-                # Validation
-                if not building_name or building_name.strip() == "":
-                    st.warning("⚠️ Please enter a building name before processing")
-                    st.stop()
-                
                 st.markdown("---")
                 
-                # Process button
+                # Process button (no manual input needed - CSV has everything)
                 if st.button("🔄 Process Inspection Data", type="primary", use_container_width=True):
 
                     # Create progress tracker
@@ -1614,8 +1569,17 @@ class InspectorInterface:
                         df = pd.read_csv(uploaded_csv)
                         st.success(f"✅ CSV loaded: {len(df)} rows")
                         
-                        status_text.text("⏳ Step 2/5: Verifying data...")
+                        status_text.text("⏳ Step 2/5: Extracting building info from CSV...")
                         progress_bar.progress(0.2)
+                        
+                        # Extract building info from CSV (will be done in process_inspection_data)
+                        # Just show a preview of what we found
+                        sample_audit = df.loc[0, "auditName"] if "auditName" in df.columns else ""
+                        if sample_audit:
+                            parts = str(sample_audit).split("/")
+                            if len(parts) >= 3:
+                                building_name_preview = parts[2].strip()
+                                st.info(f"📍 Building detected: {building_name_preview}")
                         
                         status_text.text("⏳ Step 3/5: Loading trade mappings...")
                         progress_bar.progress(0.3)
@@ -1632,15 +1596,23 @@ class InspectorInterface:
                         file_hash = hashlib.md5(file_bytes).hexdigest()
                         uploaded_csv.seek(0)
                         
-                        # Process data
+                        # Get inspector name from user info
+                        user_info = st.session_state.get('user_info', {})
+                        inspector_name = user_info.get('name', 'Inspector')
+                        
+                        # Building info will be extracted from CSV by the processor
+                        # We just provide defaults that will be overwritten
+                        building_info = {
+                            "name": "Building Name (will be extracted from CSV)",
+                            "address": "Address (will be extracted from CSV)",
+                            "date": datetime.now().strftime("%Y-%m-%d")
+                        }
+                        
+                        # Process data - building info will be extracted automatically
                         processed_df, metrics, inspection_id = self.processor.process_inspection_data(
                             df=df,
                             mapping=mapping_df,
-                            building_info={
-                                "name": building_name,
-                                "address": address,
-                                "date": inspection_date.strftime("%Y-%m-%d")
-                            },
+                            building_info=building_info,  # Placeholders - will be overwritten
                             inspector_name=inspector_name,
                             original_filename=uploaded_csv.name,
                             file_hash=file_hash
@@ -1670,18 +1642,22 @@ class InspectorInterface:
                         progress_bar.progress(1.0)
                         status_text.text("✅ Complete!")
                         
-                        # Success message
+                        # Success message with EXTRACTED info
                         work_orders = metrics.get('work_orders_created', 0)
                         st.success(f"""
                         ✅ **Processing Complete!**
                         
-                        - **Building:** {metrics['building_name']}
+                        - **Building:** {metrics['building_name']} *(extracted from CSV)*
+                        - **Address:** {metrics.get('address', 'N/A')} *(extracted from CSV)*
+                        - **Inspection Date:** {metrics.get('inspection_date', 'N/A')} *(extracted from CSV)*
                         - **Inspection ID:** `{inspection_id[:16]}...`
                         - **Total Units:** {metrics['total_units']}
                         - **Total Defects:** {metrics['total_defects']}
                         - **Settlement Ready:** {metrics['ready_pct']:.1f}%
                         - **Work Orders Created:** {work_orders}
                         """)
+                        
+                        st.info("ℹ️ All building information was automatically extracted from your CSV file")
                         
                         # Clear progress indicators after 2 seconds
                         import time
