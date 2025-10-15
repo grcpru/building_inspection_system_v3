@@ -57,7 +57,14 @@ class InspectorInterface:
     def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
         """Initialize the inspector interface with user context"""
         self._button_counter = 0
-        self.processor = InspectionDataProcessor(db_path)
+        
+        # ✅ Initialize connection manager FIRST
+        self.conn_manager = get_connection_manager()
+        self.db_type = self.conn_manager.get_db_type()
+        
+        # ✅ Pass connection manager to processor
+        self.processor = InspectionDataProcessor(db_path, conn_manager=self.conn_manager)
+        
         self.mapper = TradeMapper()
         self.processed_data = None
         self.metrics = None
@@ -66,17 +73,15 @@ class InspectorInterface:
         self.user_info = user_info
         self.auth_manager = None
         
-        # ✅ ADD THESE LINES:
-        self.conn_manager = get_connection_manager()
-        self.db_type = self.conn_manager.get_db_type()
-        
-        # MODIFY THIS LINE:
+        # Initialize database manager for backward compatibility
         if DATABASE_AVAILABLE and self.db_type == "sqlite":
             self.db_manager = DatabaseManager(db_path)
             logger.info("Inspector interface initialized with enhanced V3 database support")
         else:
             self.db_manager = None
             logger.warning("Enhanced database not available - limited functionality")
+        
+        # ... rest of init
         
         # Initialize image storage in session state
         if 'report_images' not in st.session_state:

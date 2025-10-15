@@ -1,11 +1,9 @@
 """
 Building Inspection Data Processor - With Automatic Work Order Creation
 =====================================================================
-
 Complete data processor with automatic work order generation for Builder role.
 Preserves all existing logic and adds seamless work order creation.
 """
-
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -14,6 +12,9 @@ import logging
 from io import StringIO
 import hashlib
 import uuid
+
+# ✅ CRITICAL FIX: Import connection manager
+from database.connection_manager import get_connection_manager
 
 # Import database manager
 try:
@@ -30,23 +31,152 @@ except ImportError:
 # Set up logging
 logger = logging.getLogger(__name__)
 
-
 class InspectionDataProcessor:
     """Data processor with database integration and automatic work order creation"""
     
-    def __init__(self, db_path: str = "building_inspection.db"):
-        """Initialize the data processor with database support"""
+    def __init__(self, db_path: str = "building_inspection.db", conn_manager=None):
+        """Initialize the data processor with database support
+        
+        Args:
+            db_path: Path to SQLite database (for backward compatibility)
+            conn_manager: Connection manager instance (for PostgreSQL support)
+        """
         self.processed_data = None
         self.metrics = None
         self.building_info = {}
         
-        # Initialize database manager if available
-        if DATABASE_AVAILABLE:
-            self.db_manager = DatabaseManager(db_path)
-            logger.info("Database manager initialized")
+        # ✅ Use connection manager if provided, otherwise fall back to DatabaseManager
+        if conn_manager:
+            self.conn_manager = conn_manager
+            self.db_type = conn_manager.get_db_type()
+            logger.info(f"✅ Data processor initialized with {self.db_type.upper()}")
+            
+            # Keep db_manager for backward compatibility methods
+            if DATABASE_AVAILABLE and self.db_type == "sqlite":
+                self.db_manager = DatabaseManager(db_path)
+            else:
+                self.db_manager = None
         else:
-            self.db_manager = None
-            logger.warning("Database not available - data will only be stored in memory")
+            # Backward compatibility - use DatabaseManager
+            self.conn_manager = None
+            self.db_type = "sqlite"
+            
+            if DATABASE_AVAILABLE:
+                self.db_manager = DatabaseManager(db_path)
+                logger.info("Database manager initialized (legacy mode)")
+            else:
+                self.db_manager = None
+                logger.warning("Database not available - data will only be stored in memory")
+    
+    def _get_connection(self):
+        """Get database connection using connection manager"""
+        if self.conn_manager:
+            return self.conn_manager.get_connection()
+        elif self.db_manager:
+            return self.db_manager.connect()
+        else:
+            raise Exception("No database connection available")
+    
+    # ✅ Add this method to save inspection data using connection manager
+    def _save_to_database_with_conn_manager(self, inspection_data: Dict) -> Optional[str]:
+        """Save inspection to database using connection manager
+        
+        Returns:
+            inspection_id if successful, None otherwise
+        """
+        if not self.conn_manager:
+            logger.warning("No connection manager available")
+            return None
+        
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # Generate IDs
+            inspection_id = str(uuid.uuid4())
+            building_id = str(uuid.uuid4())
+            
+            # Insert building
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    INSERT INTO inspector_buildings (id, name, address, total_units, created_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (id) DO NOTHING
+                """, (building_id, inspection_data['building_name'], 
+                      inspection_data.get('address', ''), inspection_data['total_units']))
+            else:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO inspector_buildings (id, name, address, total_units, created_at)
+                    VALUES (?, ?, ?, ?, datetime('now'))
+                """, (building_id, inspection_data['building_name'], 
+                      inspection_data.get('address', ''), inspection_data['total_units']))
+            
+            # Insert inspection
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    INSERT INTO inspector_inspections 
+                    (id, building_id, inspection_date, inspector_name, total_units, 
+                     total_defects, ready_pct, original_filename, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                """, (inspection_id, building_id, inspection_data['inspection_date'],
+                      inspection_data['inspector_name'], inspection_data['total_units'],
+                      inspection_data['total_defects'], inspection_data['ready_pct'],
+                      inspection_data.get('original_filename', '')))
+            else:
+                cursor.execute("""
+                    INSERT INTO inspector_inspections 
+                    (id, building_id, inspection_date, inspector_name, total_units, 
+                     total_defects, ready_pct, original_filename, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """, (inspection_id, building_id, inspection_data['inspection_date'],
+                      inspection_data['inspector_name'], inspection_data['total_units'],
+                      inspection_data['total_defects'], inspection_data['ready_pct'],
+                      inspection_data.get('original_filename', '')))
+            
+            # Insert inspection items
+            if 'inspection_items' in inspection_data and len(inspection_data['inspection_items']) > 0:
+                for item in inspection_data['inspection_items']:
+                    item_id = str(uuid.uuid4())
+                    
+                    if self.db_type == "postgresql":
+                        cursor.execute("""
+                            INSERT INTO inspector_inspection_items
+                            (id, inspection_id, building_id, unit_number, room, 
+                             item_description, defect_type, status, created_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        """, (item_id, inspection_id, building_id, 
+                              item.get('unit', ''), item.get('room', ''),
+                              item.get('description', ''), item.get('defect_type', ''),
+                              item.get('status', 'pending')))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO inspector_inspection_items
+                            (id, inspection_id, building_id, unit_number, room, 
+                             item_description, defect_type, status, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        """, (item_id, inspection_id, building_id, 
+                              item.get('unit', ''), item.get('room', ''),
+                              item.get('description', ''), item.get('defect_type', ''),
+                              item.get('status', 'pending')))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"✅ Saved inspection to {self.db_type.upper()}: {inspection_id}")
+            return inspection_id
+            
+        except Exception as e:
+            logger.error(f"❌ Error saving to database: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            try:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+            except:
+                pass
+            return None
     
     def check_duplicate_file(self, file_bytes: bytes, filename: str) -> Optional[Dict]:
         """
