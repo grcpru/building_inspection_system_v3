@@ -333,7 +333,7 @@ class InspectionDataProcessor:
             import traceback
             logger.error(traceback.format_exc())
             return 0
-        
+
     def process_inspection_data(self, df: pd.DataFrame, mapping: pd.DataFrame, 
                     building_info: Dict[str, str], 
                     inspector_name: str = "Inspector",
@@ -501,41 +501,98 @@ class InspectionDataProcessor:
             # STEP 12: Calculate metrics
             metrics = self._calculate_comprehensive_metrics(final_df, building_info, df)
 
-            # STEP 13: Save to database
+            # STEP 13: Save to database - 🔧 THIS IS THE CRITICAL FIX
             inspection_id = None
             work_order_count = 0
             
-            if self.db_manager:
+            # ✅ Use connection manager if available (PostgreSQL)
+            if self.conn_manager:
                 try:
+                    logger.info("🔄 Saving to PostgreSQL using connection manager...")
+                    
+                    # Prepare inspection data for saving
+                    inspection_data = {
+                        'building_name': metrics.get('building_name', 'Unknown'),
+                        'address': metrics.get('address', ''),
+                        'inspection_date': metrics.get('inspection_date'),
+                        'inspector_name': inspector_name,
+                        'total_units': metrics.get('total_units', 0),
+                        'total_defects': metrics.get('total_defects', 0),
+                        'ready_pct': metrics.get('ready_pct', 0),
+                        'original_filename': original_filename or 'uploaded_file.csv',
+                        'inspection_items': []
+                    }
+                    
+                    # Add inspection items
+                    for _, row in final_df.iterrows():
+                        inspection_data['inspection_items'].append({
+                            'unit': str(row['Unit']),
+                            'unit_type': str(row['UnitType']),
+                            'room': str(row['Room']),
+                            'component': str(row['Component']),
+                            'trade': str(row['Trade']),
+                            'status': str(row['StatusClass']),
+                            'urgency': str(row['Urgency']),
+                            'planned_completion': row['PlannedCompletion'].strftime('%Y-%m-%d') if pd.notna(row['PlannedCompletion']) else None,
+                            'inspection_date': str(row['InspectionDate']),
+                            'owner_signoff_timestamp': str(row['OwnerSignoffTimestamp']) if pd.notna(row['OwnerSignoffTimestamp']) else None,
+                            'description': f"{row['Room']} - {row['Component']}"
+                        })
+                    
+                    # Save using connection manager
+                    inspection_id = self._save_to_database_with_conn_manager(inspection_data)
+                    
+                    if inspection_id:
+                        logger.info(f"✅ Saved to PostgreSQL: {inspection_id}")
+                        
+                        # STEP 13b: Create work orders from defects
+                        defects_df = final_df[final_df['StatusClass'] == 'Not OK'].copy()
+                        if len(defects_df) > 0:
+                            work_order_count = self._create_work_orders_with_conn_manager(
+                                inspection_id, 
+                                defects_df
+                            )
+                            
+                            if work_order_count > 0:
+                                logger.info(f"✅ Created {work_order_count} work orders")
+                                metrics['work_orders_created'] = work_order_count
+                            else:
+                                logger.info("No work orders created")
+                                metrics['work_orders_created'] = 0
+                        else:
+                            logger.info("No defects - no work orders needed")
+                            metrics['work_orders_created'] = 0
+                    else:
+                        logger.error("❌ Failed to save to PostgreSQL")
+                        
+                except Exception as e:
+                    logger.error(f"❌ PostgreSQL save failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+            
+            # Fallback to old db_manager (SQLite) if no connection manager
+            elif self.db_manager:
+                try:
+                    logger.info("💾 Using legacy SQLite save method...")
                     final_df_for_db = final_df.copy()
                     final_df_for_db["PlannedCompletion"] = pd.to_datetime(
                         final_df_for_db["PlannedCompletion"]
                     ).dt.strftime('%Y-%m-%d')
                     
-                    # Save inspection data
                     inspection_id = self.db_manager.save_inspector_data(
                         final_df_for_db, metrics, inspector_name, original_filename
                     )
                     
                     if inspection_id:
-                        logger.info(f"Saved to database: {inspection_id}")
-                        
-                        # STEP 13b: Create work orders from defects
+                        logger.info(f"Saved to SQLite: {inspection_id}")
                         work_order_count = self._create_work_orders_from_defects(
                             inspection_id, 
                             final_df_for_db
                         )
-                        
-                        if work_order_count > 0:
-                            logger.info(f"Created {work_order_count} work orders for Builder access")
-                            # Add to metrics for reporting
-                            metrics['work_orders_created'] = work_order_count
-                        else:
-                            logger.info("No work orders created (no defects found)")
-                            metrics['work_orders_created'] = 0
+                        metrics['work_orders_created'] = work_order_count
                         
                 except Exception as e:
-                    logger.error(f"Database save failed: {e}")
+                    logger.error(f"SQLite save failed: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
             
@@ -553,14 +610,106 @@ class InspectionDataProcessor:
             self.processed_data = final_df
             self.metrics = metrics
             
-            logger.info(f"Processing complete: {len(final_df)} items, {metrics['total_defects']} defects, {work_order_count} work orders")
+            logger.info(f"✅ Processing complete: {len(final_df)} items, {metrics['total_defects']} defects, {work_order_count} work orders")
             return final_df, metrics, inspection_id
             
         except Exception as e:
-            logger.error(f"Processing failed: {e}")
+            logger.error(f"❌ Processing failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return None
+            return None, None, None
+
+
+    # ADD THIS NEW METHOD (after _save_to_database_with_conn_manager)
+    def _create_work_orders_with_conn_manager(self, inspection_id: str, defects_df: pd.DataFrame) -> int:
+        """Create work orders using connection manager (PostgreSQL compatible)"""
+        
+        if not self.conn_manager:
+            logger.warning("No connection manager - cannot create work orders")
+            return 0
+        
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            work_orders_created = 0
+            
+            for _, defect in defects_df.iterrows():
+                work_order_id = str(uuid.uuid4())
+                
+                # Map urgency to planned date offset
+                if defect['Urgency'] == 'Urgent':
+                    days_offset = 3
+                    estimated_hours = 2.0
+                elif defect['Urgency'] == 'High Priority':
+                    days_offset = 7
+                    estimated_hours = 4.0
+                else:
+                    days_offset = 14
+                    estimated_hours = 3.0
+                
+                planned_date = datetime.now() + timedelta(days=days_offset)
+                
+                # Determine if photos required
+                photo_required_trades = ['Flooring - Tiles', 'Painting', 'Waterproofing', 'Concrete']
+                photos_required = str(defect['Trade']) in photo_required_trades
+                
+                initial_notes = f"Defect from inspection on {defect.get('InspectionDate', 'N/A')}"
+                
+                # PostgreSQL vs SQLite syntax
+                if self.db_type == "postgresql":
+                    cursor.execute("""
+                        INSERT INTO inspector_work_orders (
+                            id, inspection_id, unit, trade, component, room, 
+                            urgency, status, planned_date, estimated_hours, notes,
+                            photos_required, created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    """, (
+                        work_order_id, inspection_id, str(defect['Unit']),
+                        str(defect['Trade']), str(defect['Component']), str(defect['Room']),
+                        str(defect['Urgency']), 'pending', planned_date.date(),
+                        estimated_hours, initial_notes, photos_required
+                    ))
+                else:
+                    cursor.execute("""
+                        INSERT INTO inspector_work_orders (
+                            id, inspection_id, unit, trade, component, room, 
+                            urgency, status, planned_date, estimated_hours, notes,
+                            photos_required, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    """, (
+                        work_order_id, inspection_id, str(defect['Unit']),
+                        str(defect['Trade']), str(defect['Component']), str(defect['Room']),
+                        str(defect['Urgency']), 'pending', planned_date.date(),
+                        estimated_hours, initial_notes, photos_required
+                    ))
+                
+                work_orders_created += 1
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"✅ Created {work_orders_created} work orders in {self.db_type.upper()}")
+            
+            # Log by urgency
+            urgency_counts = defects_df['Urgency'].value_counts()
+            for urgency, count in urgency_counts.items():
+                logger.info(f"  - {urgency}: {count} orders")
+            
+            return work_orders_created
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating work orders: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            try:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+            except:
+                pass
+            return 0
     
     def _log_csv_processing(self, original_df, metrics, inspection_id, mapping_success_rate, 
                        inspector_name, original_filename=None, file_hash=None, work_order_count=0):
