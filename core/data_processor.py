@@ -79,32 +79,39 @@ class InspectionDataProcessor:
     
     # ✅ Add this method to save inspection data using connection manager
     def _save_to_database_with_conn_manager(self, inspection_data: Dict) -> Optional[str]:
-        """Save inspection to database using connection manager with timeout protection
+        """Save inspection to database using connection manager with detailed logging
         
         Returns:
             inspection_id if successful, None otherwise
         """
         if not self.conn_manager:
-            logger.warning("No connection manager available")
+            logger.error("❌ No connection manager available")
             return None
         
         conn = None
         cursor = None
         
         try:
-            logger.info(f"📊 Preparing to save {len(inspection_data.get('inspection_items', []))} items...")
+            logger.info(f"📊 Starting save process...")
+            logger.info(f"   Building: {inspection_data.get('building_name', 'Unknown')}")
+            logger.info(f"   Total items: {len(inspection_data.get('inspection_items', []))}")
+            logger.info(f"   Database type: {self.db_type}")
             
             # Get connection with timeout
+            logger.info("🔌 Getting database connection...")
             conn = self._get_connection()
+            logger.info("✅ Connection obtained")
+            
             cursor = conn.cursor()
+            logger.info("✅ Cursor created")
             
             # Generate IDs
             inspection_id = str(uuid.uuid4())
             building_id = str(uuid.uuid4())
+            logger.info(f"🔑 Generated IDs - Inspection: {inspection_id[:8]}..., Building: {building_id[:8]}...")
             
-            logger.info(f"🏢 Saving building: {inspection_data['building_name']}")
-            
-            # Insert building (with conflict handling)
+            # Insert building
+            logger.info(f"🏢 Inserting building record...")
             if self.db_type == "postgresql":
                 cursor.execute("""
                     INSERT INTO inspector_buildings (id, name, address, total_units, created_at)
@@ -119,9 +126,10 @@ class InspectionDataProcessor:
                 """, (building_id, inspection_data['building_name'], 
                     inspection_data.get('address', ''), inspection_data['total_units']))
             
-            logger.info(f"📝 Saving inspection metadata (ID: {inspection_id[:8]}...)")
+            logger.info(f"✅ Building record inserted")
             
             # Insert inspection
+            logger.info(f"📝 Inserting inspection record...")
             if self.db_type == "postgresql":
                 cursor.execute("""
                     INSERT INTO inspector_inspections 
@@ -143,32 +151,42 @@ class InspectionDataProcessor:
                     inspection_data['total_defects'], inspection_data['ready_pct'],
                     inspection_data.get('original_filename', '')))
             
-            # Insert inspection items in BATCHES (much faster)
+            logger.info(f"✅ Inspection record inserted")
+            
+            # Insert inspection items in BATCHES
             items = inspection_data.get('inspection_items', [])
             if len(items) > 0:
-                logger.info(f"💾 Saving {len(items)} inspection items in batches...")
+                logger.info(f"💾 Preparing to save {len(items)} inspection items...")
                 
-                batch_size = 100  # Process 100 items at a time
+                batch_size = 100
                 total_saved = 0
                 
                 for i in range(0, len(items), batch_size):
                     batch = items[i:i + batch_size]
+                    logger.info(f"   Processing batch {i//batch_size + 1} ({len(batch)} items)...")
                     
                     if self.db_type == "postgresql":
                         # Use executemany for PostgreSQL
-                        values = [
-                            (str(uuid.uuid4()), inspection_id, building_id,
-                            item.get('unit', ''), item.get('unit_type', ''),
-                            item.get('room', ''), item.get('component', ''),
-                            item.get('trade', ''), item.get('status', 'pending'),
-                            item.get('urgency', 'Normal'),
-                            item.get('planned_completion'),
-                            item.get('inspection_date'),
-                            item.get('owner_signoff_timestamp'),
-                            item.get('description', ''))
-                            for item in batch
-                        ]
+                        values = []
+                        for item in batch:
+                            values.append((
+                                str(uuid.uuid4()), 
+                                inspection_id, 
+                                building_id,
+                                item.get('unit', ''), 
+                                item.get('unit_type', ''),
+                                item.get('room', ''), 
+                                item.get('component', ''),
+                                item.get('trade', ''), 
+                                item.get('status', 'pending'),
+                                item.get('urgency', 'Normal'),
+                                item.get('planned_completion'),
+                                item.get('inspection_date'),
+                                item.get('owner_signoff_timestamp'),
+                                item.get('description', '')
+                            ))
                         
+                        logger.info(f"   Executing PostgreSQL batch insert...")
                         cursor.executemany("""
                             INSERT INTO inspector_inspection_items
                             (id, inspection_id, building_id, unit, unit_type, room, 
@@ -179,6 +197,7 @@ class InspectionDataProcessor:
                         """, values)
                     else:
                         # SQLite version
+                        logger.info(f"   Executing SQLite batch insert...")
                         for item in batch:
                             cursor.execute("""
                                 INSERT INTO inspector_inspection_items
@@ -198,27 +217,33 @@ class InspectionDataProcessor:
                                 item.get('description', '')))
                     
                     total_saved += len(batch)
-                    logger.info(f"  ✓ Saved {total_saved}/{len(items)} items...")
+                    logger.info(f"   ✓ Batch complete: {total_saved}/{len(items)} items saved")
+            else:
+                logger.warning("⚠️ No inspection items to save")
             
             logger.info("💫 Committing transaction...")
             conn.commit()
+            logger.info("✅ Transaction committed successfully")
             
-            logger.info(f"✅ Successfully saved inspection {inspection_id[:8]}... to {self.db_type.upper()}")
+            logger.info(f"✅ SAVE COMPLETE: Inspection {inspection_id[:8]}... saved to {self.db_type.upper()}")
             
             return inspection_id
             
         except Exception as e:
-            logger.error(f"❌ Error saving to database: {e}")
+            logger.error(f"❌ SAVE FAILED at some point in the process")
+            logger.error(f"❌ Error type: {type(e).__name__}")
+            logger.error(f"❌ Error message: {e}")
             import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"❌ Full traceback:\n{traceback.format_exc()}")
             
             # Rollback on error
             if conn:
                 try:
                     logger.warning("⚠️ Rolling back transaction...")
                     conn.rollback()
+                    logger.info("✅ Rollback complete")
                 except Exception as rollback_error:
-                    logger.error(f"Rollback failed: {rollback_error}")
+                    logger.error(f"❌ Rollback failed: {rollback_error}")
             
             return None
             
@@ -227,14 +252,15 @@ class InspectionDataProcessor:
             if cursor:
                 try:
                     cursor.close()
-                except:
-                    pass
+                    logger.info("🔌 Cursor closed")
+                except Exception as e:
+                    logger.error(f"Error closing cursor: {e}")
             if conn:
                 try:
                     conn.close()
                     logger.info("🔌 Database connection closed")
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error closing connection: {e}")
     
     def check_duplicate_file(self, file_bytes: bytes, filename: str) -> Optional[Dict]:
         """

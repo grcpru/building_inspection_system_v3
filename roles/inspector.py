@@ -1644,18 +1644,41 @@ class InspectorInterface:
                         
                         # Success message with EXTRACTED info
                         work_orders = metrics.get('work_orders_created', 0)
-                        st.success(f"""
+                        
+                        # Build success message
+                        success_msg = f"""
                         ✅ **Processing Complete!**
                         
                         - **Building:** {metrics['building_name']} *(extracted from CSV)*
                         - **Address:** {metrics.get('address', 'N/A')} *(extracted from CSV)*
                         - **Inspection Date:** {metrics.get('inspection_date', 'N/A')} *(extracted from CSV)*
-                        - **Inspection ID:** `{inspection_id[:16]}...`
+                        """
+                        
+                        # Add inspection ID if available
+                        if inspection_id:
+                            success_msg += f"\n- **Inspection ID:** `{inspection_id[:16]}...`"
+                        else:
+                            success_msg += f"\n- **Inspection ID:** Not saved (database issue)"
+                        
+                        success_msg += f"""
                         - **Total Units:** {metrics['total_units']}
                         - **Total Defects:** {metrics['total_defects']}
                         - **Settlement Ready:** {metrics['ready_pct']:.1f}%
                         - **Work Orders Created:** {work_orders}
-                        """)
+                        """
+                        
+                        st.success(success_msg)
+                        
+                        # Show database warning if not saved
+                        if not inspection_id:
+                            st.warning("""
+                            ⚠️ **Data Not Saved to Database**
+                            
+                            The inspection was processed successfully, but could not be saved to the database.
+                            - You can still generate reports from the current session
+                            - Data will be lost when you refresh the page
+                            - Check the logs for database connection errors
+                            """)
                         
                         st.info("ℹ️ All building information was automatically extracted from your CSV file")
                         
