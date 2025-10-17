@@ -79,7 +79,7 @@ class InspectionDataProcessor:
     
     # ✅ Add this method to save inspection data using connection manager
     def _save_to_database_with_conn_manager(self, inspection_data: Dict) -> Optional[str]:
-        """Save inspection to database using connection manager with detailed logging
+        """Save inspection to database using connection manager with correct column names
         
         Returns:
             inspection_id if successful, None otherwise
@@ -97,7 +97,7 @@ class InspectionDataProcessor:
             logger.info(f"   Total items: {len(inspection_data.get('inspection_items', []))}")
             logger.info(f"   Database type: {self.db_type}")
             
-            # Get connection with timeout
+            # Get connection
             logger.info("🔌 Getting database connection...")
             conn = self._get_connection()
             logger.info("✅ Connection obtained")
@@ -166,37 +166,38 @@ class InspectionDataProcessor:
                     logger.info(f"   Processing batch {i//batch_size + 1} ({len(batch)} items)...")
                     
                     if self.db_type == "postgresql":
-                        # Use executemany for PostgreSQL
+                        # ✅ FIXED: Use correct PostgreSQL column names
                         values = []
                         for item in batch:
                             values.append((
                                 str(uuid.uuid4()), 
                                 inspection_id, 
                                 building_id,
-                                item.get('unit', ''), 
-                                item.get('unit_type', ''),
-                                item.get('room', ''), 
-                                item.get('component', ''),
-                                item.get('trade', ''), 
-                                item.get('status', 'pending'),
-                                item.get('urgency', 'Normal'),
-                                item.get('planned_completion'),
-                                item.get('inspection_date'),
-                                item.get('owner_signoff_timestamp'),
-                                item.get('description', '')
+                                item.get('unit', ''),              # unit_number in PostgreSQL
+                                item.get('unit_type', ''),         # OK
+                                item.get('room', ''),              # OK
+                                item.get('component', ''),         # OK
+                                item.get('trade', ''),             # OK
+                                item.get('status', 'pending'),     # status_class in PostgreSQL
+                                item.get('urgency', 'Normal'),     # OK
+                                item.get('planned_completion'),    # OK
+                                item.get('inspection_date'),       # OK
+                                item.get('owner_signoff_timestamp'), # OK
+                                item.get('description', '')        # original_status in PostgreSQL
                             ))
                         
                         logger.info(f"   Executing PostgreSQL batch insert...")
+                        # ✅ FIXED: Use correct column names matching PostgreSQL schema
                         cursor.executemany("""
                             INSERT INTO inspector_inspection_items
-                            (id, inspection_id, building_id, unit, unit_type, room, 
+                            (id, inspection_id, building_id, unit_number, unit_type, room, 
                             component, trade, status_class, urgency, 
                             planned_completion, inspection_date, owner_signoff_timestamp,
                             original_status, created_at)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                         """, values)
                     else:
-                        # SQLite version
+                        # SQLite version (uses 'unit' not 'unit_number')
                         logger.info(f"   Executing SQLite batch insert...")
                         for item in batch:
                             cursor.execute("""
@@ -230,7 +231,7 @@ class InspectionDataProcessor:
             return inspection_id
             
         except Exception as e:
-            logger.error(f"❌ SAVE FAILED at some point in the process")
+            logger.error(f"❌ SAVE FAILED")
             logger.error(f"❌ Error type: {type(e).__name__}")
             logger.error(f"❌ Error message: {e}")
             import traceback
