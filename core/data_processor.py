@@ -79,10 +79,23 @@ class InspectionDataProcessor:
     
     # ✅ Add this method to save inspection data using connection manager
     def _save_to_database_with_conn_manager(self, inspection_data: Dict) -> Optional[str]:
-        """Save inspection to database using connection manager with correct column names
+        """Save inspection to database using correct PostgreSQL schema
         
-        Returns:
-            inspection_id if successful, None otherwise
+        PostgreSQL schema (from postgres_adapter.py):
+        - id, inspection_id, building_id
+        - unit_number (not 'unit')
+        - room, component, trade  
+        - status_class (not 'status')
+        - urgency
+        - planned_completion
+        - inspection_date
+        - owner_signoff_timestamp
+        - original_status (not 'description')
+        - item_description (separate column)
+        - defect_type (separate column)
+        - created_at
+        
+        NO unit_type column in PostgreSQL!
         """
         if not self.conn_manager:
             logger.error("❌ No connection manager available")
@@ -166,38 +179,39 @@ class InspectionDataProcessor:
                     logger.info(f"   Processing batch {i//batch_size + 1} ({len(batch)} items)...")
                     
                     if self.db_type == "postgresql":
-                        # ✅ FIXED: Use correct PostgreSQL column names
+                        # ✅ CORRECTED: Match actual PostgreSQL schema from postgres_adapter.py
                         values = []
                         for item in batch:
                             values.append((
-                                str(uuid.uuid4()), 
-                                inspection_id, 
-                                building_id,
-                                item.get('unit', ''),              # unit_number in PostgreSQL
-                                item.get('unit_type', ''),         # OK
-                                item.get('room', ''),              # OK
-                                item.get('component', ''),         # OK
-                                item.get('trade', ''),             # OK
-                                item.get('status', 'pending'),     # status_class in PostgreSQL
-                                item.get('urgency', 'Normal'),     # OK
-                                item.get('planned_completion'),    # OK
-                                item.get('inspection_date'),       # OK
-                                item.get('owner_signoff_timestamp'), # OK
-                                item.get('description', '')        # original_status in PostgreSQL
+                                str(uuid.uuid4()),              # id
+                                inspection_id,                  # inspection_id
+                                building_id,                    # building_id
+                                item.get('unit', ''),          # unit_number
+                                item.get('room', ''),          # room
+                                item.get('component', ''),     # component
+                                item.get('trade', ''),         # trade
+                                item.get('status', 'pending'), # status_class
+                                item.get('urgency', 'Normal'), # urgency
+                                item.get('planned_completion'), # planned_completion
+                                item.get('inspection_date'),   # inspection_date
+                                item.get('owner_signoff_timestamp'), # owner_signoff_timestamp
+                                item.get('status', ''),        # original_status
+                                item.get('description', ''),   # item_description
+                                item.get('defect_type', '')    # defect_type
                             ))
                         
                         logger.info(f"   Executing PostgreSQL batch insert...")
-                        # ✅ FIXED: Use correct column names matching PostgreSQL schema
+                        # ✅ CORRECTED: Match postgres_adapter.py schema exactly
                         cursor.executemany("""
                             INSERT INTO inspector_inspection_items
-                            (id, inspection_id, building_id, unit_number, unit_type, room, 
-                            component, trade, status_class, urgency, 
-                            planned_completion, inspection_date, owner_signoff_timestamp,
-                            original_status, created_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                            (id, inspection_id, building_id, unit_number, room, component, 
+                            trade, status_class, urgency, planned_completion, 
+                            inspection_date, owner_signoff_timestamp, original_status,
+                            item_description, defect_type, created_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                         """, values)
                     else:
-                        # SQLite version (uses 'unit' not 'unit_number')
+                        # SQLite version (has unit_type column)
                         logger.info(f"   Executing SQLite batch insert...")
                         for item in batch:
                             cursor.execute("""
@@ -254,14 +268,14 @@ class InspectionDataProcessor:
                 try:
                     cursor.close()
                     logger.info("🔌 Cursor closed")
-                except Exception as e:
-                    logger.error(f"Error closing cursor: {e}")
+                except:
+                    pass
             if conn:
                 try:
                     conn.close()
                     logger.info("🔌 Database connection closed")
-                except Exception as e:
-                    logger.error(f"Error closing connection: {e}")
+                except:
+                    pass
     
     def check_duplicate_file(self, file_bytes: bytes, filename: str) -> Optional[Dict]:
         """
@@ -1250,38 +1264,60 @@ class InspectionDataProcessor:
 
 
 def load_master_trade_mapping() -> pd.DataFrame:
-    """Load master trade mapping with database fallback"""
+    """Load master trade mapping - file-based only (no database dependency)"""
     import os
     
-    # Try database first
-    if DATABASE_AVAILABLE:
-        try:
-            db_manager = DatabaseManager()
-            db_mapping = db_manager.get_trade_mapping()
-            if len(db_mapping) > 0:
-                logger.info("Loaded master trade mapping from database")
-                return db_mapping
-        except Exception as e:
-            logger.warning(f"Could not load from database: {e}")
-    
-    # Try CSV file
+    # Try CSV file first
     if os.path.exists("MasterTradeMapping.csv"):
         try:
-            return pd.read_csv("MasterTradeMapping.csv")
+            mapping = pd.read_csv("MasterTradeMapping.csv")
+            logger.info(f"Loaded master trade mapping from file: {len(mapping)} entries")
+            return mapping
         except Exception as e:
             logger.warning(f"Could not load MasterTradeMapping.csv: {e}")
     
     # Fallback to embedded mapping
+    logger.info("Using embedded fallback trade mapping")
     mapping_data = """Room,Component,Trade
 Apartment Entry Door,Door Handle,Doors
 Apartment Entry Door,Door Locks and Keys,Doors
+Apartment Entry Door,Door Stopper,Doors
+Apartment Entry Door,Door Frame,Doors
 Balcony,Balustrade,Carpentry & Joinery
+Balcony,Floor Tiles,Flooring - Tiles
+Balcony,Waterproofing,Waterproofing
 Bathroom,Tiles,Flooring - Tiles
+Bathroom,Wall Tiles,Flooring - Tiles
 Bathroom,Toilet,Plumbing
+Bathroom,Basin,Plumbing
+Bathroom,Shower,Plumbing
+Bathroom,Exhaust Fan,Electrical
+Bathroom,Mirror,Carpentry & Joinery
 Kitchen Area,Cabinets,Carpentry & Joinery
+Kitchen Area,Benchtop,Carpentry & Joinery
+Kitchen Area,Splashback,Flooring - Tiles
+Kitchen Area,Sink,Plumbing
+Kitchen Area,Cooktop,Appliances
+Kitchen Area,Oven,Appliances
+Kitchen Area,Rangehood,Appliances
+Kitchen Area,Dishwasher,Appliances
 Bedroom,Carpets,Flooring - Carpets
+Bedroom,Windows,Windows
+Bedroom,Wardrobe,Carpentry & Joinery
+Bedroom,Doors,Doors
+Bedroom,Paint,Painting
 Living Room,Windows,Windows
-General,Smoke Detector,Fire Safety"""
+Living Room,Flooring,Flooring - Timber
+Living Room,Air Conditioning,HVAC
+Living Room,Paint,Painting
+Laundry,Cabinets,Carpentry & Joinery
+Laundry,Sink,Plumbing
+Laundry,Taps,Plumbing
+Laundry,Tiles,Flooring - Tiles
+General,Smoke Detector,Fire Safety
+General,Light Fittings,Electrical
+General,Power Points,Electrical
+General,Switches,Electrical"""
     
     return pd.read_csv(StringIO(mapping_data))
 

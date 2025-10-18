@@ -842,7 +842,7 @@ class AdminInterface:
                 st.rerun()
     
     def _show_database_statistics(self):
-        """Show detailed database statistics - FIXED for PostgreSQL"""
+        """Show detailed database statistics with recent inspections"""
         
         with st.expander("Database Statistics", expanded=True):
             try:
@@ -875,32 +875,129 @@ class AdminInterface:
                         
                         stats[f'{table}_count'] = count
                     except Exception as e:
-                        print(f"Could not count {table}: {e}")
+                        logger.warning(f"Could not count {table}: {e}")
                         stats[f'{table}_count'] = 0
                 
-                cursor.close()
-                conn.close()
-                
                 # Display stats
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
                     st.markdown("**Core Tables:**")
                     st.metric("Users", stats.get('users_count', 0))
                     st.metric("Buildings", stats.get('inspector_buildings_count', 0))
-                    st.metric("Inspections", stats.get('inspector_inspections_count', 0))
                 
                 with col2:
+                    st.markdown("**Inspection Data:**")
+                    st.metric("Inspections", stats.get('inspector_inspections_count', 0))
+                    st.metric("Inspection Items", f"{stats.get('inspector_inspection_items_count', 0):,}")
+                
+                with col3:
                     st.markdown("**Work Management:**")
-                    st.metric("Inspection Items", stats.get('inspector_inspection_items_count', 0))
                     st.metric("Work Orders", stats.get('inspector_work_orders_count', 0))
+                
+                # ✅ ADD RECENT INSPECTIONS SECTION
+                st.markdown("---")
+                st.markdown("### 📋 Recent Inspections")
+                
+                if stats.get('inspector_inspections_count', 0) > 0:
+                    # Get recent inspections
+                    if self.db_type == "postgresql":
+                        cursor.execute("""
+                            SELECT 
+                                i.id,
+                                b.name as building_name,
+                                i.inspection_date,
+                                i.total_units,
+                                i.total_defects,
+                                i.ready_pct,
+                                i.inspector_name,
+                                i.created_at
+                            FROM inspector_inspections i
+                            JOIN inspector_buildings b ON i.building_id = b.id
+                            ORDER BY i.created_at DESC
+                            LIMIT 10
+                        """)
+                    else:
+                        cursor.execute("""
+                            SELECT 
+                                i.id,
+                                b.name as building_name,
+                                i.inspection_date,
+                                i.total_units,
+                                i.total_defects,
+                                i.ready_pct,
+                                i.inspector_name,
+                                i.created_at
+                            FROM inspector_inspections i
+                            JOIN inspector_buildings b ON i.building_id = b.id
+                            ORDER BY i.created_at DESC
+                            LIMIT 10
+                        """)
+                    
+                    rows = cursor.fetchall()
+                    
+                    if len(rows) > 0:
+                        # Convert to DataFrame
+                        inspections = []
+                        for row in rows:
+                            if isinstance(row, dict):
+                                inspections.append(row)
+                            else:
+                                inspections.append({
+                                    'id': row[0],
+                                    'building_name': row[1],
+                                    'inspection_date': row[2],
+                                    'total_units': row[3],
+                                    'total_defects': row[4],
+                                    'ready_pct': row[5],
+                                    'inspector_name': row[6],
+                                    'created_at': row[7]
+                                })
+                        
+                        df = pd.DataFrame(inspections)
+                        
+                        # Format for display
+                        display_df = df.copy()
+                        display_df['id'] = display_df['id'].str[:8] + '...'
+                        display_df['ready_pct'] = display_df['ready_pct'].apply(lambda x: f"{x:.1f}%")
+                        
+                        # Rename columns for display
+                        display_df = display_df.rename(columns={
+                            'id': 'ID',
+                            'building_name': 'Building',
+                            'inspection_date': 'Date',
+                            'total_units': 'Units',
+                            'total_defects': 'Defects',
+                            'ready_pct': 'Ready %',
+                            'inspector_name': 'Inspector',
+                            'created_at': 'Uploaded'
+                        })
+                        
+                        st.dataframe(display_df, use_container_width=True, hide_index=True)
+                        
+                        # Summary statistics
+                        st.markdown("---")
+                        col_a, col_b, col_c = st.columns(3)
+                        
+                        with col_a:
+                            total_units = df['total_units'].sum()
+                            st.metric("Total Units Inspected", total_units)
+                        
+                        with col_b:
+                            total_defects = df['total_defects'].sum()
+                            st.metric("Total Defects Found", total_defects)
+                        
+                        with col_c:
+                            avg_ready = df['ready_pct'].mean()
+                            st.metric("Avg Settlement Ready", f"{avg_ready:.1f}%")
+                    else:
+                        st.info("No inspection data available yet")
+                else:
+                    st.info("No inspections in database. Inspector role can upload CSV files to create inspections.")
                 
                 # Table sizes
                 st.markdown("---")
-                st.markdown("**All Tables:**")
-                
-                conn = self._get_connection()
-                cursor = conn.cursor()
+                st.markdown("### 📊 All Database Tables")
                 
                 # Get all tables
                 if self.db_type == "postgresql":
@@ -908,6 +1005,7 @@ class AdminInterface:
                         SELECT table_name 
                         FROM information_schema.tables 
                         WHERE table_schema = 'public'
+                        AND table_type = 'BASE TABLE'
                         ORDER BY table_name
                     """)
                 else:
@@ -924,20 +1022,24 @@ class AdminInterface:
                 for table_row in tables:
                     table_name = table_row['table_name'] if isinstance(table_row, dict) else table_row[0]
                     
+                    # Skip system tables
+                    if table_name.startswith('pg_') or table_name.startswith('sql_'):
+                        continue
+                    
                     try:
                         cursor.execute(f"SELECT COUNT(*) as count FROM {table_name}")
                         result = cursor.fetchone()
                         count = result['count'] if isinstance(result, dict) else result[0]
                         table_sizes.append({'Table': table_name, 'Rows': count})
-                    except:
-                        table_sizes.append({'Table': table_name, 'Rows': 'Error'})
+                    except Exception as e:
+                        table_sizes.append({'Table': table_name, 'Rows': f'Error: {str(e)[:30]}'})
                 
                 cursor.close()
                 conn.close()
                 
                 if table_sizes:
                     sizes_df = pd.DataFrame(table_sizes)
-                    st.dataframe(sizes_df, use_container_width=True)
+                    st.dataframe(sizes_df, use_container_width=True, hide_index=True)
                     
             except Exception as e:
                 st.error(f"Error loading statistics: {e}")
