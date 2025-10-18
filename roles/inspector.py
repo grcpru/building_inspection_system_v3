@@ -535,13 +535,12 @@ class InspectorInterface:
                 st.error(f"Error loading analytics: {e}")
     
     def _load_previous_inspection(self, inspection_id: str):
-        """Load a previous inspection from database using connection manager"""
+        """Load inspection using ACTUAL PostgreSQL schema"""
         try:
-            with st.spinner("Loading previous inspection from database..."):
+            with st.spinner("Loading inspection..."):
                 
-                # ✅ Use connection manager instead of db_manager
                 if not self.conn_manager:
-                    st.error("Database connection not available")
+                    st.error("Database not available")
                     return
                 
                 conn = self._get_connection()
@@ -574,7 +573,7 @@ class InspectorInterface:
                 if not result:
                     cursor.close()
                     conn.close()
-                    st.error(f"Inspection {inspection_id[:8]}... not found")
+                    st.error(f"Inspection not found")
                     return
                 
                 # Convert to dict
@@ -594,36 +593,29 @@ class InspectorInterface:
                         'address': result[9]
                     }
                 
-                # Get inspection items
+                # Get inspection items with CORRECT PostgreSQL columns
                 if self.db_type == "postgresql":
+                    # Columns: unit_number, floor, zone, room, item_description, 
+                    #          defect_type, severity, status, notes
                     cursor.execute("""
                         SELECT 
-                            unit_number as Unit,
-                            room as Room,
-                            component as Component,
-                            trade as Trade,
-                            status_class as StatusClass,
-                            urgency as Urgency,
-                            planned_completion as PlannedCompletion,
-                            inspection_date as InspectionDate,
-                            owner_signoff_timestamp as OwnerSignoffTimestamp
+                            unit_number,
+                            room,
+                            item_description,
+                            severity,
+                            status,
+                            defect_type
                         FROM inspector_inspection_items
                         WHERE inspection_id = %s
+                        ORDER BY unit_number, room
                     """, (inspection_id,))
                 else:
                     cursor.execute("""
                         SELECT 
-                            unit as Unit,
-                            room as Room,
-                            component as Component,
-                            trade as Trade,
-                            status_class as StatusClass,
-                            urgency as Urgency,
-                            planned_completion as PlannedCompletion,
-                            inspection_date as InspectionDate,
-                            owner_signoff_timestamp as OwnerSignoffTimestamp
+                            unit, room, component, trade, status_class, urgency
                         FROM inspector_inspection_items
                         WHERE inspection_id = ?
+                        ORDER BY unit, room
                     """, (inspection_id,))
                 
                 rows = cursor.fetchall()
@@ -631,25 +623,45 @@ class InspectorInterface:
                 conn.close()
                 
                 if len(rows) == 0:
-                    st.warning("No inspection items found")
+                    st.warning("No items found")
                     return
                 
                 # Convert to DataFrame
-                items_df = pd.DataFrame(rows, columns=[
-                    'Unit', 'Room', 'Component', 'Trade', 'StatusClass',
-                    'Urgency', 'PlannedCompletion', 'InspectionDate', 'OwnerSignoffTimestamp'
-                ])
+                if self.db_type == "postgresql":
+                    items = []
+                    for row in rows:
+                        if isinstance(row, dict):
+                            items.append({
+                                'Unit': row['unit_number'],
+                                'Room': row['room'],
+                                'Description': row['item_description'],
+                                'Severity': row['severity'],
+                                'Status': row['status'],
+                                'Type': row.get('defect_type', '')
+                            })
+                        else:
+                            items.append({
+                                'Unit': row[0],
+                                'Room': row[1],
+                                'Description': row[2],
+                                'Severity': row[3],
+                                'Status': row[4],
+                                'Type': row[5] if len(row) > 5 else ''
+                            })
+                    
+                    items_df = pd.DataFrame(items)
+                else:
+                    items_df = pd.DataFrame(rows, columns=[
+                        'Unit', 'Room', 'Component', 'Trade', 'Status', 'Urgency'
+                    ])
                 
                 # Calculate metrics
-                defects_only = items_df[items_df['StatusClass'] == 'Not OK']
-                total_units = items_df['Unit'].nunique()
-                
                 metrics = {
                     'building_name': inspection['building_name'],
                     'address': inspection.get('address', 'N/A'),
                     'inspection_date': str(inspection['inspection_date']),
-                    'total_units': total_units,
-                    'total_defects': len(defects_only),
+                    'total_units': int(inspection['total_units']),
+                    'total_defects': int(inspection['total_defects']),
                     'ready_pct': float(inspection['ready_pct']),
                     'inspection_id': inspection_id
                 }
@@ -663,15 +675,18 @@ class InspectorInterface:
                 st.session_state['metrics'] = metrics
                 st.session_state['inspection_id'] = inspection_id
                 
-                # Show success
                 st.success(f"✅ Loaded: {metrics['building_name']}")
-                st.info(f"Units: {metrics['total_units']}, Defects: {metrics['total_defects']}, Ready: {metrics['ready_pct']:.1f}%")
+                st.info(f"📊 Units: {metrics['total_units']}, Defects: {metrics['total_defects']}, Ready: {metrics['ready_pct']:.1f}%")
+                
+                # Show sample data
+                with st.expander("View Data Preview"):
+                    st.dataframe(items_df.head(20), use_container_width=True)
                 
                 st.rerun()
                 
         except Exception as e:
-            st.error(f"Error loading inspection: {e}")
-            logger.error(f"Load inspection error: {e}")
+            st.error(f"Load error: {e}")
+            logger.error(f"Load error: {e}")
             import traceback
             logger.error(traceback.format_exc())
     

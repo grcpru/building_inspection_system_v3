@@ -79,52 +79,26 @@ class InspectionDataProcessor:
     
     # ✅ Add this method to save inspection data using connection manager
     def _save_to_database_with_conn_manager(self, inspection_data: Dict) -> Optional[str]:
-        """Save inspection to database using correct PostgreSQL schema
+        """Save inspection using ACTUAL PostgreSQL schema from postgres_adapter.py"""
         
-        PostgreSQL schema (from postgres_adapter.py):
-        - id, inspection_id, building_id
-        - unit_number (not 'unit')
-        - room, component, trade  
-        - status_class (not 'status')
-        - urgency
-        - planned_completion
-        - inspection_date
-        - owner_signoff_timestamp
-        - original_status (not 'description')
-        - item_description (separate column)
-        - defect_type (separate column)
-        - created_at
-        
-        NO unit_type column in PostgreSQL!
-        """
         if not self.conn_manager:
-            logger.error("❌ No connection manager available")
+            logger.error("❌ No connection manager")
             return None
         
         conn = None
         cursor = None
         
         try:
-            logger.info(f"📊 Starting save process...")
-            logger.info(f"   Building: {inspection_data.get('building_name', 'Unknown')}")
-            logger.info(f"   Total items: {len(inspection_data.get('inspection_items', []))}")
-            logger.info(f"   Database type: {self.db_type}")
+            logger.info(f"📊 Saving: {inspection_data.get('building_name')} ({len(inspection_data.get('inspection_items', []))} items)")
             
-            # Get connection
-            logger.info("🔌 Getting database connection...")
             conn = self._get_connection()
-            logger.info("✅ Connection obtained")
-            
             cursor = conn.cursor()
-            logger.info("✅ Cursor created")
             
-            # Generate IDs
             inspection_id = str(uuid.uuid4())
             building_id = str(uuid.uuid4())
-            logger.info(f"🔑 Generated IDs - Inspection: {inspection_id[:8]}..., Building: {building_id[:8]}...")
+            logger.info(f"🔑 IDs: {inspection_id[:8]}..., {building_id[:8]}...")
             
-            # Insert building
-            logger.info(f"🏢 Inserting building record...")
+            # === BUILDING ===
             if self.db_type == "postgresql":
                 cursor.execute("""
                     INSERT INTO inspector_buildings (id, name, address, total_units, created_at)
@@ -139,10 +113,9 @@ class InspectionDataProcessor:
                 """, (building_id, inspection_data['building_name'], 
                     inspection_data.get('address', ''), inspection_data['total_units']))
             
-            logger.info(f"✅ Building record inserted")
+            logger.info(f"✅ Building saved")
             
-            # Insert inspection
-            logger.info(f"📝 Inserting inspection record...")
+            # === INSPECTION ===
             if self.db_type == "postgresql":
                 cursor.execute("""
                     INSERT INTO inspector_inspections 
@@ -164,55 +137,73 @@ class InspectionDataProcessor:
                     inspection_data['total_defects'], inspection_data['ready_pct'],
                     inspection_data.get('original_filename', '')))
             
-            logger.info(f"✅ Inspection record inserted")
+            logger.info(f"✅ Inspection saved")
             
-            # Insert inspection items in BATCHES
+            # === INSPECTION ITEMS ===
             items = inspection_data.get('inspection_items', [])
             if len(items) > 0:
-                logger.info(f"💾 Preparing to save {len(items)} inspection items...")
+                logger.info(f"💾 Saving {len(items)} items...")
                 
                 batch_size = 100
-                total_saved = 0
-                
                 for i in range(0, len(items), batch_size):
                     batch = items[i:i + batch_size]
-                    logger.info(f"   Processing batch {i//batch_size + 1} ({len(batch)} items)...")
                     
                     if self.db_type == "postgresql":
-                        # ✅ CORRECTED: Match actual PostgreSQL schema from postgres_adapter.py
+                        # PostgreSQL columns: id, inspection_id, building_id, unit_number, 
+                        # floor, zone, room, item_description, defect_type, severity, status, notes
+                        
                         values = []
                         for item in batch:
+                            # Build comprehensive description
+                            desc_parts = []
+                            if item.get('component'):
+                                desc_parts.append(item['component'])
+                            if item.get('trade'):
+                                desc_parts.append(f"[{item['trade']}]")
+                            if item.get('description'):
+                                desc_parts.append(item['description'])
+                            
+                            description = " - ".join(desc_parts) if desc_parts else 'Inspection item'
+                            
+                            # Map urgency to severity
+                            urgency = item.get('urgency', 'Normal')
+                            if urgency == 'Urgent':
+                                severity = 'critical'
+                            elif urgency == 'High Priority':
+                                severity = 'high'
+                            else:
+                                severity = 'medium'
+                            
+                            # Extract unit info (try to parse floor if available)
+                            unit = str(item.get('unit', ''))
+                            floor = ''
+                            if len(unit) >= 1 and unit[0].isdigit():
+                                floor = unit[0]  # First digit as floor
+                            
                             values.append((
                                 str(uuid.uuid4()),              # id
                                 inspection_id,                  # inspection_id
                                 building_id,                    # building_id
-                                item.get('unit', ''),          # unit_number
+                                unit,                           # unit_number
+                                floor,                          # floor
+                                '',                             # zone
                                 item.get('room', ''),          # room
-                                item.get('component', ''),     # component
-                                item.get('trade', ''),         # trade
-                                item.get('status', 'pending'), # status_class
-                                item.get('urgency', 'Normal'), # urgency
-                                item.get('planned_completion'), # planned_completion
-                                item.get('inspection_date'),   # inspection_date
-                                item.get('owner_signoff_timestamp'), # owner_signoff_timestamp
-                                item.get('status', ''),        # original_status
-                                item.get('description', ''),   # item_description
-                                item.get('defect_type', '')    # defect_type
+                                description,                    # item_description
+                                item.get('defect_type', ''),   # defect_type
+                                severity,                       # severity
+                                item.get('status', 'pending'), # status
+                                ''                              # notes
                             ))
                         
-                        logger.info(f"   Executing PostgreSQL batch insert...")
-                        # ✅ CORRECTED: Match postgres_adapter.py schema exactly
                         cursor.executemany("""
                             INSERT INTO inspector_inspection_items
-                            (id, inspection_id, building_id, unit_number, room, component, 
-                            trade, status_class, urgency, planned_completion, 
-                            inspection_date, owner_signoff_timestamp, original_status,
-                            item_description, defect_type, created_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                            (id, inspection_id, building_id, unit_number, floor, zone, room,
+                            item_description, defect_type, severity, status, notes, created_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                         """, values)
+                        
                     else:
-                        # SQLite version (has unit_type column)
-                        logger.info(f"   Executing SQLite batch insert...")
+                        # SQLite - full schema
                         for item in batch:
                             cursor.execute("""
                                 INSERT INTO inspector_inspection_items
@@ -231,49 +222,33 @@ class InspectionDataProcessor:
                                 item.get('owner_signoff_timestamp'),
                                 item.get('description', '')))
                     
-                    total_saved += len(batch)
-                    logger.info(f"   ✓ Batch complete: {total_saved}/{len(items)} items saved")
-            else:
-                logger.warning("⚠️ No inspection items to save")
+                    logger.info(f"   ✓ {i+len(batch)}/{len(items)} saved")
             
-            logger.info("💫 Committing transaction...")
             conn.commit()
-            logger.info("✅ Transaction committed successfully")
-            
-            logger.info(f"✅ SAVE COMPLETE: Inspection {inspection_id[:8]}... saved to {self.db_type.upper()}")
+            logger.info(f"✅ SAVED to {self.db_type.upper()}: {inspection_id[:8]}...")
             
             return inspection_id
             
         except Exception as e:
-            logger.error(f"❌ SAVE FAILED")
-            logger.error(f"❌ Error type: {type(e).__name__}")
-            logger.error(f"❌ Error message: {e}")
+            logger.error(f"❌ Save failed: {type(e).__name__}: {e}")
             import traceback
-            logger.error(f"❌ Full traceback:\n{traceback.format_exc()}")
-            
-            # Rollback on error
+            logger.error(traceback.format_exc())
             if conn:
                 try:
-                    logger.warning("⚠️ Rolling back transaction...")
                     conn.rollback()
-                    logger.info("✅ Rollback complete")
-                except Exception as rollback_error:
-                    logger.error(f"❌ Rollback failed: {rollback_error}")
-            
+                except:
+                    pass
             return None
             
         finally:
-            # Always close cursor and connection
             if cursor:
                 try:
                     cursor.close()
-                    logger.info("🔌 Cursor closed")
                 except:
                     pass
             if conn:
                 try:
                     conn.close()
-                    logger.info("🔌 Database connection closed")
                 except:
                     pass
     

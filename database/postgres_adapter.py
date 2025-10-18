@@ -236,6 +236,36 @@ class PostgresAdapter:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Trade Mappings (for master mapping storage)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS inspector_trade_mappings (
+                id SERIAL PRIMARY KEY,
+                room TEXT NOT NULL,
+                component TEXT NOT NULL,
+                trade TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(room, component)
+            )
+        """)
+    
+    def _create_trade_mappings_table(self, cursor):
+        """Create trade mappings table for PostgreSQL"""
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS inspector_trade_mappings (
+                id SERIAL PRIMARY KEY,
+                room TEXT NOT NULL,
+                component TEXT NOT NULL,
+                trade TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(room, component)
+            )
+        """)
+        
+        print("✅ Created inspector_trade_mappings table")
     
     def _create_builder_tables(self, cursor):
         """Create builder-related tables"""
