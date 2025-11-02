@@ -12,6 +12,7 @@ import logging
 from io import StringIO
 import hashlib
 import uuid
+from psycopg2.extras import execute_values
 
 # ✅ CRITICAL FIX: Import connection manager
 from database.connection_manager import get_connection_manager
@@ -38,35 +39,108 @@ class InspectionDataProcessor:
         """Initialize the data processor with database support
         
         Args:
-            db_path: Path to SQLite database (for backward compatibility)
-            conn_manager: Connection manager instance (for PostgreSQL support)
+            db_path: Path to SQLite database (for legacy support)
+            conn_manager: Connection manager for PostgreSQL/SQLite (new way)
         """
         self.processed_data = None
         self.metrics = None
         self.building_info = {}
         
-        # ✅ Use connection manager if provided, otherwise fall back to DatabaseManager
+        # ✅ Store connection manager
+        self.conn_manager = conn_manager
+        
+        # ✅ Determine database type
         if conn_manager:
-            self.conn_manager = conn_manager
-            self.db_type = conn_manager.get_db_type()
-            logger.info(f"✅ Data processor initialized with {self.db_type.upper()}")
-            
-            # Keep db_manager for backward compatibility methods
-            if DATABASE_AVAILABLE and self.db_type == "sqlite":
+            self.db_type = conn_manager.db_type
+            logger.info(f"✅ Using connection manager: {self.db_type.upper()}")
+        else:
+            self.db_type = "sqlite"
+            logger.info("Using legacy SQLite mode")
+        
+        # ✅ Initialize db_manager ONLY for SQLite
+        self.db_manager = None
+        
+        if self.db_type == "sqlite":
+            # SQLite mode: Use DatabaseManager from setup.py
+            try:
+                from database.setup import DatabaseManager
                 self.db_manager = DatabaseManager(db_path)
-            else:
+                logger.info(f"✅ SQLite DatabaseManager initialized: {db_path}")
+            except ImportError as e:
+                logger.error(f"❌ Could not import DatabaseManager: {e}")
+                try:
+                    from core.database_manager import DatabaseManager
+                    self.db_manager = DatabaseManager(db_path)
+                    logger.info(f"✅ SQLite DatabaseManager initialized (fallback): {db_path}")
+                except ImportError as e2:
+                    logger.error(f"❌ DatabaseManager not available: {e2}")
+                    self.db_manager = None
+            except Exception as e:
+                logger.error(f"❌ Database initialization failed: {e}")
                 self.db_manager = None
         else:
-            # Backward compatibility - use DatabaseManager
-            self.conn_manager = None
-            self.db_type = "sqlite"
+            # PostgreSQL mode: Don't use db_manager, use conn_manager only
+            logger.info("✅ PostgreSQL mode - using connection manager (no db_manager needed)")
+            self.db_manager = None
+        
+        # ✅ Log final status
+        if self.conn_manager and self.db_type == "postgresql":
+            logger.info("✅ InspectionDataProcessor ready with PostgreSQL")
+        elif self.db_manager:
+            logger.info("✅ InspectionDataProcessor ready with SQLite")
+        else:
+            logger.warning("⚠️ InspectionDataProcessor initialized WITHOUT database (memory only)")
             
-            if DATABASE_AVAILABLE:
-                self.db_manager = DatabaseManager(db_path)
-                logger.info("Database manager initialized (legacy mode)")
-            else:
-                self.db_manager = None
-                logger.warning("Database not available - data will only be stored in memory")
+    def _get_connection(self):
+        """Get database connection - works with both PostgreSQL and SQLite"""
+        if self.conn_manager:
+            # PostgreSQL or SQLite via connection manager
+            return self.conn_manager.get_connection()
+        elif self.db_manager:
+            # Legacy SQLite via db_manager
+            return self.db_manager.connect()
+        else:
+            raise Exception("No database connection available")
+
+    def _check_database_available(self) -> bool:
+        """Check if database connection is available"""
+        if self.conn_manager:
+            return True
+        elif self.db_manager:
+            return True
+        else:
+            return False
+    # ============================================
+    # FIX 2: Add database check in InspectorInterface
+    # Add this method to InspectorInterface class in inspector.py
+    # ============================================
+
+    def _check_database_connection(self):
+        """Check if database is properly connected"""
+        
+        if not self.db_manager:
+            st.error("❌ Database not available!")
+            st.info("Troubleshooting:")
+            st.write("1. Check if `database/setup.py` exists")
+            st.write("2. Check if `building_inspection.db` file exists")
+            st.write("3. Try restarting the application")
+            return False
+        
+        try:
+            # Test connection
+            conn = self.db_manager.connect()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
+            count = cursor.fetchone()[0]
+            cursor.close()
+            
+            st.success(f"✅ Database connected - {count} inspections found")
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Database connection failed: {e}")
+            st.info("The database file may be corrupted or missing tables")
+            return False
     
     def _get_connection(self):
         """Get database connection using connection manager"""
@@ -79,7 +153,7 @@ class InspectionDataProcessor:
     
     # ✅ Add this method to save inspection data using connection manager
     def _save_to_database_with_conn_manager(self, inspection_data: Dict) -> Optional[str]:
-        """Save inspection using ACTUAL PostgreSQL schema from postgres_adapter.py"""
+        """Save inspection using PostgreSQL schema - SAVE ALL ITEMS (not just defects)"""
         
         if not self.conn_manager:
             logger.error("❌ No connection manager")
@@ -89,14 +163,24 @@ class InspectionDataProcessor:
         cursor = None
         
         try:
-            logger.info(f"📊 Saving: {inspection_data.get('building_name')} ({len(inspection_data.get('inspection_items', []))} items)")
+            items = inspection_data.get('inspection_items', [])
+            logger.info(f"📊 SAVE - Building: {inspection_data.get('building_name')}")
+            logger.info(f"📊 SAVE - Total items to save: {len(items)}")
+            
+            # ✅ DEBUG: Check what we're receiving
+            if len(items) > 0:
+                sample = items[0]
+                logger.info(f"📊 SAVE - Sample item keys: {sample.keys()}")
+                logger.info(f"📊 SAVE - Sample item: {sample}")
+            else:
+                logger.error("❌ SAVE - No items to save!")
+                return None
             
             conn = self._get_connection()
             cursor = conn.cursor()
             
             inspection_id = str(uuid.uuid4())
             building_id = str(uuid.uuid4())
-            logger.info(f"🔑 IDs: {inspection_id[:8]}..., {building_id[:8]}...")
             
             # === BUILDING ===
             if self.db_type == "postgresql":
@@ -104,12 +188,6 @@ class InspectionDataProcessor:
                     INSERT INTO inspector_buildings (id, name, address, total_units, created_at)
                     VALUES (%s, %s, %s, %s, NOW())
                     ON CONFLICT (id) DO NOTHING
-                """, (building_id, inspection_data['building_name'], 
-                    inspection_data.get('address', ''), inspection_data['total_units']))
-            else:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO inspector_buildings (id, name, address, total_units, created_at)
-                    VALUES (?, ?, ?, ?, datetime('now'))
                 """, (building_id, inspection_data['building_name'], 
                     inspection_data.get('address', ''), inspection_data['total_units']))
             
@@ -126,103 +204,110 @@ class InspectionDataProcessor:
                     inspection_data['inspector_name'], inspection_data['total_units'],
                     inspection_data['total_defects'], inspection_data['ready_pct'],
                     inspection_data.get('original_filename', '')))
-            else:
-                cursor.execute("""
-                    INSERT INTO inspector_inspections 
-                    (id, building_id, inspection_date, inspector_name, total_units, 
-                    total_defects, ready_pct, original_filename, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                """, (inspection_id, building_id, inspection_data['inspection_date'],
-                    inspection_data['inspector_name'], inspection_data['total_units'],
-                    inspection_data['total_defects'], inspection_data['ready_pct'],
-                    inspection_data.get('original_filename', '')))
             
             logger.info(f"✅ Inspection saved")
             
             # === INSPECTION ITEMS ===
-            items = inspection_data.get('inspection_items', [])
+            # ✅ CRITICAL FIX: Save ALL items, not just defects
             if len(items) > 0:
-                logger.info(f"💾 Saving {len(items)} items...")
+                from psycopg2.extras import execute_values
+                import json
                 
-                batch_size = 100
-                for i in range(0, len(items), batch_size):
-                    batch = items[i:i + batch_size]
+                all_values = []
+                unit_types_seen = set()
+                status_counts = {'OK': 0, 'Not OK': 0, 'Blank': 0}
+                
+                for idx, item in enumerate(items):
+                    # Extract data from item dict
+                    unit = str(item.get('unit', ''))
+                    unit_type = str(item.get('unit_type', 'Apartment'))
+                    room = str(item.get('room', ''))
+                    component = str(item.get('component', ''))
+                    trade = str(item.get('trade', ''))
+                    status = str(item.get('status', 'Not OK'))  # ✅ Now includes OK items!
+                    urgency = str(item.get('urgency', 'Normal'))
+                    planned_completion = str(item.get('planned_completion', ''))
+                    inspection_date = str(item.get('inspection_date', ''))
+                    owner_signoff = item.get('owner_signoff_timestamp')
+                    defect_type = str(item.get('defect_type', ''))
                     
-                    if self.db_type == "postgresql":
-                        # PostgreSQL columns: id, inspection_id, building_id, unit_number, 
-                        # floor, zone, room, item_description, defect_type, severity, status, notes
-                        
-                        values = []
-                        for item in batch:
-                            # Build comprehensive description
-                            desc_parts = []
-                            if item.get('component'):
-                                desc_parts.append(item['component'])
-                            if item.get('trade'):
-                                desc_parts.append(f"[{item['trade']}]")
-                            if item.get('description'):
-                                desc_parts.append(item['description'])
-                            
-                            description = " - ".join(desc_parts) if desc_parts else 'Inspection item'
-                            
-                            # Map urgency to severity
-                            urgency = item.get('urgency', 'Normal')
-                            if urgency == 'Urgent':
-                                severity = 'critical'
-                            elif urgency == 'High Priority':
-                                severity = 'high'
-                            else:
-                                severity = 'medium'
-                            
-                            # Extract unit info (try to parse floor if available)
-                            unit = str(item.get('unit', ''))
-                            floor = ''
-                            if len(unit) >= 1 and unit[0].isdigit():
-                                floor = unit[0]  # First digit as floor
-                            
-                            values.append((
-                                str(uuid.uuid4()),              # id
-                                inspection_id,                  # inspection_id
-                                building_id,                    # building_id
-                                unit,                           # unit_number
-                                floor,                          # floor
-                                '',                             # zone
-                                item.get('room', ''),          # room
-                                description,                    # item_description
-                                item.get('defect_type', ''),   # defect_type
-                                severity,                       # severity
-                                item.get('status', 'pending'), # status
-                                ''                              # notes
-                            ))
-                        
-                        cursor.executemany("""
-                            INSERT INTO inspector_inspection_items
-                            (id, inspection_id, building_id, unit_number, floor, zone, room,
-                            item_description, defect_type, severity, status, notes, created_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                        """, values)
-                        
+                    # Track unit types and statuses
+                    unit_types_seen.add(unit_type)
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                    
+                    # Build description
+                    desc_parts = []
+                    if component:
+                        desc_parts.append(component)
+                    if trade:
+                        desc_parts.append(f"[{trade}]")
+                    description = " - ".join(desc_parts) if desc_parts else 'Inspection item'
+                    
+                    # Map urgency to severity (only for defects)
+                    if status == 'Not OK':
+                        severity = 'critical' if urgency == 'Urgent' else 'high' if urgency == 'High Priority' else 'medium'
                     else:
-                        # SQLite - full schema
-                        for item in batch:
-                            cursor.execute("""
-                                INSERT INTO inspector_inspection_items
-                                (id, inspection_id, building_id, unit, unit_type, room, 
-                                component, trade, status_class, urgency, 
-                                planned_completion, inspection_date, owner_signoff_timestamp,
-                                original_status, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                            """, (str(uuid.uuid4()), inspection_id, building_id,
-                                item.get('unit', ''), item.get('unit_type', ''),
-                                item.get('room', ''), item.get('component', ''),
-                                item.get('trade', ''), item.get('status', 'pending'),
-                                item.get('urgency', 'Normal'),
-                                item.get('planned_completion'),
-                                item.get('inspection_date'),
-                                item.get('owner_signoff_timestamp'),
-                                item.get('description', '')))
+                        severity = 'none'  # OK items have no severity
                     
-                    logger.info(f"   ✓ {i+len(batch)}/{len(items)} saved")
+                    # Extract floor
+                    floor = unit[0] if len(unit) >= 1 and unit[0].isdigit() else ''
+                    
+                    # ✅ CREATE COMPLETE JSON with ALL fields
+                    notes_data = {
+                        'component': component,
+                        'trade': trade,
+                        'unit_type': unit_type,
+                        'urgency': urgency,
+                        'planned_completion': planned_completion,
+                        'inspection_date': inspection_date,
+                        'owner_signoff_timestamp': str(owner_signoff) if owner_signoff else None,
+                        'defect_type': defect_type,
+                        'status': status  # ✅ Store status in JSON too
+                    }
+                    
+                    notes_json = json.dumps(notes_data)
+                    
+                    # Debug first few items
+                    if idx < 3:
+                        logger.info(f"📝 SAVE - Item {idx+1}:")
+                        logger.info(f"     Unit: {unit}, UnitType: {unit_type}")
+                        logger.info(f"     Status: {status}, Trade: {trade}")
+                        logger.info(f"     Component: {component}, Room: {room}")
+                    
+                    all_values.append((
+                        str(uuid.uuid4()), 
+                        inspection_id, 
+                        building_id,
+                        unit, 
+                        floor, 
+                        '', 
+                        room,
+                        description, 
+                        defect_type,
+                        severity, 
+                        status,  # ✅ Save actual status (OK or Not OK)
+                        notes_json
+                    ))
+                
+                # Log summary
+                logger.info(f"📊 SAVE - Status breakdown:")
+                for status, count in status_counts.items():
+                    logger.info(f"     {status}: {count} items")
+                logger.info(f"📊 SAVE - Unit types in data: {sorted(unit_types_seen)}")
+                logger.info(f"📊 SAVE - Inserting {len(all_values)} items...")
+                
+                # Bulk insert
+                if self.db_type == "postgresql":
+                    execute_values(cursor, """
+                        INSERT INTO inspector_inspection_items
+                        (id, inspection_id, building_id, unit_number, floor, zone, room,
+                        item_description, defect_type, severity, status, notes, created_at)
+                        VALUES %s
+                    """, [(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], 'NOW()') 
+                        for v in all_values],
+                    page_size=1000)
+                
+                logger.info(f"✅ SAVE - Completed!")
             
             conn.commit()
             logger.info(f"✅ SAVED to {self.db_type.upper()}: {inspection_id[:8]}...")
@@ -230,27 +315,18 @@ class InspectionDataProcessor:
             return inspection_id
             
         except Exception as e:
-            logger.error(f"❌ Save failed: {type(e).__name__}: {e}")
+            logger.error(f"❌ SAVE failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
             if conn:
-                try:
-                    conn.rollback()
-                except:
-                    pass
+                conn.rollback()
             return None
             
         finally:
             if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
+                cursor.close()
             if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
+                conn.close()
     
     def check_duplicate_file(self, file_bytes: bytes, filename: str) -> Optional[Dict]:
         """
@@ -584,7 +660,7 @@ class InspectionDataProcessor:
                 try:
                     logger.info("🔄 Saving to PostgreSQL using connection manager...")
                     
-                    # Prepare inspection data for saving
+                    # ✅ CRITICAL: Prepare inspection data with ALL ITEMS (not just defects)
                     inspection_data = {
                         'building_name': metrics.get('building_name', 'Unknown'),
                         'address': metrics.get('address', ''),
@@ -597,44 +673,86 @@ class InspectionDataProcessor:
                         'inspection_items': []
                     }
                     
-                    # Add inspection items
-                    for _, row in final_df.iterrows():
-                        inspection_data['inspection_items'].append({
+                    # ✅ SAVE ALL ITEMS - Both OK and Not OK
+                    logger.info(f"📊 Preparing ALL {len(final_df)} items for database...")
+                    
+                    # DEBUG: Verify columns exist
+                    required_cols = ['Unit', 'UnitType', 'Room', 'Component', 'Trade', 
+                                    'StatusClass', 'Urgency', 'PlannedCompletion', 
+                                    'InspectionDate', 'OwnerSignoffTimestamp']
+                    missing_cols = [col for col in required_cols if col not in final_df.columns]
+                    
+                    if missing_cols:
+                        logger.error(f"❌ Missing columns in final_df: {missing_cols}")
+                        logger.error(f"   Available columns: {final_df.columns.tolist()}")
+                    else:
+                        logger.info(f"✅ All required columns present")
+                    
+                    # ✅ BUILD INSPECTION ITEMS LIST with ALL data (not just defects)
+                    status_counts = {'OK': 0, 'Not OK': 0, 'Blank': 0}
+                    
+                    for idx, row in final_df.iterrows():
+                        status = str(row['StatusClass'])
+                        status_counts[status] = status_counts.get(status, 0) + 1
+                        
+                        item_data = {
                             'unit': str(row['Unit']),
-                            'unit_type': str(row['UnitType']),
+                            'unit_type': str(row['UnitType']),  # ✅ CRITICAL!
                             'room': str(row['Room']),
                             'component': str(row['Component']),
                             'trade': str(row['Trade']),
-                            'status': str(row['StatusClass']),
+                            'status': status,  # ✅ Now includes OK, Not OK, and Blank
                             'urgency': str(row['Urgency']),
                             'planned_completion': row['PlannedCompletion'].strftime('%Y-%m-%d') if pd.notna(row['PlannedCompletion']) else None,
                             'inspection_date': str(row['InspectionDate']),
                             'owner_signoff_timestamp': str(row['OwnerSignoffTimestamp']) if pd.notna(row['OwnerSignoffTimestamp']) else None,
+                            'defect_type': '',
                             'description': f"{row['Room']} - {row['Component']}"
-                        })
+                        }
+                        
+                        inspection_data['inspection_items'].append(item_data)
                     
-                    # Save using connection manager
+                    logger.info(f"✅ Prepared {len(inspection_data['inspection_items'])} items:")
+                    logger.info(f"    OK items: {status_counts.get('OK', 0)}")
+                    logger.info(f"    Not OK items (defects): {status_counts.get('Not OK', 0)}")
+                    logger.info(f"    Blank items: {status_counts.get('Blank', 0)}")
+                    
+                    # DEBUG: Verify unit types in prepared data
+                    if len(inspection_data['inspection_items']) > 0:
+                        sample_item = inspection_data['inspection_items'][0]
+                        logger.info(f"📝 Sample item:")
+                        logger.info(f"     unit: {sample_item['unit']}")
+                        logger.info(f"     unit_type: {sample_item['unit_type']}")
+                        logger.info(f"     status: {sample_item['status']}")
+                        logger.info(f"     trade: {sample_item['trade']}")
+                        
+                        # Check unique unit types
+                        unique_types = set(item['unit_type'] for item in inspection_data['inspection_items'])
+                        logger.info(f"📊 Unique unit types in prepared data: {sorted(unique_types)}")
+                        
+                        # Check unique units
+                        unique_units = set(item['unit'] for item in inspection_data['inspection_items'])
+                        logger.info(f"📊 Total unique units: {len(unique_units)}")
+                    
+                    # ✅ SAVE using connection manager
                     inspection_id = self._save_to_database_with_conn_manager(inspection_data)
                     
                     if inspection_id:
                         logger.info(f"✅ Saved to PostgreSQL: {inspection_id}")
                         
-                        # STEP 13b: Create work orders from defects
+                        # STEP 13b: Create work orders from defects only
                         defects_df = final_df[final_df['StatusClass'] == 'Not OK'].copy()
-                        if len(defects_df) > 0:
-                            work_order_count = self._create_work_orders_with_conn_manager(
-                                inspection_id, 
-                                defects_df
-                            )
-                            
-                            if work_order_count > 0:
-                                logger.info(f"✅ Created {work_order_count} work orders")
-                                metrics['work_orders_created'] = work_order_count
-                            else:
-                                logger.info("No work orders created")
-                                metrics['work_orders_created'] = 0
+                        
+                        work_order_count = self._create_work_orders_with_conn_manager(
+                            inspection_id, 
+                            defects_df
+                        )
+                        
+                        if work_order_count > 0:
+                            logger.info(f"✅ Created {work_order_count} work orders")
+                            metrics['work_orders_created'] = work_order_count
                         else:
-                            logger.info("No defects - no work orders needed")
+                            logger.info("No work orders created")
                             metrics['work_orders_created'] = 0
                     else:
                         logger.error("❌ Failed to save to PostgreSQL")
@@ -643,7 +761,7 @@ class InspectionDataProcessor:
                     logger.error(f"❌ PostgreSQL save failed: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
-            
+
             # Fallback to old db_manager (SQLite) if no connection manager
             elif self.db_manager:
                 try:
@@ -695,94 +813,155 @@ class InspectionDataProcessor:
 
 
     # ADD THIS NEW METHOD (after _save_to_database_with_conn_manager)
-    def _create_work_orders_with_conn_manager(self, inspection_id: str, defects_df: pd.DataFrame) -> int:
-        """Create work orders using connection manager (PostgreSQL compatible)"""
-        
-        if not self.conn_manager:
-            logger.warning("No connection manager - cannot create work orders")
-            return 0
+    def _create_work_orders_with_conn_manager(self, inspection_id: str, conn_manager):
+        """
+        Create work orders from inspection items using connection manager.
+        Fixed to work with PostgreSQL schema that has unit, trade, component, room, urgency columns.
+        """
+        import pandas as pd
+        import streamlit as st
         
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            db_type = conn_manager.db_type
             
+            # Get inspection items that need work orders
+            if db_type == "postgresql":
+                query = """
+                    SELECT 
+                        id,
+                        inspection_id,
+                        unit,
+                        trade,
+                        component,
+                        room,
+                        defect_description,
+                        urgency,
+                        status
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = %s
+                    AND status IN ('Open', 'In Progress')
+                """
+                params = (inspection_id,)
+            else:  # SQLite
+                query = """
+                    SELECT 
+                        id,
+                        inspection_id,
+                        unit,
+                        trade,
+                        component,
+                        room,
+                        defect_description,
+                        urgency,
+                        status
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = ?
+                    AND status IN ('Open', 'In Progress')
+                """
+                params = (inspection_id,)
+            
+            items_df = pd.read_sql_query(query, conn_manager.get_connection(), params=params)
+            
+            if items_df.empty:
+                st.warning("No open items found to create work orders.")
+                return 0
+            
+            # Create work orders - one per item
             work_orders_created = 0
             
-            for _, defect in defects_df.iterrows():
-                work_order_id = str(uuid.uuid4())
+            with conn_manager.get_connection() as conn:
+                cursor = conn.cursor()
                 
-                # Map urgency to planned date offset
-                if defect['Urgency'] == 'Urgent':
-                    days_offset = 3
-                    estimated_hours = 2.0
-                elif defect['Urgency'] == 'High Priority':
-                    days_offset = 7
-                    estimated_hours = 4.0
-                else:
-                    days_offset = 14
-                    estimated_hours = 3.0
+                for _, item in items_df.iterrows():
+                    # Generate work order number
+                    wo_number = f"WO-{inspection_id[:8]}-{item['id'][:8]}"
+                    
+                    # Create title from component and defect
+                    title = f"{item['component']}: {item['defect_description'][:50]}"
+                    
+                    if db_type == "postgresql":
+                        insert_query = """
+                            INSERT INTO inspector_work_orders (
+                                work_order_number,
+                                inspection_id,
+                                inspection_item_id,
+                                unit,
+                                trade,
+                                component,
+                                room,
+                                title,
+                                description,
+                                urgency,
+                                priority,
+                                status,
+                                assigned_to,
+                                created_at
+                            ) VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                            )
+                            ON CONFLICT (work_order_number) DO NOTHING
+                        """
+                        cursor.execute(insert_query, (
+                            wo_number,
+                            inspection_id,
+                            item['id'],
+                            item['unit'],
+                            item['trade'],
+                            item['component'],
+                            item['room'],
+                            title,
+                            item['defect_description'],
+                            item['urgency'],
+                            item['urgency'],  # Map urgency to priority
+                            'Pending',
+                            item['trade'],  # Assign to the trade
+                        ))
+                    else:  # SQLite
+                        insert_query = """
+                            INSERT OR IGNORE INTO inspector_work_orders (
+                                work_order_number,
+                                inspection_id,
+                                inspection_item_id,
+                                unit,
+                                trade,
+                                component,
+                                room,
+                                title,
+                                description,
+                                urgency,
+                                priority,
+                                status,
+                                assigned_to,
+                                created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        """
+                        cursor.execute(insert_query, (
+                            wo_number,
+                            inspection_id,
+                            item['id'],
+                            item['unit'],
+                            item['trade'],
+                            item['component'],
+                            item['room'],
+                            title,
+                            item['defect_description'],
+                            item['urgency'],
+                            item['urgency'],
+                            'Pending',
+                            item['trade'],
+                        ))
+                    
+                    work_orders_created += 1
                 
-                planned_date = datetime.now() + timedelta(days=days_offset)
-                
-                # Determine if photos required
-                photo_required_trades = ['Flooring - Tiles', 'Painting', 'Waterproofing', 'Concrete']
-                photos_required = str(defect['Trade']) in photo_required_trades
-                
-                initial_notes = f"Defect from inspection on {defect.get('InspectionDate', 'N/A')}"
-                
-                # PostgreSQL vs SQLite syntax
-                if self.db_type == "postgresql":
-                    cursor.execute("""
-                        INSERT INTO inspector_work_orders (
-                            id, inspection_id, unit, trade, component, room, 
-                            urgency, status, planned_date, estimated_hours, notes,
-                            photos_required, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                    """, (
-                        work_order_id, inspection_id, str(defect['Unit']),
-                        str(defect['Trade']), str(defect['Component']), str(defect['Room']),
-                        str(defect['Urgency']), 'pending', planned_date.date(),
-                        estimated_hours, initial_notes, photos_required
-                    ))
-                else:
-                    cursor.execute("""
-                        INSERT INTO inspector_work_orders (
-                            id, inspection_id, unit, trade, component, room, 
-                            urgency, status, planned_date, estimated_hours, notes,
-                            photos_required, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-                    """, (
-                        work_order_id, inspection_id, str(defect['Unit']),
-                        str(defect['Trade']), str(defect['Component']), str(defect['Room']),
-                        str(defect['Urgency']), 'pending', planned_date.date(),
-                        estimated_hours, initial_notes, photos_required
-                    ))
-                
-                work_orders_created += 1
+                conn.commit()
             
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            logger.info(f"✅ Created {work_orders_created} work orders in {self.db_type.upper()}")
-            
-            # Log by urgency
-            urgency_counts = defects_df['Urgency'].value_counts()
-            for urgency, count in urgency_counts.items():
-                logger.info(f"  - {urgency}: {count} orders")
-            
+            st.success(f"✅ Created {work_orders_created} work orders from inspection items")
             return work_orders_created
             
         except Exception as e:
-            logger.error(f"❌ Error creating work orders: {e}")
+            st.error(f"Error creating work orders: {str(e)}")
             import traceback
-            logger.error(traceback.format_exc())
-            try:
-                conn.rollback()
-                cursor.close()
-                conn.close()
-            except:
-                pass
+            st.error(traceback.format_exc())
             return 0
     
     def _log_csv_processing(self, original_df, metrics, inspection_id, mapping_success_rate, 
@@ -843,183 +1022,272 @@ class InspectionDataProcessor:
             logger.error(f"Error retrieving inspection history: {e}")
             return pd.DataFrame()
     
-    def load_inspection_from_database(self, inspection_id: str) -> Tuple[pd.DataFrame, Dict]:
-        """Load previously processed inspection from database"""
-        if not self.db_manager:
+    def load_inspection_from_database(self, inspection_id: str):
+        """Load inspection from database - works with both SQLite and PostgreSQL"""
+        
+        # Check if ANY database is available
+        if not self._check_database_available():
             raise ValueError("Database not available")
         
         try:
-            conn = self.db_manager.connect()
+            logger.info(f"📂 Loading inspection: {inspection_id[:8]}...")
             
-            # Get inspection metadata
-            inspection_query = """
-                SELECT i.id, i.building_id, i.inspection_date, 
-                    i.inspector_name, i.total_units, i.total_defects,
-                    i.ready_pct, i.original_filename,
-                    b.name as building_name, b.address
-                FROM inspector_inspections i
-                JOIN inspector_buildings b ON i.building_id = b.id
-                WHERE i.id = ?
-            """
+            # Get connection
+            conn = self._get_connection()
+            cursor = conn.cursor()
             
-            inspection_df = pd.read_sql_query(
-                inspection_query, 
-                conn, 
-                params=[inspection_id],
-                parse_dates=False  # Disable automatic date parsing
-            )
+            # === GET INSPECTION METADATA ===
+            if self.db_type == "postgresql":
+                inspection_query = """
+                    SELECT i.*, b.name as building_name, b.address
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    WHERE i.id = %s
+                """
+                cursor.execute(inspection_query, (inspection_id,))
+            else:
+                inspection_query = """
+                    SELECT i.*, b.name as building_name, b.address
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    WHERE i.id = ?
+                """
+                cursor.execute(inspection_query, (inspection_id,))
             
-            if inspection_df.empty:
+            inspection_row = cursor.fetchone()
+            
+            if not inspection_row:
                 raise ValueError(f"Inspection {inspection_id} not found")
             
-            # Get inspection items with CORRECT column names
-            items_query = """
-                SELECT 
-                    id,
-                    inspection_id,
-                    unit as Unit,
-                    unit_type as UnitType,
-                    room as Room,
-                    component as Component,
-                    trade as Trade,
-                    status_class as StatusClass,
-                    urgency as Urgency,
-                    planned_completion as PlannedCompletion,
-                    owner_signoff_timestamp as OwnerSignoffTimestamp,
-                    inspection_date as InspectionDate,
-                    original_status,
-                    created_at
-                FROM inspector_inspection_items
-                WHERE inspection_id = ?
-            """
+            # Convert to dict
+            if isinstance(inspection_row, (list, tuple)):
+                columns = [desc[0] for desc in cursor.description]
+                inspection_dict = dict(zip(columns, inspection_row))
+            else:
+                inspection_dict = dict(inspection_row)
             
-            # Load without automatic date parsing to avoid conversion errors
-            items_df = pd.read_sql_query(
-                items_query, 
-                conn, 
-                params=[inspection_id],
-                parse_dates=False  # Keep dates as strings initially
-            )
+            logger.info(f"📂 Found: {inspection_dict['building_name']}")
             
-            logger.info(f"Loaded {len(items_df)} inspection items from database")
+            # === GET INSPECTION ITEMS ===
+            if self.db_type == "postgresql":
+                # PostgreSQL: Parse from JSON in notes column
+                items_query = """
+                    SELECT 
+                        unit_number,
+                        room,
+                        item_description,
+                        severity,
+                        status,
+                        notes
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = %s
+                    ORDER BY unit_number, room
+                """
+                cursor.execute(items_query, (inspection_id,))
+                rows = cursor.fetchall()
+                
+                # Parse JSON from notes column
+                import json
+                import pandas as pd
+                items_data = []
+                
+                for row in rows:
+                    # Convert row to dict
+                    if isinstance(row, (list, tuple)):
+                        columns = [desc[0] for desc in cursor.description]
+                        row_dict = dict(zip(columns, row))
+                    else:
+                        row_dict = dict(row)
+                    
+                    # Parse notes JSON
+                    notes_json = row_dict.get('notes', '{}')
+                    notes = json.loads(notes_json) if notes_json else {}
+                    
+                    # Reconstruct item with all fields
+                    item = {
+                        'Unit': row_dict['unit_number'],
+                        'UnitType': notes.get('unit_type', 'Apartment'),
+                        'Room': row_dict['room'],
+                        'Component': notes.get('component', ''),
+                        'Trade': notes.get('trade', ''),
+                        'StatusClass': notes.get('status', 'Not OK'),
+                        'Urgency': notes.get('urgency', 'Normal'),
+                        'PlannedCompletion': notes.get('planned_completion', ''),
+                        'InspectionDate': notes.get('inspection_date', ''),
+                        'OwnerSignoffTimestamp': notes.get('owner_signoff_timestamp', None)
+                    }
+                    items_data.append(item)
+                
+                items_df = pd.DataFrame(items_data)
+                
+            else:
+                # SQLite: Read directly from columns
+                items_query = """
+                    SELECT 
+                        unit as Unit,
+                        unit_type as UnitType,
+                        room as Room,
+                        component as Component,
+                        trade as Trade,
+                        status_class as StatusClass,
+                        urgency as Urgency,
+                        planned_completion as PlannedCompletion,
+                        inspection_date as InspectionDate,
+                        owner_signoff_timestamp as OwnerSignoffTimestamp
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = ?
+                    ORDER BY unit, room
+                """
+                import pandas as pd
+                items_df = pd.read_sql_query(items_query, conn, params=[inspection_id])
             
-            # Manually parse dates with error handling
-            # These dates are in different formats, so we'll keep them as strings for now
-            # and only parse when needed for calculations
+            logger.info(f"📂 Loaded {len(items_df)} items")
             
-            inspection_row = inspection_df.iloc[0]
+            if items_df.empty:
+                raise ValueError(f"No items found for inspection {inspection_id}")
             
-            # Calculate metrics from actual data
+            # === PARSE TIMESTAMPS ===
+            for col in ['OwnerSignoffTimestamp', 'InspectionDate', 'PlannedCompletion']:
+                if col in items_df.columns:
+                    items_df[col] = pd.to_datetime(items_df[col], errors='coerce')
+            
+            # === CALCULATE COMPLETE METRICS ===
+            from datetime import datetime, timedelta
+            
             defects_only = items_df[items_df["StatusClass"] == "Not OK"]
-            total_units = len(items_df["Unit"].unique()) if len(items_df) > 0 else 1
+            total_units = items_df["Unit"].nunique()
             
-            # Calculate settlement readiness
+            logger.info(f"📊 Units: {total_units}, Defects: {len(defects_only)}")
+            
+            # Settlement readiness calculation
             if len(defects_only) > 0:
                 defects_per_unit = defects_only.groupby("Unit").size()
-                ready_units_with_few_defects = (defects_per_unit <= 2).sum()
+                ready_units = (defects_per_unit <= 2).sum()
                 
+                # Add units with NO defects
                 units_with_defects = set(defects_per_unit.index)
                 all_units = set(items_df["Unit"].dropna())
                 units_with_no_defects = len(all_units - units_with_defects)
-                ready_units_calculated = ready_units_with_few_defects + units_with_no_defects
+                ready_units += units_with_no_defects
                 
+                # Work categories
                 minor_work_units = ((defects_per_unit > 2) & (defects_per_unit <= 7)).sum()
                 major_work_units = ((defects_per_unit > 7) & (defects_per_unit <= 15)).sum()
                 extensive_work_units = (defects_per_unit > 15).sum()
             else:
-                ready_units_calculated = total_units
+                ready_units = total_units
                 minor_work_units = 0
                 major_work_units = 0
                 extensive_work_units = 0
             
-            ready_pct_calculated = (ready_units_calculated / total_units * 100) if total_units > 0 else 0
+            # Calculate percentages
+            ready_pct = (ready_units / total_units * 100) if total_units > 0 else 0
             minor_pct = (minor_work_units / total_units * 100) if total_units > 0 else 0
             major_pct = (major_work_units / total_units * 100) if total_units > 0 else 0
             extensive_pct = (extensive_work_units / total_units * 100) if total_units > 0 else 0
             
-            # Calculate urgency metrics
-            urgent_defects = defects_only[defects_only["Urgency"] == "Urgent"] if len(defects_only) > 0 else pd.DataFrame()
-            high_priority_defects = defects_only[defects_only["Urgency"] == "High Priority"] if len(defects_only) > 0 else pd.DataFrame()
+            # ✅ CRITICAL: Calculate urgency metrics
+            urgent_defects = defects_only[defects_only["Urgency"] == "Urgent"]
+            high_priority_defects = defects_only[defects_only["Urgency"] == "High Priority"]
             
-            # Extract date information safely (keep as string)
-            inspection_date_str = str(inspection_row.get('inspection_date', '2025-01-01'))
-            if ' ' in inspection_date_str:
-                inspection_date_str = inspection_date_str.split(' ')[0]  # Take date part only
+            # ✅ CRITICAL: Calculate planned work metrics
+            next_two_weeks = datetime.now() + timedelta(days=14)
+            next_month = datetime.now() + timedelta(days=30)
             
-            # Check if there are multiple inspection dates in the items
-            if 'InspectionDate' in items_df.columns and len(items_df) > 0:
-                unique_dates = items_df['InspectionDate'].dropna().unique()
-                if len(unique_dates) > 1:
-                    # Convert to date strings for comparison
-                    date_strs = [str(d).split('T')[0].split(' ')[0] for d in unique_dates]
-                    inspection_date_range = f"{min(date_strs)} to {max(date_strs)}"
-                    is_multi_day = True
+            planned_work_2weeks = defects_only[
+                pd.to_datetime(defects_only["PlannedCompletion"], errors='coerce') <= next_two_weeks
+            ]
+            planned_work_month = defects_only[
+                (pd.to_datetime(defects_only["PlannedCompletion"], errors='coerce') > next_two_weeks) & 
+                (pd.to_datetime(defects_only["PlannedCompletion"], errors='coerce') <= next_month)
+            ]
+            
+            # Extract date information
+            if 'InspectionDate' in items_df.columns:
+                inspection_dates = pd.to_datetime(items_df['InspectionDate'], errors='coerce').dropna()
+                if len(inspection_dates) > 0:
+                    primary_date = inspection_dates.mode()[0] if len(inspection_dates.mode()) > 0 else inspection_dates.iloc[0]
+                    min_date = inspection_dates.min()
+                    max_date = inspection_dates.max()
+                    
+                    inspection_date_str = primary_date.strftime('%Y-%m-%d')
+                    inspection_date_range = f"{min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}" if min_date != max_date else inspection_date_str
+                    is_multi_day = min_date != max_date
                 else:
+                    inspection_date_str = str(inspection_dict.get('inspection_date', '2025-01-01'))
                     inspection_date_range = inspection_date_str
                     is_multi_day = False
             else:
+                inspection_date_str = str(inspection_dict.get('inspection_date', '2025-01-01'))
                 inspection_date_range = inspection_date_str
                 is_multi_day = False
             
-            # Build complete metrics dictionary
+            # ✅ BUILD COMPLETE METRICS DICTIONARY with ALL required fields
             metrics = {
-                'building_name': str(inspection_row['building_name']),
-                'address': str(inspection_row.get('address', 'N/A')),
+                # Building info
+                'building_name': str(inspection_dict['building_name']),
+                'address': str(inspection_dict.get('address', 'N/A')),
                 'inspection_date': inspection_date_str,
                 'inspection_date_range': inspection_date_range,
                 'is_multi_day_inspection': is_multi_day,
-                'unit_types_str': ", ".join(sorted(items_df["UnitType"].astype(str).unique())) if len(items_df) > 0 else "Unknown",
+                'unit_types_str': ", ".join(sorted(items_df["UnitType"].astype(str).unique())),
                 
-                'total_units': total_units,
-                'total_defects': len(defects_only),
-                'total_inspections': len(items_df),
-                'defect_rate': (len(defects_only) / len(items_df) * 100) if len(items_df) > 0 else 0.0,
-                'avg_defects_per_unit': len(defects_only) / max(total_units, 1),
+                # Core counts
+                'total_units': int(total_units),
+                'total_defects': int(len(defects_only)),
+                'total_inspections': int(len(items_df)),
+                'defect_rate': float((len(defects_only) / len(items_df) * 100) if len(items_df) > 0 else 0.0),
+                'avg_defects_per_unit': float(len(defects_only) / max(total_units, 1)),
                 
-                'ready_units': ready_units_calculated,
-                'ready_pct': ready_pct_calculated,
-                'minor_work_units': minor_work_units,
-                'major_work_units': major_work_units,
-                'extensive_work_units': extensive_work_units,
-                'minor_pct': minor_pct,
-                'major_pct': major_pct,
-                'extensive_pct': extensive_pct,
+                # Settlement readiness
+                'ready_units': int(ready_units),
+                'ready_pct': float(ready_pct),
+                'minor_work_units': int(minor_work_units),
+                'major_work_units': int(major_work_units),
+                'extensive_work_units': int(extensive_work_units),
+                'minor_pct': float(minor_pct),
+                'major_pct': float(major_pct),
+                'extensive_pct': float(extensive_pct),
                 
-                'urgent_defects': len(urgent_defects),
-                'high_priority_defects': len(high_priority_defects),
+                # ✅ Urgency metrics (REQUIRED)
+                'urgent_defects': int(len(urgent_defects)),
+                'high_priority_defects': int(len(high_priority_defects)),
                 
+                # ✅ Planned work metrics (REQUIRED)
+                'planned_work_2weeks': int(len(planned_work_2weeks)),
+                'planned_work_month': int(len(planned_work_month)),
+                
+                # ✅ Summary tables (REQUIRED)
+                'summary_trade': defects_only.groupby("Trade").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False) if len(defects_only) > 0 else pd.DataFrame(columns=["Trade", "DefectCount"]),
+                'summary_unit': defects_only.groupby("Unit").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False) if len(defects_only) > 0 else pd.DataFrame(columns=["Unit", "DefectCount"]),
+                'summary_room': defects_only.groupby("Room").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False) if len(defects_only) > 0 else pd.DataFrame(columns=["Room", "DefectCount"]),
+                
+                # ✅ Detail tables (REQUIRED)
+                'urgent_defects_table': urgent_defects[["Unit", "Room", "Component", "Trade", "PlannedCompletion"]].copy() if len(urgent_defects) > 0 else pd.DataFrame(columns=["Unit", "Room", "Component", "Trade", "PlannedCompletion"]),
+                'planned_work_2weeks_table': planned_work_2weeks[["Unit", "Room", "Component", "Trade", "Urgency", "PlannedCompletion"]].copy() if len(planned_work_2weeks) > 0 else pd.DataFrame(columns=["Unit", "Room", "Component", "Trade", "Urgency", "PlannedCompletion"]),
+                'planned_work_month_table': planned_work_month[["Unit", "Room", "Component", "Trade", "Urgency", "PlannedCompletion"]].copy() if len(planned_work_month) > 0 else pd.DataFrame(columns=["Unit", "Room", "Component", "Trade", "Urgency", "PlannedCompletion"]),
+                'component_details_summary': defects_only.groupby(["Trade", "Room", "Component"])["Unit"].apply(lambda s: ", ".join(sorted(s.astype(str).unique()))).reset_index().rename(columns={"Unit": "Units with Defects"}) if len(defects_only) > 0 else pd.DataFrame(columns=["Trade", "Room", "Component", "Units with Defects"]),
+                
+                # Database reference
                 'inspection_id': inspection_id
             }
             
-            # Generate summary tables
-            if len(defects_only) > 0:
-                metrics['summary_trade'] = defects_only.groupby("Trade").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False)
-                metrics['summary_unit'] = defects_only.groupby("Unit").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False)
-                metrics['summary_room'] = defects_only.groupby("Room").size().reset_index(name="DefectCount").sort_values("DefectCount", ascending=False)
-                
-                # Create urgent defects table
-                if len(urgent_defects) > 0:
-                    urgent_cols = ["Unit", "Room", "Component", "Trade", "PlannedCompletion"]
-                    metrics['urgent_defects_table'] = urgent_defects[urgent_cols].copy()
-                else:
-                    metrics['urgent_defects_table'] = pd.DataFrame(columns=["Unit", "Room", "Component", "Trade", "PlannedCompletion"])
-            else:
-                metrics['summary_trade'] = pd.DataFrame(columns=["Trade", "DefectCount"])
-                metrics['summary_unit'] = pd.DataFrame(columns=["Unit", "DefectCount"])
-                metrics['summary_room'] = pd.DataFrame(columns=["Room", "DefectCount"])
-                metrics['urgent_defects_table'] = pd.DataFrame(columns=["Unit", "Room", "Component", "Trade", "PlannedCompletion"])
-            
+            # Store results
             self.processed_data = items_df
             self.metrics = metrics
             
+            cursor.close()
             conn.close()
             
-            logger.info(f"✅ Successfully loaded inspection {inspection_id}")
+            logger.info(f"✅ Load complete - {inspection_id[:8]}...")
+            logger.info(f"   Unit types: {metrics['unit_types_str']}")
+            logger.info(f"   Defects: {metrics['total_defects']}")
+            logger.info(f"   Urgent: {metrics['urgent_defects']}")
             
             return items_df, metrics
             
         except Exception as e:
-            logger.error(f"Error loading inspection from database: {e}")
+            logger.error(f"❌ Error loading inspection: {e}")
             import traceback
             logger.error(traceback.format_exc())
             raise

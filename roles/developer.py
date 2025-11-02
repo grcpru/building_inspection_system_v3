@@ -7,6 +7,8 @@ Executive-level interface for property developers to:
 - Monitor portfolio across all buildings
 - View detailed building analytics
 - Track settlement readiness
+
+UPDATED: Now supports both SQLite and PostgreSQL databases
 """
 
 import pandas as pd
@@ -25,7 +27,7 @@ except ImportError:
     PLOTLY_AVAILABLE = False
 
 try:
-    from database.setup import DatabaseManager
+    from database.connection_manager import get_connection_manager
     DATABASE_AVAILABLE = True
 except ImportError:
     DATABASE_AVAILABLE = False
@@ -38,7 +40,14 @@ class DeveloperInterface:
     
     def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
         self.user_info = user_info or {}
-        self.db = DatabaseManager(db_path) if DATABASE_AVAILABLE else None
+        
+        # Use connection manager for database access
+        if DATABASE_AVAILABLE:
+            self.conn_mgr = get_connection_manager()
+            self.db_type = self.conn_mgr.db_type
+        else:
+            self.conn_mgr = None
+            self.db_type = None
         
         # Session state
         if 'dev_active_view' not in st.session_state:
@@ -47,6 +56,10 @@ class DeveloperInterface:
             st.session_state.dev_selected_building = None
         if 'dev_open_item' not in st.session_state:
             st.session_state.dev_open_item = None
+    
+    def _get_param_placeholder(self):
+        """Get the correct parameter placeholder based on database type"""
+        return "%s" if self.db_type == "postgresql" else "?"
     
     def show(self):
         """Main developer dashboard"""
@@ -130,43 +143,53 @@ class DeveloperInterface:
     def _get_pending_approval_count(self):
         """Get count of items awaiting approval"""
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT COUNT(*) FROM inspector_work_orders 
-                WHERE status = 'waiting_approval'
-            """)
-            result = cursor.fetchone()
-            return result[0] if result else 0
+            with self.conn_mgr.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) FROM inspector_work_orders 
+                    WHERE status = 'waiting_approval'
+                """)
+                result = cursor.fetchone()
+                return result[0] if result else 0
         except:
             return 0
     
     def _get_approved_count(self):
         """Get count of approved items"""
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT COUNT(*) FROM inspector_work_orders 
-                WHERE status = 'approved'
-            """)
-            result = cursor.fetchone()
-            return result[0] if result else 0
+            with self.conn_mgr.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) FROM inspector_work_orders 
+                    WHERE status = 'approved'
+                """)
+                result = cursor.fetchone()
+                return result[0] if result else 0
         except:
             return 0
     
     def _get_rejected_count(self):
         """Get count of rejected items"""
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT COUNT(*) FROM inspector_work_orders 
-                WHERE builder_notes LIKE '%REJECTED%' 
-                AND status = 'in_progress'
-            """)
-            result = cursor.fetchone()
-            return result[0] if result else 0
+            with self.conn_mgr.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Different LIKE syntax for PostgreSQL vs SQLite
+                if self.db_type == "postgresql":
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM inspector_work_orders 
+                        WHERE builder_notes LIKE %s 
+                        AND status = 'in_progress'
+                    """, ('%REJECTED%',))
+                else:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM inspector_work_orders 
+                        WHERE builder_notes LIKE ? 
+                        AND status = 'in_progress'
+                    """, ('%REJECTED%',))
+                
+                result = cursor.fetchone()
+                return result[0] if result else 0
         except:
             return 0
     
@@ -180,25 +203,24 @@ class DeveloperInterface:
         st.markdown("### 🔔 Pending Approvals")
         
         try:
-            conn = self.db.connect()
-            
-            approvals_df = pd.read_sql_query("""
-                SELECT 
-                    wo.*,
-                    b.name as building_name,
-                    i.id as inspection_id
-                FROM inspector_work_orders wo
-                JOIN inspector_inspections i ON wo.inspection_id = i.id
-                JOIN inspector_buildings b ON i.building_id = b.id
-                WHERE wo.status = 'waiting_approval'
-                ORDER BY 
-                    wo.updated_at DESC,
-                    CASE wo.urgency 
-                        WHEN 'Urgent' THEN 1 
-                        WHEN 'High Priority' THEN 2 
-                        ELSE 3 
-                    END
-            """, conn)
+            with self.conn_mgr.get_connection() as conn:
+                approvals_df = pd.read_sql_query("""
+                    SELECT 
+                        wo.*,
+                        b.name as building_name,
+                        i.id as inspection_id
+                    FROM inspector_work_orders wo
+                    JOIN inspector_inspections i ON wo.inspection_id = i.id
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    WHERE wo.status = 'waiting_approval'
+                    ORDER BY 
+                        wo.updated_at DESC,
+                        CASE wo.urgency 
+                            WHEN 'Urgent' THEN 1 
+                            WHEN 'High Priority' THEN 2 
+                            ELSE 3 
+                        END
+                """, conn)
             
             if approvals_df.empty:
                 st.success("✅ No items pending approval - all caught up!")
@@ -368,29 +390,22 @@ class DeveloperInterface:
         )
         
         # Action buttons with color coding
-        col1, col2, col3 = st.columns([1, 1, 2])
+        col1, col2 = st.columns(2)
         
         with col1:
-            # GREEN APPROVE BUTTON
-            if st.button("✅ Approve", key=f"approve_btn_{oid}_{idx}", 
-                        type="primary", use_container_width=True,
-                        help="Approve this work immediately"):
+            if st.button("✅ APPROVE", key=f"approve_{oid}_{idx}", type="primary", use_container_width=True):
                 success, message = self._approve_work(oid, comments)
                 if success:
                     st.success(message)
-                    st.balloons()
                     st.session_state.dev_open_item = None
                     st.rerun()
                 else:
                     st.error(message)
         
         with col2:
-            # RED REJECT BUTTON
-            if st.button("❌ Reject & Return", key=f"reject_btn_{oid}_{idx}", 
-                        use_container_width=True,
-                        help="Reject and send back to builder immediately"):
+            if st.button("❌ REJECT", key=f"reject_{oid}_{idx}", use_container_width=True):
                 if not comments or not comments.strip():
-                    st.error("❌ Rejection reason required in comments field")
+                    st.error("⚠️ Rejection reason is required!")
                 else:
                     success, message = self._reject_work(oid, comments)
                     if success:
@@ -400,18 +415,13 @@ class DeveloperInterface:
                     else:
                         st.error(message)
         
-        with col3:
-            if st.button("Cancel", key=f"cancel_btn_{oid}_{idx}", use_container_width=True):
-                st.session_state.dev_open_item = None
-                st.rerun()
-        
-        # Add custom CSS for button colors
+        # Custom CSS for button colors
         st.markdown("""
         <style>
         div[data-testid="column"]:nth-child(2) button {
             background-color: #dc3545 !important;
-            color: white !important;
             border-color: #dc3545 !important;
+            color: white !important;
         }
         div[data-testid="column"]:nth-child(2) button:hover {
             background-color: #c82333 !important;
@@ -431,32 +441,44 @@ class DeveloperInterface:
     def _approve_work(self, oid, notes):
         """Approve completed work"""
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-            
-            ts = datetime.now().strftime("%d/%m/%Y %H:%M")
-            user = self.user_info.get('name', 'Developer')
-            
-            entry = f"\n\n--- {ts} - {user} (Developer) ---"
-            entry += f"\n✅ APPROVED"
-            if notes and notes.strip():
-                entry += f"\nNotes: {notes.strip()}"
-            entry += f"\n📊 STATUS: APPROVED - Work Accepted"
-            
-            cursor.execute("SELECT builder_notes FROM inspector_work_orders WHERE id = ?", (oid,))
-            result = cursor.fetchone()
-            old_notes = result[0] if result and result[0] else ""
-            
-            new_notes = f"{old_notes}{entry}"
-            cursor.execute("""
-                UPDATE inspector_work_orders 
-                SET builder_notes = ?, status = 'approved', updated_at = ?
-                WHERE id = ?
-            """, (new_notes, datetime.now().isoformat(), oid))
-            
-            conn.commit()
-            return True, "Work approved successfully!"
-            
+            with self.conn_mgr.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+                user = self.user_info.get('name', 'Developer')
+                
+                entry = f"\n\n--- {ts} - {user} (Developer) ---"
+                entry += f"\n✅ APPROVED"
+                if notes and notes.strip():
+                    entry += f"\nNotes: {notes.strip()}"
+                entry += f"\n📊 STATUS: APPROVED - Work Accepted"
+                
+                placeholder = self._get_param_placeholder()
+                
+                # Get existing notes
+                cursor.execute(f"SELECT builder_notes FROM inspector_work_orders WHERE id = {placeholder}", (oid,))
+                result = cursor.fetchone()
+                old_notes = result[0] if result and result[0] else ""
+                
+                new_notes = f"{old_notes}{entry}"
+                
+                # Update timestamp format based on database type
+                if self.db_type == "postgresql":
+                    cursor.execute(f"""
+                        UPDATE inspector_work_orders 
+                        SET builder_notes = {placeholder}, status = 'approved', updated_at = NOW()
+                        WHERE id = {placeholder}
+                    """, (new_notes, oid))
+                else:
+                    cursor.execute(f"""
+                        UPDATE inspector_work_orders 
+                        SET builder_notes = {placeholder}, status = 'approved', updated_at = datetime('now')
+                        WHERE id = {placeholder}
+                    """, (new_notes, oid))
+                
+                conn.commit()
+                return True, "Work approved successfully!"
+                
         except Exception as e:
             logger.error(f"Approval error: {e}")
             return False, f"Approval failed: {str(e)}"
@@ -464,31 +486,43 @@ class DeveloperInterface:
     def _reject_work(self, oid, notes):
         """Reject work and send back to builder"""
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-            
-            ts = datetime.now().strftime("%d/%m/%Y %H:%M")
-            user = self.user_info.get('name', 'Developer')
-            
-            entry = f"\n\n--- {ts} - {user} (Developer) ---"
-            entry += f"\n❌ REJECTED - REQUIRES REWORK"
-            entry += f"\nReason: {notes.strip()}"
-            entry += f"\n📊 STATUS: Returned to Builder"
-            
-            cursor.execute("SELECT builder_notes FROM inspector_work_orders WHERE id = ?", (oid,))
-            result = cursor.fetchone()
-            old_notes = result[0] if result and result[0] else ""
-            
-            new_notes = f"{old_notes}{entry}"
-            cursor.execute("""
-                UPDATE inspector_work_orders 
-                SET builder_notes = ?, status = 'in_progress', updated_at = ?
-                WHERE id = ?
-            """, (new_notes, datetime.now().isoformat(), oid))
-            
-            conn.commit()
-            return True, "Work rejected and returned to builder for rework"
-            
+            with self.conn_mgr.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+                user = self.user_info.get('name', 'Developer')
+                
+                entry = f"\n\n--- {ts} - {user} (Developer) ---"
+                entry += f"\n❌ REJECTED - REQUIRES REWORK"
+                entry += f"\nReason: {notes.strip()}"
+                entry += f"\n📊 STATUS: Returned to Builder"
+                
+                placeholder = self._get_param_placeholder()
+                
+                # Get existing notes
+                cursor.execute(f"SELECT builder_notes FROM inspector_work_orders WHERE id = {placeholder}", (oid,))
+                result = cursor.fetchone()
+                old_notes = result[0] if result and result[0] else ""
+                
+                new_notes = f"{old_notes}{entry}"
+                
+                # Update timestamp format based on database type
+                if self.db_type == "postgresql":
+                    cursor.execute(f"""
+                        UPDATE inspector_work_orders 
+                        SET builder_notes = {placeholder}, status = 'in_progress', updated_at = NOW()
+                        WHERE id = {placeholder}
+                    """, (new_notes, oid))
+                else:
+                    cursor.execute(f"""
+                        UPDATE inspector_work_orders 
+                        SET builder_notes = {placeholder}, status = 'in_progress', updated_at = datetime('now')
+                        WHERE id = {placeholder}
+                    """, (new_notes, oid))
+                
+                conn.commit()
+                return True, "Work rejected and returned to builder for rework"
+                
         except Exception as e:
             logger.error(f"Rejection error: {e}")
             return False, f"Rejection failed: {str(e)}"
@@ -503,19 +537,18 @@ class DeveloperInterface:
         st.markdown("### ✅ Approved Work Orders")
         
         try:
-            conn = self.db.connect()
-            
-            approved_df = pd.read_sql_query("""
-                SELECT 
-                    wo.*,
-                    b.name as building_name,
-                    i.id as inspection_id
-                FROM inspector_work_orders wo
-                JOIN inspector_inspections i ON wo.inspection_id = i.id
-                JOIN inspector_buildings b ON i.building_id = b.id
-                WHERE wo.status = 'approved'
-                ORDER BY wo.updated_at DESC
-            """, conn)
+            with self.conn_mgr.get_connection() as conn:
+                approved_df = pd.read_sql_query("""
+                    SELECT 
+                        wo.*,
+                        b.name as building_name,
+                        i.id as inspection_id
+                    FROM inspector_work_orders wo
+                    JOIN inspector_inspections i ON wo.inspection_id = i.id
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    WHERE wo.status = 'approved'
+                    ORDER BY wo.updated_at DESC
+                """, conn)
             
             if approved_df.empty:
                 st.info("No approved work orders yet")
@@ -699,20 +732,34 @@ class DeveloperInterface:
         st.markdown("### ❌ Rejected Work Orders")
         
         try:
-            conn = self.db.connect()
-            
-            rejected_df = pd.read_sql_query("""
-                SELECT 
-                    wo.*,
-                    b.name as building_name,
-                    i.id as inspection_id
-                FROM inspector_work_orders wo
-                JOIN inspector_inspections i ON wo.inspection_id = i.id
-                JOIN inspector_buildings b ON i.building_id = b.id
-                WHERE wo.builder_notes LIKE '%REJECTED%'
-                AND wo.status = 'in_progress'
-                ORDER BY wo.updated_at DESC
-            """, conn)
+            with self.conn_mgr.get_connection() as conn:
+                # Different LIKE syntax for PostgreSQL vs SQLite
+                if self.db_type == "postgresql":
+                    rejected_df = pd.read_sql_query("""
+                        SELECT 
+                            wo.*,
+                            b.name as building_name,
+                            i.id as inspection_id
+                        FROM inspector_work_orders wo
+                        JOIN inspector_inspections i ON wo.inspection_id = i.id
+                        JOIN inspector_buildings b ON i.building_id = b.id
+                        WHERE wo.builder_notes LIKE %s
+                        AND wo.status = 'in_progress'
+                        ORDER BY wo.updated_at DESC
+                    """, conn, params=['%REJECTED%'])
+                else:
+                    rejected_df = pd.read_sql_query("""
+                        SELECT 
+                            wo.*,
+                            b.name as building_name,
+                            i.id as inspection_id
+                        FROM inspector_work_orders wo
+                        JOIN inspector_inspections i ON wo.inspection_id = i.id
+                        JOIN inspector_buildings b ON i.building_id = b.id
+                        WHERE wo.builder_notes LIKE ?
+                        AND wo.status = 'in_progress'
+                        ORDER BY wo.updated_at DESC
+                    """, conn, params=['%REJECTED%'])
             
             if rejected_df.empty:
                 st.success("✅ No rejected items - great quality work!")
@@ -787,38 +834,10 @@ class DeveloperInterface:
         }
         priority_icon = priority_colors.get(item['urgency'], '⚪')
         
-        is_urgent = item['urgency'] == 'Urgent'
-        
         with st.expander(
-            f"❌ {priority_icon} {item['building_name']} - Unit {item['unit']} - {item['room']} - {item['component']} ({item['trade']})",
-            expanded=is_urgent
+            f"{priority_icon} {item['building_name']} - Unit {item['unit']} - {item['room']} - {item['component']} ({item['trade']}) - REJECTED",
+            expanded=False
         ):
-            rejection_reason = "No reason provided"
-            rejection_date = None
-            rejected_by = "Developer"
-            
-            if pd.notna(item.get('builder_notes')):
-                notes = str(item['builder_notes'])
-                entries = notes.split('\n\n---')
-                for entry in entries:
-                    if '❌ REJECTED' in entry or 'REJECTED' in entry:
-                        lines = entry.strip().split('\n')
-                        if lines:
-                            first_line = lines[0].replace('---', '').strip()
-                            if ' - ' in first_line:
-                                parts = first_line.split(' - ')
-                                if len(parts) >= 2:
-                                    rejection_date = parts[0].strip()
-                                    rejected_by = parts[1].replace('(Developer)', '').strip()
-                        
-                        for line in lines:
-                            if line.startswith('Reason:'):
-                                rejection_reason = line.replace('Reason:', '').strip()
-                                break
-                        break
-            
-            st.error(f"**REJECTED by {rejected_by}**" + (f" on {rejection_date}" if rejection_date else ""))
-            st.markdown(f"**Rejection Reason:** {rejection_reason}")
             
             st.markdown("---")
             
@@ -906,25 +925,24 @@ class DeveloperInterface:
         st.markdown("### 📊 Portfolio Overview")
         
         try:
-            conn = self.db.connect()
-            
-            portfolio_df = pd.read_sql_query("""
-                SELECT 
-                    b.id,
-                    b.name as building_name,
-                    COUNT(DISTINCT wo.id) as total_work_orders,
-                    COUNT(CASE WHEN wo.status = 'pending' THEN 1 END) as pending,
-                    COUNT(CASE WHEN wo.status = 'in_progress' THEN 1 END) as in_progress,
-                    COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as waiting_approval,
-                    COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved,
-                    COUNT(CASE WHEN wo.urgency = 'Urgent' THEN 1 END) as urgent_count
-                FROM inspector_buildings b
-                LEFT JOIN inspector_inspections i ON b.id = i.building_id
-                LEFT JOIN inspector_work_orders wo ON i.id = wo.inspection_id
-                GROUP BY b.id, b.name
-                HAVING total_work_orders > 0
-                ORDER BY waiting_approval DESC, urgent_count DESC
-            """, conn)
+            with self.conn_mgr.get_connection() as conn:
+                portfolio_df = pd.read_sql_query("""
+                    SELECT 
+                        b.id,
+                        b.name as building_name,
+                        COUNT(DISTINCT wo.id) as total_work_orders,
+                        COUNT(CASE WHEN wo.status = 'pending' THEN 1 END) as pending,
+                        COUNT(CASE WHEN wo.status = 'in_progress' THEN 1 END) as in_progress,
+                        COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as waiting_approval,
+                        COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved,
+                        COUNT(CASE WHEN wo.urgency = 'Urgent' THEN 1 END) as urgent_count
+                    FROM inspector_buildings b
+                    LEFT JOIN inspector_inspections i ON b.id = i.building_id
+                    LEFT JOIN inspector_work_orders wo ON i.id = wo.inspection_id
+                    GROUP BY b.id, b.name
+                    HAVING COUNT(DISTINCT wo.id) > 0
+                    ORDER BY waiting_approval DESC, urgent_count DESC
+                """, conn)
             
             if portfolio_df.empty:
                 st.info("No buildings with work orders found")
@@ -984,15 +1002,14 @@ class DeveloperInterface:
         st.markdown("### 🏢 Building Details")
         
         try:
-            conn = self.db.connect()
-            
-            buildings_df = pd.read_sql_query("""
-                SELECT DISTINCT b.id, b.name
-                FROM inspector_buildings b
-                JOIN inspector_inspections i ON b.id = i.building_id
-                JOIN inspector_work_orders wo ON i.id = wo.inspection_id
-                ORDER BY b.name
-            """, conn)
+            with self.conn_mgr.get_connection() as conn:
+                buildings_df = pd.read_sql_query("""
+                    SELECT DISTINCT b.id, b.name
+                    FROM inspector_buildings b
+                    JOIN inspector_inspections i ON b.id = i.building_id
+                    JOIN inspector_work_orders wo ON i.id = wo.inspection_id
+                    ORDER BY b.name
+                """, conn)
             
             if buildings_df.empty:
                 st.info("No buildings with work orders found")
@@ -1013,24 +1030,42 @@ class DeveloperInterface:
         """Show detailed stats and work orders for a specific building"""
         
         try:
-            conn = self.db.connect()
-            
-            # Updated query to separate rejected from in_progress
-            stats_df = pd.read_sql_query("""
-                SELECT 
-                    COUNT(wo.id) as total_items,
-                    COUNT(CASE WHEN wo.status = 'pending' THEN 1 END) as pending,
-                    COUNT(CASE WHEN wo.status = 'in_progress' AND (wo.builder_notes NOT LIKE '%REJECTED%' OR wo.builder_notes IS NULL) THEN 1 END) as in_progress,
-                    COUNT(CASE WHEN wo.status = 'in_progress' AND wo.builder_notes LIKE '%REJECTED%' THEN 1 END) as rejected,
-                    COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as waiting_approval,
-                    COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved,
-                    COUNT(CASE WHEN wo.urgency = 'Urgent' THEN 1 END) as urgent,
-                    COUNT(DISTINCT wo.unit) as affected_units,
-                    COUNT(DISTINCT wo.trade) as trades_involved
-                FROM inspector_inspections i
-                JOIN inspector_work_orders wo ON i.id = wo.inspection_id
-                WHERE i.building_id = ?
-            """, conn, params=[building_id])
+            with self.conn_mgr.get_connection() as conn:
+                placeholder = self._get_param_placeholder()
+                
+                # Different LIKE handling for PostgreSQL vs SQLite
+                if self.db_type == "postgresql":
+                    stats_df = pd.read_sql_query(f"""
+                        SELECT 
+                            COUNT(wo.id) as total_items,
+                            COUNT(CASE WHEN wo.status = 'pending' THEN 1 END) as pending,
+                            COUNT(CASE WHEN wo.status = 'in_progress' AND (wo.builder_notes NOT LIKE %s OR wo.builder_notes IS NULL) THEN 1 END) as in_progress,
+                            COUNT(CASE WHEN wo.status = 'in_progress' AND wo.builder_notes LIKE %s THEN 1 END) as rejected,
+                            COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as waiting_approval,
+                            COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved,
+                            COUNT(CASE WHEN wo.urgency = 'Urgent' THEN 1 END) as urgent,
+                            COUNT(DISTINCT wo.unit) as affected_units,
+                            COUNT(DISTINCT wo.trade) as trades_involved
+                        FROM inspector_inspections i
+                        JOIN inspector_work_orders wo ON i.id = wo.inspection_id
+                        WHERE i.building_id = {placeholder}
+                    """, conn, params=['%REJECTED%', '%REJECTED%', building_id])
+                else:
+                    stats_df = pd.read_sql_query(f"""
+                        SELECT 
+                            COUNT(wo.id) as total_items,
+                            COUNT(CASE WHEN wo.status = 'pending' THEN 1 END) as pending,
+                            COUNT(CASE WHEN wo.status = 'in_progress' AND (wo.builder_notes NOT LIKE ? OR wo.builder_notes IS NULL) THEN 1 END) as in_progress,
+                            COUNT(CASE WHEN wo.status = 'in_progress' AND wo.builder_notes LIKE ? THEN 1 END) as rejected,
+                            COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as waiting_approval,
+                            COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved,
+                            COUNT(CASE WHEN wo.urgency = 'Urgent' THEN 1 END) as urgent,
+                            COUNT(DISTINCT wo.unit) as affected_units,
+                            COUNT(DISTINCT wo.trade) as trades_involved
+                        FROM inspector_inspections i
+                        JOIN inspector_work_orders wo ON i.id = wo.inspection_id
+                        WHERE i.building_id = {placeholder}
+                    """, conn, params=['%REJECTED%', '%REJECTED%', building_id])
             
             if stats_df.empty or stats_df['total_items'].iloc[0] == 0:
                 st.info(f"No work orders for {building_name}")
@@ -1070,27 +1105,28 @@ class DeveloperInterface:
             
             st.markdown("---")
             
-            orders_df = pd.read_sql_query("""
-                SELECT 
-                    wo.id, wo.unit, wo.room, wo.component, wo.trade, 
-                    wo.urgency, wo.status, wo.builder_notes, wo.updated_at
-                FROM inspector_inspections i
-                JOIN inspector_work_orders wo ON i.id = wo.inspection_id
-                WHERE i.building_id = ?
-                ORDER BY 
-                    CASE wo.status 
-                        WHEN 'waiting_approval' THEN 1
-                        WHEN 'in_progress' THEN 2
-                        WHEN 'pending' THEN 3
-                        ELSE 4
-                    END,
-                    CASE wo.urgency 
-                        WHEN 'Urgent' THEN 1 
-                        WHEN 'High Priority' THEN 2 
-                        ELSE 3 
-                    END,
-                    wo.unit
-            """, conn, params=[building_id])
+            with self.conn_mgr.get_connection() as conn:
+                orders_df = pd.read_sql_query(f"""
+                    SELECT 
+                        wo.id, wo.unit, wo.room, wo.component, wo.trade, 
+                        wo.urgency, wo.status, wo.builder_notes, wo.updated_at
+                    FROM inspector_inspections i
+                    JOIN inspector_work_orders wo ON i.id = wo.inspection_id
+                    WHERE i.building_id = {placeholder}
+                    ORDER BY 
+                        CASE wo.status 
+                            WHEN 'waiting_approval' THEN 1
+                            WHEN 'in_progress' THEN 2
+                            WHEN 'pending' THEN 3
+                            ELSE 4
+                        END,
+                        CASE wo.urgency 
+                            WHEN 'Urgent' THEN 1 
+                            WHEN 'High Priority' THEN 2 
+                            ELSE 3 
+                        END,
+                        wo.unit
+                """, conn, params=[building_id])
             
             # Filters
             col1, col2, col3, col4 = st.columns(4)
@@ -1164,20 +1200,19 @@ class DeveloperInterface:
         st.markdown("### 📈 Analytics & Insights")
         
         try:
-            conn = self.db.connect()
-            
-            trade_df = pd.read_sql_query("""
-                SELECT 
-                    wo.trade,
-                    COUNT(wo.id) as total,
-                    COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved,
-                    COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as waiting,
-                    AVG(CASE WHEN wo.urgency = 'Urgent' THEN 1 ELSE 0 END) * 100 as urgent_pct
-                FROM inspector_work_orders wo
-                GROUP BY wo.trade
-                HAVING total > 0
-                ORDER BY total DESC
-            """, conn)
+            with self.conn_mgr.get_connection() as conn:
+                trade_df = pd.read_sql_query("""
+                    SELECT 
+                        wo.trade,
+                        COUNT(wo.id) as total,
+                        COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved,
+                        COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as waiting,
+                        AVG(CASE WHEN wo.urgency = 'Urgent' THEN 1 ELSE 0 END) * 100 as urgent_pct
+                    FROM inspector_work_orders wo
+                    GROUP BY wo.trade
+                    HAVING COUNT(wo.id) > 0
+                    ORDER BY COUNT(wo.id) DESC
+                """, conn)
             
             if not trade_df.empty:
                 trade_df['completion_pct'] = (trade_df['approved'] / trade_df['total'] * 100).round(1)
@@ -1200,16 +1235,30 @@ class DeveloperInterface:
             st.markdown("---")
             st.markdown("#### Completion Timeline")
             
-            timeline_df = pd.read_sql_query("""
-                SELECT 
-                    DATE(wo.updated_at) as date,
-                    COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved_count
-                FROM inspector_work_orders wo
-                WHERE wo.updated_at IS NOT NULL
-                GROUP BY DATE(wo.updated_at)
-                ORDER BY date DESC
-                LIMIT 30
-            """, conn)
+            # Different DATE function for PostgreSQL vs SQLite
+            with self.conn_mgr.get_connection() as conn:
+                if self.db_type == "postgresql":
+                    timeline_df = pd.read_sql_query("""
+                        SELECT 
+                            DATE(wo.updated_at) as date,
+                            COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved_count
+                        FROM inspector_work_orders wo
+                        WHERE wo.updated_at IS NOT NULL
+                        GROUP BY DATE(wo.updated_at)
+                        ORDER BY date DESC
+                        LIMIT 30
+                    """, conn)
+                else:
+                    timeline_df = pd.read_sql_query("""
+                        SELECT 
+                            DATE(wo.updated_at) as date,
+                            COUNT(CASE WHEN wo.status = 'approved' THEN 1 END) as approved_count
+                        FROM inspector_work_orders wo
+                        WHERE wo.updated_at IS NOT NULL
+                        GROUP BY DATE(wo.updated_at)
+                        ORDER BY date DESC
+                        LIMIT 30
+                    """, conn)
             
             if not timeline_df.empty and PLOTLY_AVAILABLE:
                 fig = px.line(timeline_df, x='date', y='approved_count',
@@ -1228,23 +1277,37 @@ class DeveloperInterface:
     def _get_file_count(self, oid):
         """Get count of uploaded files for a work order"""
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='work_order_files'
-            """)
-            if not cursor.fetchone():
-                return 0
-            
-            cursor.execute("""
-                SELECT COUNT(*) FROM work_order_files 
-                WHERE work_order_id = ?
-            """, (str(oid),))
-            
-            result = cursor.fetchone()
-            return result[0] if result else 0
+            with self.conn_mgr.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                placeholder = self._get_param_placeholder()
+                
+                # Check if table exists - different syntax for each database
+                if self.db_type == "postgresql":
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'work_order_files'
+                        )
+                    """)
+                    table_exists = cursor.fetchone()[0]
+                else:
+                    cursor.execute("""
+                        SELECT name FROM sqlite_master 
+                        WHERE type='table' AND name='work_order_files'
+                    """)
+                    table_exists = cursor.fetchone() is not None
+                
+                if not table_exists:
+                    return 0
+                
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM work_order_files 
+                    WHERE work_order_id = {placeholder}
+                """, (str(oid),))
+                
+                result = cursor.fetchone()
+                return result[0] if result else 0
         except Exception as e:
             logger.error(f"File count error: {e}")
             return 0
@@ -1252,149 +1315,172 @@ class DeveloperInterface:
     def _show_files(self, oid):
         """Display uploaded files from database with download capability"""
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='work_order_files'
-            """)
-            if not cursor.fetchone():
-                return
-            
-            cursor.execute("PRAGMA table_info(work_order_files)")
-            columns = {row[1] for row in cursor.fetchall()}
-            
-            if 'original_filename' in columns and 'file_path' in columns and 'file_type' in columns:
-                cursor.execute("""
-                    SELECT original_filename, file_path, file_type 
-                    FROM work_order_files 
-                    WHERE work_order_id = ?
-                    ORDER BY uploaded_at DESC
-                """, (str(oid),))
+            with self.conn_mgr.get_connection() as conn:
+                cursor = conn.cursor()
                 
-                files = cursor.fetchall()
+                placeholder = self._get_param_placeholder()
                 
-                if not files:
+                # Check if table exists
+                if self.db_type == "postgresql":
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'work_order_files'
+                        )
+                    """)
+                    table_exists = cursor.fetchone()[0]
+                else:
+                    cursor.execute("""
+                        SELECT name FROM sqlite_master 
+                        WHERE type='table' AND name='work_order_files'
+                    """)
+                    table_exists = cursor.fetchone() is not None
+                
+                if not table_exists:
                     return
                 
-                images = []
-                documents = []
+                # Get column names
+                if self.db_type == "postgresql":
+                    cursor.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'work_order_files'
+                    """)
+                    columns = {row[0] for row in cursor.fetchall()}
+                else:
+                    cursor.execute("PRAGMA table_info(work_order_files)")
+                    columns = {row[1] for row in cursor.fetchall()}
                 
-                for fname, fpath, ftype in files:
-                    if not fpath or fpath == 'NULL' or fpath == 'None':
-                        if fname:
-                            documents.append({
-                                'name': fname,
-                                'path': None,
-                                'status': 'no path'
+                if 'original_filename' in columns and 'file_path' in columns and 'file_type' in columns:
+                    cursor.execute(f"""
+                        SELECT original_filename, file_path, file_type 
+                        FROM work_order_files 
+                        WHERE work_order_id = {placeholder}
+                        ORDER BY uploaded_at DESC
+                    """, (str(oid),))
+                    
+                    files = cursor.fetchall()
+                    
+                    if not files:
+                        return
+                    
+                    images = []
+                    documents = []
+                    
+                    for fname, fpath, ftype in files:
+                        if not fpath or fpath == 'NULL' or fpath == 'None':
+                            if fname:
+                                documents.append({
+                                    'name': fname,
+                                    'path': None,
+                                    'status': 'no path'
+                                })
+                            continue
+                        
+                        fpath_str = str(fpath)
+                        file_exists = os.path.exists(fpath_str)
+                        
+                        if ftype and 'image' in str(ftype).lower():
+                            images.append({
+                                'name': fname or "Image",
+                                'path': fpath_str if file_exists else None,
+                                'status': 'ok' if file_exists else 'missing'
                             })
-                        continue
-                    
-                    fpath_str = str(fpath)
-                    file_exists = os.path.exists(fpath_str)
-                    
-                    if ftype and 'image' in str(ftype).lower():
-                        images.append({
-                            'name': fname or "Image",
-                            'path': fpath_str if file_exists else None,
-                            'status': 'ok' if file_exists else 'missing'
-                        })
-                    else:
-                        documents.append({
-                            'name': fname or "File",
-                            'path': fpath_str if file_exists else None,
-                            'status': 'ok' if file_exists else 'missing',
-                            'type': ftype
-                        })
-                
-                # Display images
-                if images:
-                    st.markdown("**Images:**")
-                    cols = st.columns(2)
-                    for i, img_info in enumerate(images):
-                        with cols[i % 2]:
-                            if img_info['status'] == 'ok' and img_info['path']:
-                                try:
-                                    st.image(img_info['path'], 
-                                        caption=img_info['name'], 
-                                        use_container_width=True)
-                                except Exception as e:
-                                    logger.error(f"Error displaying {img_info['path']}: {e}")
-                                    st.caption(f"📄 {img_info['name']} (can't display)")
-                            else:
-                                st.caption(f"📄 {img_info['name']} ({img_info['status']})")
-                
-                # Display documents with download buttons
-                if documents:
-                    if images:
-                        st.markdown("**Documents:**")
-                    
-                    for idx, doc_info in enumerate(documents):
-                        if doc_info['status'] == 'ok' and doc_info['path']:
-                            # Create download button for the file
-                            try:
-                                # Read file content
-                                with open(doc_info['path'], 'rb') as f:
-                                    file_data = f.read()
-                                
-                                # Get file extension for mime type
-                                file_ext = doc_info['name'].split('.')[-1].lower() if '.' in doc_info['name'] else ''
-                                
-                                # Determine mime type
-                                mime_types = {
-                                    'pdf': 'application/pdf',
-                                    'doc': 'application/msword',
-                                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                    'xls': 'application/vnd.ms-excel',
-                                    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                    'txt': 'text/plain',
-                                    'csv': 'text/csv',
-                                    'zip': 'application/zip'
-                                }
-                                mime_type = mime_types.get(file_ext, 'application/octet-stream')
-                                
-                                # Get file size
-                                file_size = len(file_data)
-                                if file_size < 1024:
-                                    size_str = f"{file_size} B"
-                                elif file_size < 1024 * 1024:
-                                    size_str = f"{file_size / 1024:.1f} KB"
-                                else:
-                                    size_str = f"{file_size / (1024 * 1024):.1f} MB"
-                                
-                                # File type icon
-                                icon = "📄"
-                                if file_ext == 'pdf':
-                                    icon = "📄"
-                                elif file_ext in ['doc', 'docx']:
-                                    icon = "📝"
-                                elif file_ext in ['xls', 'xlsx']:
-                                    icon = "📊"
-                                elif file_ext in ['zip', 'rar']:
-                                    icon = "📦"
-                                elif file_ext in ['mp4', 'avi', 'mov']:
-                                    icon = "🎥"
-                                
-                                # Display file info and download button
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.caption(f"{icon} {doc_info['name']} ({size_str})")
-                                with col2:
-                                    st.download_button(
-                                        label="📥",
-                                        data=file_data,
-                                        file_name=doc_info['name'],
-                                        mime=mime_type,
-                                        key=f"download_{oid}_{idx}",
-                                        help=f"Download {doc_info['name']}"
-                                    )
-                                
-                            except Exception as e:
-                                logger.error(f"Error reading file {doc_info['path']}: {e}")
-                                st.caption(f"📄 {doc_info['name']} (error reading file)")
                         else:
-                            st.caption(f"📄 {doc_info['name']} ({doc_info['status']})")
+                            documents.append({
+                                'name': fname or "File",
+                                'path': fpath_str if file_exists else None,
+                                'status': 'ok' if file_exists else 'missing',
+                                'type': ftype
+                            })
+                    
+                    # Display images
+                    if images:
+                        st.markdown("**Images:**")
+                        cols = st.columns(2)
+                        for i, img_info in enumerate(images):
+                            with cols[i % 2]:
+                                if img_info['status'] == 'ok' and img_info['path']:
+                                    try:
+                                        st.image(img_info['path'], 
+                                            caption=img_info['name'], 
+                                            use_container_width=True)
+                                    except Exception as e:
+                                        logger.error(f"Error displaying {img_info['path']}: {e}")
+                                        st.caption(f"📄 {img_info['name']} (can't display)")
+                                else:
+                                    st.caption(f"📄 {img_info['name']} ({img_info['status']})")
+                    
+                    # Display documents with download buttons
+                    if documents:
+                        if images:
+                            st.markdown("**Documents:**")
+                        
+                        for idx, doc_info in enumerate(documents):
+                            if doc_info['status'] == 'ok' and doc_info['path']:
+                                # Create download button for the file
+                                try:
+                                    # Read file content
+                                    with open(doc_info['path'], 'rb') as f:
+                                        file_data = f.read()
+                                    
+                                    # Get file extension for mime type
+                                    file_ext = doc_info['name'].split('.')[-1].lower() if '.' in doc_info['name'] else ''
+                                    
+                                    # Determine mime type
+                                    mime_types = {
+                                        'pdf': 'application/pdf',
+                                        'doc': 'application/msword',
+                                        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'xls': 'application/vnd.ms-excel',
+                                        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'txt': 'text/plain',
+                                        'csv': 'text/csv',
+                                        'zip': 'application/zip'
+                                    }
+                                    mime_type = mime_types.get(file_ext, 'application/octet-stream')
+                                    
+                                    # Get file size
+                                    file_size = len(file_data)
+                                    if file_size < 1024:
+                                        size_str = f"{file_size} B"
+                                    elif file_size < 1024 * 1024:
+                                        size_str = f"{file_size / 1024:.1f} KB"
+                                    else:
+                                        size_str = f"{file_size / (1024 * 1024):.1f} MB"
+                                    
+                                    # File type icon
+                                    icon = "📄"
+                                    if file_ext == 'pdf':
+                                        icon = "📄"
+                                    elif file_ext in ['doc', 'docx']:
+                                        icon = "📝"
+                                    elif file_ext in ['xls', 'xlsx']:
+                                        icon = "📊"
+                                    elif file_ext in ['zip', 'rar']:
+                                        icon = "📦"
+                                    elif file_ext in ['mp4', 'avi', 'mov']:
+                                        icon = "🎥"
+                                    
+                                    # Display file info and download button
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        st.caption(f"{icon} {doc_info['name']} ({size_str})")
+                                    with col2:
+                                        st.download_button(
+                                            label="📥",
+                                            data=file_data,
+                                            file_name=doc_info['name'],
+                                            mime=mime_type,
+                                            key=f"download_{oid}_{idx}",
+                                            help=f"Download {doc_info['name']}"
+                                        )
+                                    
+                                except Exception as e:
+                                    logger.error(f"Error reading file {doc_info['path']}: {e}")
+                                    st.caption(f"📄 {doc_info['name']} (error reading file)")
+                            else:
+                                st.caption(f"📄 {doc_info['name']} ({doc_info['status']})")
                         
         except Exception as e:
             logger.error(f"File display error: {e}")

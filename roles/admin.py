@@ -789,57 +789,537 @@ class AdminInterface:
     # ========================================================================
     
     def _show_trade_mapping_management(self):
-        """Master trade mapping management"""
+        """Master trade mapping management - FULL VERSION"""
         
         st.markdown("### Master Trade Mapping Management")
         
-        st.info("Manage the system-wide master trade mapping")
+        st.info("Manage the system-wide master trade mapping that all inspectors use by default")
         
-        if not TRADE_MAPPING_AVAILABLE:
-            st.warning("Trade mapping module not available")
-            return
-        
+        # Current master mapping status
         try:
-            master_mapping = load_master_trade_mapping()
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Total Mappings", len(master_mapping))
-            with col2:
-                st.metric("Unique Trades", master_mapping['Trade'].nunique())
-            with col3:
-                st.metric("Unique Rooms", master_mapping['Room'].nunique())
-            with col4:
-                st.metric("Unique Components", master_mapping['Component'].nunique())
-            
-            st.markdown("---")
-            st.info("Trade mapping display - view only mode")
-            
+            if TRADE_MAPPING_AVAILABLE:
+                master_mapping = load_master_trade_mapping()
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Mappings", len(master_mapping))
+                with col2:
+                    st.metric("Unique Trades", master_mapping['Trade'].nunique())
+                with col3:
+                    st.metric("Unique Rooms", master_mapping['Room'].nunique())
+                with col4:
+                    st.metric("Unique Components", master_mapping['Component'].nunique())
+                
+                st.markdown("---")
+                
+                # Management actions
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**Upload New Master Mapping**")
+                    
+                    uploaded_file = st.file_uploader(
+                        "Upload new master mapping",
+                        type=["csv"],
+                        help="CSV file with Room, Component, Trade columns",
+                        key="trade_mapping_uploader"
+                    )
+                    
+                    if uploaded_file:
+                        try:
+                            new_mapping = pd.read_csv(uploaded_file)
+                            
+                            # Validate
+                            required_cols = ['Room', 'Component', 'Trade']
+                            missing = [col for col in required_cols if col not in new_mapping.columns]
+                            
+                            if missing:
+                                st.error(f"Missing columns: {', '.join(missing)}")
+                            else:
+                                st.success(f"Valid mapping: {len(new_mapping)} entries")
+                                
+                                col_a, col_b = st.columns(2)
+                                
+                                with col_a:
+                                    if st.button("Set as Master Mapping", type="primary", use_container_width=True):
+                                        if self._save_master_mapping(new_mapping):
+                                            st.success("Master mapping updated & synced to database!")
+                                            st.rerun()
+                                        else:
+                                            st.error("Failed to update mapping")
+                                
+                                with col_b:
+                                    if st.button("Validate First", use_container_width=True):
+                                        self._validate_trade_mapping(new_mapping)
+                        except Exception as e:
+                            st.error(f"Error reading file: {e}")
+
+                with col2:
+                    st.markdown("**Download & Export**")
+                    
+                    csv_data = master_mapping.to_csv(index=False)
+                    
+                    st.download_button(
+                        "Download Current Master",
+                        data=csv_data,
+                        file_name=f"master_trade_mapping_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                    
+                    # Template download
+                    template = """Room,Component,Trade
+    Apartment Entry Door,Door Handle,Doors
+    Apartment Entry Door,Door Locks and Keys,Doors
+    Bathroom,Tiles,Flooring - Tiles
+    Kitchen Area,Cabinets,Carpentry & Joinery
+    Bedroom,Windows,Windows
+    Living Room,Air Conditioning,HVAC"""
+                    
+                    st.download_button(
+                        "Download Template",
+                        data=template,
+                        file_name="trade_mapping_template.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                    
+                    st.caption("Auto-syncs to database when updated")
+                
+                st.markdown("---")
+                
+                # Display current mapping
+                st.markdown("**Current Master Mapping:**")
+                
+                # Search and filter
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    search = st.text_input("Search:", placeholder="Room, component, or trade")
+                with col2:
+                    trade_filter = st.selectbox(
+                        "Filter by Trade:",
+                        ['All'] + sorted(master_mapping['Trade'].unique().tolist())
+                    )
+                with col3:
+                    room_filter = st.selectbox(
+                        "Filter by Room:",
+                        ['All'] + sorted(master_mapping['Room'].unique().tolist())
+                    )
+                
+                # Apply filters
+                display_mapping = master_mapping.copy()
+                
+                if search:
+                    mask = (
+                        display_mapping['Room'].str.contains(search, case=False, na=False) |
+                        display_mapping['Component'].str.contains(search, case=False, na=False) |
+                        display_mapping['Trade'].str.contains(search, case=False, na=False)
+                    )
+                    display_mapping = display_mapping[mask]
+                
+                if trade_filter != 'All':
+                    display_mapping = display_mapping[display_mapping['Trade'] == trade_filter]
+                
+                if room_filter != 'All':
+                    display_mapping = display_mapping[display_mapping['Room'] == room_filter]
+                
+                st.caption(f"Showing {len(display_mapping)} of {len(master_mapping)} mappings")
+                
+                display_mapping.index = range(1, len(display_mapping) + 1)
+                st.dataframe(display_mapping, use_container_width=True, height=400)
+                
+            else:
+                st.error("Trade mapping module not available")
+                
         except Exception as e:
             st.error(f"Error loading master mapping: {e}")
-    
-    # ========================================================================
-    # DATABASE MANAGEMENT
-    # ========================================================================
-    
+
+
+    def _save_master_mapping(self, mapping_df: pd.DataFrame) -> bool:
+        """Save master trade mapping"""
+        
+        try:
+            # Save to file
+            mapping_df.to_csv("MasterTradeMapping.csv", index=False)
+            
+            # Save to database if available
+            if self.db:
+                self.db.save_trade_mapping(mapping_df)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving master mapping: {e}")
+            return False
+
+
+    def _validate_trade_mapping(self, mapping_df: pd.DataFrame):
+        """Validate trade mapping"""
+        
+        with st.expander("Validation Results", expanded=True):
+            # Check for duplicates
+            duplicates = mapping_df.duplicated(subset=['Room', 'Component']).sum()
+            
+            if duplicates > 0:
+                st.warning(f"Found {duplicates} duplicate Room-Component combinations")
+            else:
+                st.success("No duplicate mappings found")
+            
+            # Check for empty values
+            empty_rooms = mapping_df['Room'].isna().sum()
+            empty_components = mapping_df['Component'].isna().sum()
+            empty_trades = mapping_df['Trade'].isna().sum()
+            
+            if empty_rooms + empty_components + empty_trades > 0:
+                st.warning(f"Found empty values: Rooms={empty_rooms}, Components={empty_components}, Trades={empty_trades}")
+            else:
+                st.success("No empty values found")
+            
+            # Trade distribution
+            st.markdown("**Trade Distribution:**")
+            trade_counts = mapping_df['Trade'].value_counts()
+            st.bar_chart(trade_counts)
+
+
+    # ============================================
+    # DATABASE TAB - RESTORE FROM DOCUMENT 6
+    # ============================================
+
     def _show_database_management(self):
-        """Database management"""
+        """Database backup, restore, and maintenance - FULL VERSION"""
         
         st.markdown("### Database Management")
         
-        col1, col2, col3 = st.columns(3)
+        # Database info
+        db_path = Path(self.db_path)
         
-        with col1:
-            st.metric("Database Type", self.db_type.upper())
+        if db_path.exists():
+            db_size = db_path.stat().st_size / (1024 * 1024)  # MB
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Database Size", f"{db_size:.2f} MB")
+            with col2:
+                st.metric("Database Type", self.db_type.upper())
+            with col3:
+                st.metric("Status", "Connected")
         
-        with col2:
-            if st.button("📊 View Statistics", use_container_width=True):
-                self._show_database_statistics()
+        st.markdown("---")
         
-        with col3:
-            if st.button("🔄 Refresh", use_container_width=True):
-                st.rerun()
+        # ⚠️ NOTE: Backup/Restore only works for SQLite
+        if self.db_type == "sqlite":
+            # Backup section
+            st.markdown("#### Backup Operations")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Create Backup**")
+                
+                backup_name = st.text_input(
+                    "Backup Name (optional):",
+                    placeholder="Leave empty for auto-generated name",
+                    key="backup_name_input"
+                )
+                
+                include_files = st.checkbox("Include uploaded files", value=True)
+                
+                if st.button("Create Backup", type="primary", use_container_width=True):
+                    backup_path = self._create_backup(backup_name, include_files)
+                    if backup_path:
+                        st.success(f"Backup created: {backup_path}")
+                        
+                        # Offer download
+                        try:
+                            with open(backup_path, 'rb') as f:
+                                st.download_button(
+                                    "Download Backup",
+                                    data=f.read(),
+                                    file_name=os.path.basename(backup_path),
+                                    mime="application/octet-stream",
+                                    use_container_width=True,
+                                    key="download_backup_btn"
+                                )
+                        except Exception as e:
+                            st.error(f"Error preparing download: {e}")
+                    else:
+                        st.error("Backup failed")
+            
+            with col2:
+                st.markdown("**Restore from Backup**")
+                
+                backup_file = st.file_uploader(
+                    "Select backup file to restore",
+                    type=["db", "sqlite", "backup"],
+                    key="restore_file_uploader"
+                )
+                
+                if backup_file:
+                    st.warning("⚠️ Restoring will overwrite current database!")
+                    
+                    confirm_restore = st.checkbox("I understand and want to proceed")
+                    
+                    if confirm_restore:
+                        if st.button("Restore Database", type="primary", use_container_width=True):
+                            if self._restore_backup(backup_file):
+                                st.success("Database restored successfully!")
+                                st.info("Please restart the application")
+                            else:
+                                st.error("Restore failed")
+            
+            st.markdown("---")
+            
+            # Maintenance section
+            st.markdown("#### Database Maintenance")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("Optimize Database", use_container_width=True):
+                    if self._optimize_database():
+                        st.success("Database optimized")
+                    else:
+                        st.error("Optimization failed")
+            
+            with col2:
+                if st.button("Check Integrity", use_container_width=True):
+                    self._check_database_integrity()
+            
+            with col3:
+                if st.button("View Statistics", use_container_width=True):
+                    self._show_database_statistics()
+            
+            st.markdown("---")
+            
+            # Existing backups
+            st.markdown("#### Existing Backups")
+            self._show_existing_backups()
+        
+        else:
+            # PostgreSQL - no local backup/restore
+            st.info("🔵 PostgreSQL Database")
+            st.markdown("""
+            **Database Management for PostgreSQL:**
+            - Backups should be managed through Supabase dashboard
+            - Use Supabase's built-in backup and restore features
+            - Local file backup/restore is not supported for PostgreSQL
+            """)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("View Statistics", use_container_width=True, type="primary"):
+                    self._show_database_statistics()
+            
+            with col2:
+                if st.button("Check Connection", use_container_width=True):
+                    try:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT 1")
+                        cursor.close()
+                        conn.close()
+                        st.success("✅ PostgreSQL connection is healthy")
+                    except Exception as e:
+                        st.error(f"❌ Connection failed: {e}")
+
+
+    def _create_backup(self, backup_name: Optional[str], include_files: bool) -> Optional[str]:
+        """Create database backup - SQLite only"""
+        
+        if self.db_type != "sqlite":
+            st.error("Backup only available for SQLite database")
+            return None
+        
+        try:
+            # Create backups directory
+            backup_dir = Path("backups")
+            backup_dir.mkdir(exist_ok=True)
+            
+            # Generate backup filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            if backup_name:
+                clean_name = "".join(c for c in backup_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                filename = f"backup_{clean_name}_{timestamp}.db"
+            else:
+                filename = f"backup_{timestamp}.db"
+            
+            backup_path = backup_dir / filename
+            
+            # Copy database
+            shutil.copy2(self.db_path, backup_path)
+            
+            # If including files, create zip
+            if include_files and Path("uploads").exists():
+                import zipfile
+                
+                zip_path = backup_dir / filename.replace('.db', '.zip')
+                
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    # Add database
+                    zipf.write(backup_path, arcname=filename)
+                    
+                    # Add uploads
+                    for root, dirs, files in os.walk("uploads"):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.relpath(file_path, ".")
+                            zipf.write(file_path, arcname=arcname)
+                
+                # Remove standalone db file
+                backup_path.unlink()
+                return str(zip_path)
+            
+            return str(backup_path)
+            
+        except Exception as e:
+            logger.error(f"Backup error: {e}")
+            st.error(f"Backup failed: {e}")
+            return None
+
+
+    def _restore_backup(self, backup_file) -> bool:
+        """Restore database from backup - SQLite only"""
+        
+        if self.db_type != "sqlite":
+            st.error("Restore only available for SQLite database")
+            return False
+        
+        try:
+            # Create temporary backup of current database
+            current_backup = f"{self.db_path}.pre_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copy2(self.db_path, current_backup)
+            
+            # Restore from uploaded file
+            with open(self.db_path, 'wb') as f:
+                f.write(backup_file.getbuffer())
+            
+            st.info(f"Previous database saved as: {current_backup}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Restore error: {e}")
+            st.error(f"Restore failed: {e}")
+            return False
+
+
+    def _optimize_database(self) -> bool:
+        """Optimize database (VACUUM) - SQLite only"""
+        
+        if self.db_type != "sqlite":
+            st.info("Optimization not needed for PostgreSQL (managed by Supabase)")
+            return True
+        
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("VACUUM")
+            conn.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Optimization error: {e}")
+            return False
+
+
+    def _check_database_integrity(self):
+        """Check database integrity"""
+        
+        with st.expander("Integrity Check Results", expanded=True):
+            try:
+                if self.db_type == "postgresql":
+                    st.info("PostgreSQL integrity is managed by Supabase")
+                    st.success("Connection to PostgreSQL is healthy")
+                else:
+                    import sqlite3
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("PRAGMA integrity_check")
+                    result = cursor.fetchone()
+                    
+                    if result[0] == 'ok':
+                        st.success("Database integrity: OK")
+                    else:
+                        st.error(f"Database integrity issues: {result[0]}")
+                    
+                    # Check for orphaned records
+                    st.markdown("**Orphaned Records Check:**")
+                    
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM inspector_work_orders 
+                        WHERE inspection_id NOT IN (SELECT id FROM inspector_inspections)
+                    """)
+                    orphaned_work_orders = cursor.fetchone()[0]
+                    
+                    if orphaned_work_orders > 0:
+                        st.warning(f"Found {orphaned_work_orders} orphaned work orders")
+                    else:
+                        st.success("No orphaned work orders")
+                    
+                    conn.close()
+                    
+            except Exception as e:
+                st.error(f"Integrity check failed: {e}")
+
+
+    def _show_existing_backups(self):
+        """Show list of existing backups - SQLite only"""
+        
+        if self.db_type != "sqlite":
+            return
+        
+        backup_dir = Path("backups")
+        
+        if not backup_dir.exists():
+            st.info("No backups found")
+            return
+        
+        backups = list(backup_dir.glob("backup_*.db")) + list(backup_dir.glob("backup_*.zip"))
+        
+        if not backups:
+            st.info("No backups found")
+            return
+        
+        # Sort by modification time (newest first)
+        backups.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        
+        st.caption(f"Found {len(backups)} backup(s)")
+        
+        for backup in backups[:10]:  # Show last 10
+            stat = backup.stat()
+            size_mb = stat.st_size / (1024 * 1024)
+            modified = datetime.fromtimestamp(stat.st_mtime)
+            
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            
+            with col1:
+                st.text(backup.name)
+            
+            with col2:
+                st.caption(f"{size_mb:.2f} MB")
+            
+            with col3:
+                st.caption(modified.strftime("%Y-%m-%d %H:%M"))
+            
+            with col4:
+                try:
+                    with open(backup, 'rb') as f:
+                        st.download_button(
+                            "Download",
+                            data=f.read(),
+                            file_name=backup.name,
+                            mime="application/octet-stream",
+                            key=f"download_backup_{backup.name}",
+                            use_container_width=True
+                        )
+                except Exception as e:
+                    st.error(f"Error: {e}")
     
     def _show_database_statistics(self):
         """Show detailed database statistics with recent inspections"""

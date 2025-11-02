@@ -8,9 +8,7 @@ while maintaining all existing functionality for image upload and report generat
 
 import pandas as pd
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 from io import BytesIO, StringIO
 from typing import Dict, Any, Tuple, Optional
@@ -18,14 +16,10 @@ import tempfile
 import os
 import zipfile
 import hashlib
-from database.connection_manager import get_connection_manager
 
 # Import the enhanced modules
 from core.data_processor import InspectionDataProcessor, load_master_trade_mapping
 from core.trade_mapper import TradeMapper
-
-logger = logging.getLogger(__name__)
-
 
 # Import enhanced database manager
 try:
@@ -59,12 +53,13 @@ class InspectorInterface:
     """Inspector interface with enhanced V3 database integration for cross-role data access"""
     
     def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
-        """Initialize the inspector interface with user context"""
+        """Initialize with connection manager"""
         self._button_counter = 0
         
-        # ✅ Initialize connection manager FIRST
+        # ✅ Use connection manager
+        from database.connection_manager import get_connection_manager
         self.conn_manager = get_connection_manager()
-        self.db_type = self.conn_manager.get_db_type()
+        self.db_type = self.conn_manager.db_type
         
         # ✅ Pass connection manager to processor
         self.processor = InspectionDataProcessor(db_path, conn_manager=self.conn_manager)
@@ -77,27 +72,23 @@ class InspectorInterface:
         self.user_info = user_info
         self.auth_manager = None
         
-        # Initialize database manager for backward compatibility
-        if DATABASE_AVAILABLE and self.db_type == "sqlite":
-            self.db_manager = DatabaseManager(db_path)
-            logger.info("Inspector interface initialized with enhanced V3 database support")
+        # Keep db_manager for legacy features only (SQLite)
+        if self.db_type == "sqlite":
+            try:
+                from database.setup import DatabaseManager
+                self.db_manager = DatabaseManager(db_path)
+            except ImportError:
+                self.db_manager = None
         else:
             self.db_manager = None
-            logger.warning("Enhanced database not available - limited functionality")
         
-        # ... rest of init
-        
-        # Initialize image storage in session state
         if 'report_images' not in st.session_state:
-            st.session_state.report_images = {
-                'logo': None,
-                'cover': None
-            }
-    
+            st.session_state.report_images = {'logo': None, 'cover': None}
+
     def _get_connection(self):
         """Get database connection using connection manager"""
         return self.conn_manager.get_connection()
-
+    
     # ADD THE AUTHENTICATION METHODS HERE:
     def get_current_user_role(self):
         """Get current user role from authentication system"""
@@ -151,6 +142,32 @@ class InspectorInterface:
     
     def show_inspector_dashboard(self):
         """Show the main inspector dashboard with enhanced database integration"""
+        
+        # ✅ SIMPLE DATABASE CHECK - works with both PostgreSQL and SQLite
+        has_database = bool(self.conn_manager or self.processor.db_manager)
+        
+        if not has_database:
+            st.error("⚠️ Database Not Available")
+            st.warning("Some features will be disabled:")
+            st.write("- ❌ Previous inspections")
+            st.write("- ❌ Data persistence")  
+            st.write("- ❌ Work order creation")
+            st.write("- ✅ CSV processing (temporary)")
+            st.write("- ✅ Report generation (temporary)")
+            
+            with st.expander("How to fix", expanded=True):
+                st.markdown("""
+                **For PostgreSQL (Supabase):**
+                1. Check your `.streamlit/secrets.toml` file exists
+                2. Verify your PostgreSQL connection string is correct
+                
+                **For SQLite (Local):**
+                1. Ensure `database/setup.py` exists
+                2. Run: `python database/setup.py`
+                3. Restart the application
+                """)
+            
+            st.markdown("---")
         
         # Enhanced database status indicator
         self._show_enhanced_database_status()
@@ -248,217 +265,412 @@ class InspectorInterface:
                 st.success("No urgent defects found!")
                 
     def _show_enhanced_database_status(self):
-        """Role-based database status - FIXED for connection manager"""
+        """Show database status - PostgreSQL/SQLite compatible"""
         
         user_role = self.get_current_user_role()
         
-        # ✅ Check connection manager (not old db_manager)
-        if hasattr(self, 'conn_manager') and self.conn_manager:
-            db_type = self.db_type.upper()
+        has_database = bool(self.conn_manager)
+        
+        if has_database:
+            db_type = self.conn_manager.db_type.upper()
             
             if user_role == 'admin':
                 # Full status for admin
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.success(f"✅ Database: {db_type}")
-                
+                    st.success(f"Database Connected ({db_type})")
+                    
                 with col2:
-                    # Try to get statistics
-                    try:
-                        conn = self._get_connection()
-                        cursor = conn.cursor()
-                        
-                        cursor.execute("SELECT COUNT(*) as count FROM inspector_inspections")
-                        result = cursor.fetchone()
-                        insp_count = result['count'] if isinstance(result, dict) else result[0]
-                        
-                        cursor.close()
-                        conn.close()
-                        
-                        st.info(f"📊 Inspections: {insp_count}")
-                    except Exception as e:
-                        st.info("📊 Inspections: Available")
+                    st.info("Inspector Data: Available")
                 
                 with col3:
-                    # Try to get work order count
-                    try:
-                        conn = self._get_connection()
-                        cursor = conn.cursor()
-                        
-                        cursor.execute("SELECT COUNT(*) as count FROM inspector_work_orders")
-                        result = cursor.fetchone()
-                        wo_count = result['count'] if isinstance(result, dict) else result[0]
-                        
-                        cursor.close()
-                        conn.close()
-                        
-                        st.info(f"📋 Work Orders: {wo_count}")
-                    except Exception as e:
-                        st.info("📋 Work Orders: Available")
+                    st.info("Work Orders: Available")
                 
-                st.caption(f"Connected to {db_type} - Data saved for cross-role access")
-            
+                st.caption(f"Using {db_type} - Data saved for Builder/Developer access")
             else:
                 # Simplified status for inspector
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    st.success(f"✅ Database Connected: {db_type}")
-                    st.caption("Your data will be saved automatically and available to Builder/Developer")
-                
-                with col2:
-                    # Show connection health
-                    try:
-                        conn = self._get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT 1")
-                        cursor.close()
-                        conn.close()
-                        st.success("🟢 Healthy")
-                    except:
-                        st.warning("🟡 Check Connection")
-        
+                st.success(f"✅ Database Connected ({db_type}) - Data will be saved automatically")
         else:
-            # No connection manager available
             st.warning("⚠️ Database not available - Data will only be stored in current session")
-            st.caption("PostgreSQL connection not configured")
     
     def _show_previous_inspections_section(self):
-        """Show list of previous inspections with just-uploaded highlight"""
+        """Show previous inspections - PostgreSQL/SQLite compatible"""
         
-        st.header("📋 Previous Inspections")
+        st.markdown("### Previous Inspections")
+        
+        has_database = bool(self.conn_manager or self.processor.db_manager)
+        
+        if not has_database:
+            st.info("⏭️ Database not configured - Previous inspections not available")
+            st.markdown("---")
+            return
         
         try:
-            # ✅ Use connection manager
+            conn = self.conn_manager.get_connection()
+            
+            # ✅ PostgreSQL/SQLite compatible query
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT i.id, i.inspection_date, i.created_at, b.name as building_name,
+                        i.total_units, i.total_defects, i.ready_pct, i.inspector_name,
+                        i.original_filename
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    WHERE i.original_filename IS NOT NULL
+                    ORDER BY i.created_at DESC
+                    LIMIT 10
+                """
+            else:
+                query = """
+                    SELECT i.id, i.inspection_date, i.created_at, b.name as building_name,
+                        i.total_units, i.total_defects, i.ready_pct, i.inspector_name,
+                        i.original_filename
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    WHERE i.original_filename IS NOT NULL
+                    ORDER BY i.created_at DESC
+                    LIMIT 10
+                """
+            
+            recent_inspections = pd.read_sql_query(query, conn)
+            conn.close()
+            
+            if len(recent_inspections) > 0:
+                st.success(f"✅ Found {len(recent_inspections)} previous inspections")
+                
+                # Display inspections
+                for idx, row in recent_inspections.iterrows():
+                    # Format dates
+                    inspection_date_str = str(row['inspection_date'])
+                    if isinstance(row['inspection_date'], pd.Timestamp):
+                        inspection_date_str = row['inspection_date'].strftime('%Y-%m-%d')
+                    
+                    # Format upload time
+                    if isinstance(row['created_at'], pd.Timestamp):
+                        upload_time = row['created_at'].strftime('%Y-%m-%d %H:%M')
+                        upload_date = row['created_at'].strftime('%Y-%m-%d')
+                    else:
+                        upload_time = str(row['created_at'])
+                        upload_date = str(row['created_at'])
+                    
+                    # Convert metrics
+                    total_units = int(row['total_units']) if pd.notna(row['total_units']) else 0
+                    total_defects = int(row['total_defects']) if pd.notna(row['total_defects']) else 0
+                    ready_pct = float(row['ready_pct']) if pd.notna(row['ready_pct']) else 0.0
+                    
+                    with st.expander(
+                        f"📋 {row['building_name']} - Uploaded {upload_date} "
+                        f"({total_units} units, {total_defects} defects)",
+                        expanded=False
+                    ):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("Total Units", total_units)
+                            st.metric("Inspector", str(row['inspector_name']))
+                        
+                        with col2:
+                            st.metric("Total Defects", total_defects)
+                            st.metric("Ready %", f"{ready_pct:.1f}%")
+                        
+                        with col3:
+                            st.markdown("**Upload Time:**")
+                            st.write(upload_time)
+                            st.markdown("**Inspection Date:**")
+                            st.write(inspection_date_str)
+                            st.caption(f"File: {row['original_filename']}")
+                        
+                        if st.button(
+                            "📂 Load This Inspection",
+                            key=f"load_inspection_{row['id']}",
+                            use_container_width=True,
+                            type="primary"
+                        ):
+                            st.session_state['viewing_loaded_inspection'] = True
+                            st.session_state['loaded_inspection_id'] = row['id']
+                            self._load_previous_inspection(row['id'])
+            else:
+                st.info("No previous inspections found. Upload a CSV to get started!")
+                
+        except Exception as e:
+            st.error(f"❌ Error loading inspections: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+        
+        st.markdown("---")
+
+
+    # ============================================
+    # ADD THIS DEBUG METHOD TO InspectorInterface CLASS
+    # ============================================
+    def _debug_inspection_data(self, inspection_id: str):
+        """Debug what's stored in database vs what's reconstructed"""
+        
+        st.markdown("---")
+        st.markdown("## 🔍 Debug Analysis")
+        st.markdown(f"**Inspection ID:** `{inspection_id[:12]}...`")
+        
+        try:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            # Build query
-            if self.conn_manager.get_db_type() == "postgresql":
-                query = """
-                    SELECT 
-                        i.id,
-                        i.inspection_date,
-                        b.name as building_name,
-                        i.total_units,
-                        i.total_defects,
-                        i.ready_pct,
-                        i.created_at
-                    FROM inspector_inspections i
-                    JOIN inspector_buildings b ON i.building_id = b.id
-                    ORDER BY i.created_at DESC
-                    LIMIT 20
-                """
-            else:
-                query = """
-                    SELECT 
-                        i.id,
-                        i.inspection_date,
-                        b.name as building_name,
-                        i.total_units,
-                        i.total_defects,
-                        i.ready_pct,
-                        i.created_at
-                    FROM inspector_inspections i
-                    JOIN inspector_buildings b ON i.building_id = b.id
-                    ORDER BY i.created_at DESC
-                    LIMIT 20
-                """
+            # ========================================
+            # 1. RAW DATABASE SAMPLE
+            # ========================================
+            st.markdown("### 1️⃣ Raw Database Sample")
             
-            cursor.execute(query)
-            rows = cursor.fetchall()
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    SELECT unit_number, room, item_description, severity, notes
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = %s
+                    LIMIT 5
+                """, (inspection_id,))
+            else:
+                cursor.execute("""
+                    SELECT unit, room, component, urgency, ''
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = ?
+                    LIMIT 5
+                """, (inspection_id,))
+            
+            raw_rows = cursor.fetchall()
+            
+            st.write(f"**Total items retrieved:** {len(raw_rows)}")
+            
+            if len(raw_rows) > 0:
+                for i, row in enumerate(raw_rows[:2]):
+                    with st.expander(f"Sample Row {i+1}", expanded=i==0):
+                        if isinstance(row, dict):
+                            st.code(f"""
+    Unit Number: {row.get('unit_number', 'N/A')}
+    Room: {row.get('room', 'N/A')}
+    Description: {row.get('item_description', 'N/A')}
+    Severity: {row.get('severity', 'N/A')}
+    Notes JSON: {str(row.get('notes', '{}'))[:200]}...
+                            """)
+                        else:
+                            st.code(f"""
+    Unit Number: {row[0]}
+    Room: {row[1]}
+    Description: {row[2]}
+    Severity: {row[3]}
+    Notes JSON: {str(row[4])[:200] if len(row) > 4 else 'N/A'}...
+                            """)
+            else:
+                st.warning("No items found in database!")
+                cursor.close()
+                conn.close()
+                return
+            
+            # ========================================
+            # 2. PARSE JSON SAMPLES
+            # ========================================
+            if self.db_type == "postgresql":
+                st.markdown("### 2️⃣ JSON Parsing Test")
+                
+                import json
+                
+                if len(raw_rows) > 0:
+                    # Get notes from first row
+                    if isinstance(raw_rows[0], dict):
+                        sample_notes = raw_rows[0].get('notes', '{}')
+                    else:
+                        sample_notes = raw_rows[0][4] if len(raw_rows[0]) > 4 else '{}'
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Raw JSON:**")
+                        st.code(sample_notes[:500])
+                    
+                    with col2:
+                        try:
+                            parsed = json.loads(sample_notes) if sample_notes else {}
+                            st.success("✅ JSON is valid")
+                            
+                            st.markdown("**Extracted Values:**")
+                            st.write(f"🔹 component: `{parsed.get('component', 'MISSING')}`")
+                            st.write(f"🔹 trade: `{parsed.get('trade', 'MISSING')}`")
+                            st.write(f"🔹 unit_type: `{parsed.get('unit_type', 'MISSING')}`")
+                            st.write(f"🔹 urgency: `{parsed.get('urgency', 'MISSING')}`")
+                            
+                        except Exception as e:
+                            st.error(f"❌ JSON parsing failed: {e}")
+            
+            # ========================================
+            # 3. EXTRACT ALL UNIQUE VALUES
+            # ========================================
+            if self.db_type == "postgresql":
+                st.markdown("### 3️⃣ Unique Values Stored")
+                
+                cursor.execute("""
+                    SELECT notes FROM inspector_inspection_items
+                    WHERE inspection_id = %s
+                """, (inspection_id,))
+                
+                all_notes = cursor.fetchall()
+                
+                import json
+                unit_types = set()
+                trades = set()
+                urgencies = set()
+                
+                for note_row in all_notes:
+                    try:
+                        # Handle both dict and tuple
+                        notes_str = note_row['notes'] if isinstance(note_row, dict) else note_row[0]
+                        
+                        if notes_str:
+                            data = json.loads(notes_str)
+                            if data.get('unit_type'):
+                                unit_types.add(data['unit_type'])
+                            if data.get('trade'):
+                                trades.add(data['trade'])
+                            if data.get('urgency'):
+                                urgencies.add(data['urgency'])
+                    except Exception as e:
+                        pass
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Unique Unit Types", len(unit_types))
+                    if len(unit_types) > 0:
+                        st.write(sorted(unit_types))
+                    else:
+                        st.error("⚠️ No unit types found!")
+                
+                with col2:
+                    st.metric("Unique Trades", len(trades))
+                    if len(trades) > 0:
+                        if len(trades) <= 5:
+                            st.write(sorted(trades))
+                        else:
+                            st.write(f"Top 5: {sorted(trades)[:5]}")
+                    else:
+                        st.error("⚠️ No trades found!")
+                
+                with col3:
+                    st.metric("Unique Urgencies", len(urgencies))
+                    if len(urgencies) > 0:
+                        st.write(sorted(urgencies))
+                    else:
+                        st.warning("⚠️ No urgencies found!")
+            
+            # ========================================
+            # 4. TEST RECONSTRUCTION
+            # ========================================
+            st.markdown("### 4️⃣ Reconstruction Test")
+            
+            st.info("Testing load_inspection_from_database()...")
+            
+            try:
+                items_df, metrics = self.processor.load_inspection_from_database(inspection_id)
+                
+                st.success("✅ Load successful!")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Rows Loaded", len(items_df))
+                with col2:
+                    st.metric("Unique Units", items_df['Unit'].nunique())
+                with col3:
+                    reconstructed_types = ", ".join(sorted(items_df['UnitType'].unique()))
+                    st.metric("Unit Types", len(items_df['UnitType'].unique()))
+                    st.caption(reconstructed_types)
+                with col4:
+                    st.metric("Total Defects", metrics['total_defects'])
+                
+                # Show sample reconstructed data
+                st.markdown("**Sample Reconstructed Data:**")
+                sample_cols = ['Unit', 'UnitType', 'Room', 'Component', 'Trade', 'Urgency']
+                available_cols = [col for col in sample_cols if col in items_df.columns]
+                st.dataframe(items_df[available_cols].head(10))
+                
+                # Show metrics
+                st.markdown("**Metrics Calculated:**")
+                col_a, col_b, col_c = st.columns(3)
+                
+                with col_a:
+                    st.write(f"**Unit Types String:**")
+                    st.code(metrics['unit_types_str'])
+                with col_b:
+                    st.write(f"**Total Units:**")
+                    st.code(metrics['total_units'])
+                with col_c:
+                    st.write(f"**Total Defects:**")
+                    st.code(metrics['total_defects'])
+                
+                # Show summary tables
+                st.markdown("**Summary Tables:**")
+                
+                tab1, tab2, tab3 = st.tabs(["Trade Summary", "Unit Summary", "Room Summary"])
+                
+                with tab1:
+                    if len(metrics['summary_trade']) > 0:
+                        st.dataframe(metrics['summary_trade'].head(10))
+                    else:
+                        st.error("⚠️ Empty trade summary!")
+                
+                with tab2:
+                    if len(metrics['summary_unit']) > 0:
+                        st.dataframe(metrics['summary_unit'].head(10))
+                    else:
+                        st.error("⚠️ Empty unit summary!")
+                
+                with tab3:
+                    if len(metrics['summary_room']) > 0:
+                        st.dataframe(metrics['summary_room'].head(10))
+                    else:
+                        st.error("⚠️ Empty room summary!")
+                
+            except Exception as e:
+                st.error(f"❌ Reconstruction failed: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+            
             cursor.close()
             conn.close()
             
-            if len(rows) == 0:
-                st.info("No previous inspections found. Upload a CSV to get started!")
-                return
+            st.success("✅ Debug analysis complete!")
             
-            # Convert to list of dicts
-            inspections = []
-            for row in rows:
-                if isinstance(row, dict):
-                    inspections.append(row)
-                else:
-                    inspections.append({
-                        'id': row[0],
-                        'inspection_date': row[1],
-                        'building_name': row[2],
-                        'total_units': row[3],
-                        'total_defects': row[4],
-                        'ready_pct': row[5],
-                        'created_at': row[6]
-                    })
-            
-            st.write(f"Found {len(inspections)} previous inspection(s)")
-            
-            # Check if we just uploaded one
-            just_uploaded_id = st.session_state.get('inspection_id')
-            
-            # Display inspections
-            for inspection in inspections:
-                # Highlight just-uploaded inspection
-                if just_uploaded_id and inspection['id'] == just_uploaded_id:
-                    label = f"🆕 {inspection['building_name']} - {inspection['inspection_date']} (Just Uploaded!)"
-                else:
-                    label = f"🏢 {inspection['building_name']} - {inspection['inspection_date']}"
-                
-                with st.expander(label, expanded=(inspection['id'] == just_uploaded_id)):
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric("Total Units", int(inspection['total_units']))
-                    
-                    with col2:
-                        st.metric("Total Defects", int(inspection['total_defects']))
-                    
-                    with col3:
-                        ready_pct = float(inspection['ready_pct'])
-                        st.metric("Settlement Ready", f"{ready_pct:.1f}%")
-                    
-                    # Show inspection ID
-                    st.caption(f"Inspection ID: {inspection['id'][:16]}...")
-                    st.caption(f"Created: {inspection['created_at']}")
-                    
-                    # Load button
-                    if st.button(
-                        "📂 Load This Inspection",
-                        key=f"load_{inspection['id']}",
-                        type="primary" if inspection['id'] == just_uploaded_id else "secondary"
-                    ):
-                        try:
-                            st.info("Loading inspection data...")
-                            self._load_previous_inspection(inspection['id'])
-                            
-                        except Exception as e:
-                            st.error(f"Error loading inspection: {e}")
-                            logger.error(f"Load error: {e}")
-                            import traceback
-                            logger.error(traceback.format_exc())
-        
         except Exception as e:
-            st.error(f"Error retrieving previous inspections: {e}")
-            logger.error(f"Previous inspections error: {e}")
+            st.error(f"Debug failed: {e}")
             import traceback
-            logger.error(traceback.format_exc())
+            st.code(traceback.format_exc())
     
     def _show_trade_mapping_section(self):
-        """Enhanced trade mapping section - file-based only"""
+        """Enhanced trade mapping section with V3 database integration"""
         
         st.markdown("### Step 1: Trade Mapping ")
         
-        # Initialize trade mapping from FILE only (not database)
+        # Initialize trade mapping with enhanced database loading
         if 'trade_mapping' not in st.session_state:
-            st.session_state.trade_mapping = pd.DataFrame(columns=["Room", "Component", "Trade"])
+            if self.db_manager:
+                try:
+                    db_mapping = self.db_manager.get_trade_mapping()
+                    if len(db_mapping) > 0:
+                        st.session_state.trade_mapping = db_mapping
+                        st.info("Loaded trade mapping from database")
+                    else:
+                        st.session_state.trade_mapping = pd.DataFrame(columns=["Room", "Component", "Trade"])
+                except Exception as e:
+                    st.warning(f"Could not load from database: {e}")
+                    st.session_state.trade_mapping = pd.DataFrame(columns=["Room", "Component", "Trade"])
+            else:
+                st.session_state.trade_mapping = pd.DataFrame(columns=["Room", "Component", "Trade"])
         
         # Enhanced status indicator
         if len(st.session_state.trade_mapping) > 0:
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.success(f"✅ Trade mapping loaded: {len(st.session_state.trade_mapping)} entries covering {st.session_state.trade_mapping['Trade'].nunique()} trades")
+                st.success(f"Trade mapping loaded: {len(st.session_state.trade_mapping)} entries covering {st.session_state.trade_mapping['Trade'].nunique()} trades")
             with col2:
-                st.info("📁 File-based")
+                if self.db_manager:
+                    st.info("Auto-sync to DB")
                 
             # Show enhanced mapping statistics
             col_a, col_b, col_c = st.columns(3)
@@ -469,8 +681,7 @@ class InspectorInterface:
             with col_c:
                 st.metric("Coverage Score", f"{min(100, len(st.session_state.trade_mapping) * 2)}/100")
         else:
-            st.warning("⚠️ No trade mapping loaded - Required for processing")
-            st.info("Click 'Use Master Mapping' below to load the default mapping")
+            st.warning("No trade mapping loaded - Required for processing")
         
         # Enhanced main options tabs
         tab1, tab2, tab3 = st.tabs(["Load Mapping", "Manage Mapping", "Analytics"])
@@ -496,7 +707,7 @@ class InspectorInterface:
         
         # Validation check
         if len(st.session_state.trade_mapping) == 0:
-            st.error("⚠️ Trade mapping is required before processing inspection data. Please load or upload a mapping above.")
+            st.error("Trade mapping is required before processing inspection data. Please load or upload a mapping above.")
             return False
         
         return True
@@ -535,160 +746,45 @@ class InspectorInterface:
                 st.error(f"Error loading analytics: {e}")
     
     def _load_previous_inspection(self, inspection_id: str):
-        """Load inspection using ACTUAL PostgreSQL schema"""
+        """Load a previous inspection from database"""
         try:
-            with st.spinner("Loading inspection..."):
+            with st.spinner("Loading previous inspection from database..."):
+                # Load inspection data using the processor method
+                processed_data, metrics = self.processor.load_inspection_from_database(inspection_id)
                 
-                if not self.conn_manager:
-                    st.error("Database not available")
-                    return
-                
-                conn = self._get_connection()
-                cursor = conn.cursor()
-                
-                # Get inspection metadata
-                if self.db_type == "postgresql":
-                    cursor.execute("""
-                        SELECT i.id, i.building_id, i.inspection_date, 
-                            i.inspector_name, i.total_units, i.total_defects,
-                            i.ready_pct, i.original_filename,
-                            b.name as building_name, b.address
-                        FROM inspector_inspections i
-                        JOIN inspector_buildings b ON i.building_id = b.id
-                        WHERE i.id = %s
-                    """, (inspection_id,))
-                else:
-                    cursor.execute("""
-                        SELECT i.id, i.building_id, i.inspection_date, 
-                            i.inspector_name, i.total_units, i.total_defects,
-                            i.ready_pct, i.original_filename,
-                            b.name as building_name, b.address
-                        FROM inspector_inspections i
-                        JOIN inspector_buildings b ON i.building_id = b.id
-                        WHERE i.id = ?
-                    """, (inspection_id,))
-                
-                result = cursor.fetchone()
-                
-                if not result:
-                    cursor.close()
-                    conn.close()
-                    st.error(f"Inspection not found")
-                    return
-                
-                # Convert to dict
-                if isinstance(result, dict):
-                    inspection = result
-                else:
-                    inspection = {
-                        'id': result[0],
-                        'building_id': result[1],
-                        'inspection_date': result[2],
-                        'inspector_name': result[3],
-                        'total_units': result[4],
-                        'total_defects': result[5],
-                        'ready_pct': result[6],
-                        'original_filename': result[7],
-                        'building_name': result[8],
-                        'address': result[9]
-                    }
-                
-                # Get inspection items with CORRECT PostgreSQL columns
-                if self.db_type == "postgresql":
-                    # Columns: unit_number, floor, zone, room, item_description, 
-                    #          defect_type, severity, status, notes
-                    cursor.execute("""
-                        SELECT 
-                            unit_number,
-                            room,
-                            item_description,
-                            severity,
-                            status,
-                            defect_type
-                        FROM inspector_inspection_items
-                        WHERE inspection_id = %s
-                        ORDER BY unit_number, room
-                    """, (inspection_id,))
-                else:
-                    cursor.execute("""
-                        SELECT 
-                            unit, room, component, trade, status_class, urgency
-                        FROM inspector_inspection_items
-                        WHERE inspection_id = ?
-                        ORDER BY unit, room
-                    """, (inspection_id,))
-                
-                rows = cursor.fetchall()
-                cursor.close()
-                conn.close()
-                
-                if len(rows) == 0:
-                    st.warning("No items found")
-                    return
-                
-                # Convert to DataFrame
-                if self.db_type == "postgresql":
-                    items = []
-                    for row in rows:
-                        if isinstance(row, dict):
-                            items.append({
-                                'Unit': row['unit_number'],
-                                'Room': row['room'],
-                                'Description': row['item_description'],
-                                'Severity': row['severity'],
-                                'Status': row['status'],
-                                'Type': row.get('defect_type', '')
-                            })
-                        else:
-                            items.append({
-                                'Unit': row[0],
-                                'Room': row[1],
-                                'Description': row[2],
-                                'Severity': row[3],
-                                'Status': row[4],
-                                'Type': row[5] if len(row) > 5 else ''
-                            })
-                    
-                    items_df = pd.DataFrame(items)
-                else:
-                    items_df = pd.DataFrame(rows, columns=[
-                        'Unit', 'Room', 'Component', 'Trade', 'Status', 'Urgency'
-                    ])
-                
-                # Calculate metrics
-                metrics = {
-                    'building_name': inspection['building_name'],
-                    'address': inspection.get('address', 'N/A'),
-                    'inspection_date': str(inspection['inspection_date']),
-                    'total_units': int(inspection['total_units']),
-                    'total_defects': int(inspection['total_defects']),
-                    'ready_pct': float(inspection['ready_pct']),
-                    'inspection_id': inspection_id
-                }
-                
-                # Update state
-                self.processed_data = items_df
+                # Update current state
+                self.processed_data = processed_data
                 self.metrics = metrics
                 self.current_inspection_id = inspection_id
                 
-                st.session_state['processed_data'] = items_df
-                st.session_state['metrics'] = metrics
-                st.session_state['inspection_id'] = inspection_id
+                # Also load trade mapping from database
+                if self.db_manager:
+                    try:
+                        trade_mapping = self.db_manager.get_trade_mapping()
+                        if len(trade_mapping) > 0:
+                            st.session_state.trade_mapping = trade_mapping
+                    except Exception as e:
+                        logger.warning(f"Could not load trade mapping: {e}")
                 
-                st.success(f"✅ Loaded: {metrics['building_name']}")
-                st.info(f"📊 Units: {metrics['total_units']}, Defects: {metrics['total_defects']}, Ready: {metrics['ready_pct']:.1f}%")
+                # Display success message with cleaned data
+                st.success(f"Loaded inspection: {metrics['building_name']}")
+                st.info(f"Units: {metrics['total_units']}, Defects: {metrics['total_defects']}, Ready: {metrics['ready_pct']:.1f}%")
                 
-                # Show sample data
-                with st.expander("View Data Preview"):
-                    st.dataframe(items_df.head(20), use_container_width=True)
+                # Show work orders status
+                try:
+                    if self.db_manager:
+                        work_orders = self.db_manager.get_work_orders_for_builder()
+                        if len(work_orders) > 0:
+                            pending_orders = len(work_orders[work_orders['status'] == 'pending'])
+                            st.info(f"Associated work orders: {len(work_orders)} total, {pending_orders} pending")
+                except Exception as e:
+                    logger.warning(f"Could not load work orders: {e}")
                 
                 st.rerun()
                 
         except Exception as e:
-            st.error(f"Load error: {e}")
-            logger.error(f"Load error: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            st.error(f"Error loading inspection: {e}")
+            logger.error(f"Load inspection error: {e}")
     
     def _show_enhanced_mapping_load_options(self):
         """Simplified trade mapping with role-based permissions"""
@@ -1427,55 +1523,63 @@ class InspectorInterface:
                 else:
                     st.caption("Source: Unknown")
     
-    def _check_hash_in_database(self, file_hash: str, filename: str) -> Optional[Dict]:
-        """Check if file hash exists in database"""
+    def _check_hash_in_database(self, file_hash: str, filename: str):
+        """Check for duplicate - PostgreSQL/SQLite compatible"""
         
-        print(f">>> Checking hash: {file_hash}")
-        
-        if not self.processor.db_manager:
-            print(">>> ERROR: No database manager")
+        if not self.conn_manager:
             return None
         
         try:
-            conn = self.processor.db_manager.connect()
+            conn = self.conn_manager.get_connection()
             cursor = conn.cursor()
             
-            # First, let's see ALL hashes in the database
-            cursor.execute("SELECT file_checksum, building_name, created_at FROM inspector_csv_processing_log")
-            all_records = cursor.fetchall()
-            print(f">>> Total records in log: {len(all_records)}")
-            for record in all_records:
-                print(f"    Hash in DB: {record[0]} | Building: {record[1]}")
-            
-            # Now check for our specific hash
-            cursor.execute("""
-                SELECT inspection_id, building_name, created_at, original_filename
-                FROM inspector_csv_processing_log
-                WHERE file_checksum = ?
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (file_hash,))
+            # ✅ Use correct query for database type
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT inspection_id, building_name, created_at, original_filename
+                    FROM inspector_csv_processing_log
+                    WHERE file_checksum = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """
+                cursor.execute(query, (file_hash,))
+            else:
+                query = """
+                    SELECT inspection_id, building_name, created_at, original_filename
+                    FROM inspector_csv_processing_log
+                    WHERE file_checksum = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """
+                cursor.execute(query, (file_hash,))
             
             result = cursor.fetchone()
-            print(f">>> Query result: {result}")
             
             if result:
-                print(">>> DUPLICATE FOUND!")
-                return {
-                    'is_duplicate': True,
-                    'inspection_id': result[0],
-                    'building_name': result[1],
-                    'processed_date': result[2],
-                    'original_filename': result[3]
-                }
+                # Handle both dict and tuple results
+                if isinstance(result, dict):
+                    return {
+                        'is_duplicate': True,
+                        'inspection_id': result['inspection_id'],
+                        'building_name': result['building_name'],
+                        'processed_date': result['created_at'],
+                        'original_filename': result['original_filename']
+                    }
+                else:
+                    return {
+                        'is_duplicate': True,
+                        'inspection_id': result[0],
+                        'building_name': result[1],
+                        'processed_date': result[2],
+                        'original_filename': result[3]
+                    }
             
-            print(">>> No duplicate found")
+            cursor.close()
+            conn.close()
             return None
             
         except Exception as e:
-            print(f">>> ERROR checking duplicate: {e}")
-            import traceback
-            print(traceback.format_exc())
+            logger.error(f"Duplicate check error: {e}")
             return None
         
     def _process_with_hash(self, uploaded_csv, file_hash):
@@ -1535,19 +1639,29 @@ class InspectorInterface:
         st.markdown("---")
         st.markdown("### Step 2: Upload and Process Inspection Data")
         
-        # Check if we're currently viewing a loaded inspection
+        # Check if viewing a loaded inspection
         if st.session_state.get('viewing_loaded_inspection'):
             st.info(f"📂 Viewing loaded inspection: {st.session_state.get('loaded_inspection_id', 'Unknown')[:12]}...")
             if st.button("🔄 Upload New File"):
                 st.session_state.pop('viewing_loaded_inspection', None)
                 st.session_state.pop('loaded_inspection_id', None)
                 st.rerun()
-            return  # Skip the file uploader
-        
-        if 'trade_mapping' not in st.session_state or len(st.session_state.trade_mapping) == 0:
-            st.warning("Please load your trade mapping first")
             return
         
+        # Check trade mapping
+        if 'trade_mapping' not in st.session_state or len(st.session_state.trade_mapping) == 0:
+            st.warning("⚠️ Please load your trade mapping first (Step 1 above)")
+            return
+        
+        # ✅ Show database status (informative only)
+        has_database = bool(self.conn_manager or self.processor.db_manager)
+        if has_database:
+            db_type = self.conn_manager.db_type.upper() if self.conn_manager else "SQLITE"
+            st.success(f"💾 Database active ({db_type}) - Data will be saved persistently")
+        else:
+            st.info("💡 No database - Data will be temporary (this session only)")
+        
+        # Rest of your existing file upload code continues here...
         uploaded_csv = st.file_uploader(
             "Choose inspection CSV file",
             type=["csv"],
@@ -1628,163 +1742,147 @@ class InspectorInterface:
                 with st.expander("📋 Data Preview"):
                     st.dataframe(preview_df.head(10), use_container_width=True)
                 
-                st.markdown("---")
-                
-                # Process button (no manual input needed - CSV has everything)
-                if st.button("🔄 Process Inspection Data", type="primary", use_container_width=True):
-
-                    # Create progress tracker
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    try:
-                        status_text.text("⏳ Step 1/5: Reading CSV file...")
-                        progress_bar.progress(0.1)
-                        
-                        # Read CSV
-                        uploaded_csv.seek(0)
-                        df = pd.read_csv(uploaded_csv)
-                        st.success(f"✅ CSV loaded: {len(df)} rows")
-                        
-                        status_text.text("⏳ Step 2/5: Extracting building info from CSV...")
-                        progress_bar.progress(0.2)
-                        
-                        # Extract building info from CSV (will be done in process_inspection_data)
-                        # Just show a preview of what we found
-                        sample_audit = df.loc[0, "auditName"] if "auditName" in df.columns else ""
-                        if sample_audit:
-                            parts = str(sample_audit).split("/")
-                            if len(parts) >= 3:
-                                building_name_preview = parts[2].strip()
-                                st.info(f"📍 Building detected: {building_name_preview}")
-                        
-                        status_text.text("⏳ Step 3/5: Loading trade mappings...")
-                        progress_bar.progress(0.3)
-                        
-                        # Use session state mapping
-                        mapping_df = st.session_state.trade_mapping
-                        
-                        status_text.text("⏳ Step 4/5: Processing inspection data...")
-                        progress_bar.progress(0.4)
-                        
-                        # Calculate file hash
-                        uploaded_csv.seek(0)
-                        file_bytes = uploaded_csv.read()
-                        file_hash = hashlib.md5(file_bytes).hexdigest()
-                        uploaded_csv.seek(0)
-                        
-                        # Get inspector name from user info
-                        user_info = st.session_state.get('user_info', {})
-                        inspector_name = user_info.get('name', 'Inspector')
-                        
-                        # Building info will be extracted from CSV by the processor
-                        # We just provide defaults that will be overwritten
-                        building_info = {
-                            "name": "Building Name (will be extracted from CSV)",
-                            "address": "Address (will be extracted from CSV)",
-                            "date": datetime.now().strftime("%Y-%m-%d")
-                        }
-                        
-                        # Process data - building info will be extracted automatically
-                        processed_df, metrics, inspection_id = self.processor.process_inspection_data(
-                            df=df,
-                            mapping=mapping_df,
-                            building_info=building_info,  # Placeholders - will be overwritten
-                            inspector_name=inspector_name,
-                            original_filename=uploaded_csv.name,
-                            file_hash=file_hash
-                        )
-                        
-                        progress_bar.progress(0.8)
-                        
-                        if processed_df is None or metrics is None:
-                            st.error("❌ Processing failed - check logs for details")
-                            status_text.text("❌ Failed")
-                            st.stop()
-                        
-                        status_text.text("⏳ Step 5/5: Finalizing...")
-                        progress_bar.progress(0.9)
-                        
-                        # Store in session state
-                        st.session_state['processed_data'] = processed_df
-                        st.session_state['metrics'] = metrics
-                        st.session_state['inspection_id'] = inspection_id
-                        st.session_state['last_processed_hash'] = file_hash
-                        
-                        # Update instance variables
-                        self.processed_data = processed_df
-                        self.metrics = metrics
-                        self.current_inspection_id = inspection_id
-                        
-                        progress_bar.progress(1.0)
-                        status_text.text("✅ Complete!")
-                        
-                        # Success message with EXTRACTED info
-                        work_orders = metrics.get('work_orders_created', 0)
-                        
-                        # Build success message
-                        success_msg = f"""
-                        ✅ **Processing Complete!**
-                        
-                        - **Building:** {metrics['building_name']} *(extracted from CSV)*
-                        - **Address:** {metrics.get('address', 'N/A')} *(extracted from CSV)*
-                        - **Inspection Date:** {metrics.get('inspection_date', 'N/A')} *(extracted from CSV)*
-                        """
-                        
-                        # Add inspection ID if available
-                        if inspection_id:
-                            success_msg += f"\n- **Inspection ID:** `{inspection_id[:16]}...`"
-                        else:
-                            success_msg += f"\n- **Inspection ID:** Not saved (database issue)"
-                        
-                        success_msg += f"""
-                        - **Total Units:** {metrics['total_units']}
-                        - **Total Defects:** {metrics['total_defects']}
-                        - **Settlement Ready:** {metrics['ready_pct']:.1f}%
-                        - **Work Orders Created:** {work_orders}
-                        """
-                        
-                        st.success(success_msg)
-                        
-                        # Show database warning if not saved
-                        if not inspection_id:
-                            st.warning("""
-                            ⚠️ **Data Not Saved to Database**
-                            
-                            The inspection was processed successfully, but could not be saved to the database.
-                            - You can still generate reports from the current session
-                            - Data will be lost when you refresh the page
-                            - Check the logs for database connection errors
-                            """)
-                        
-                        st.info("ℹ️ All building information was automatically extracted from your CSV file")
-                        
-                        # Clear progress indicators after 2 seconds
-                        import time
-                        time.sleep(2)
-                        progress_bar.empty()
-                        status_text.empty()
-                        
-                        # Force rerun to show results
-                        st.rerun()
-                        
-                    except Exception as e:
-                        progress_bar.empty()
-                        status_text.empty()
-                        st.error(f"❌ Error: {str(e)}")
-                        logger.error(f"Processing error: {e}")
-                        import traceback
-                        logger.error(traceback.format_exc())
-                        
-                        # Show detailed error in expander
-                        with st.expander("🔍 Error Details"):
-                            st.code(traceback.format_exc())
+                # Process button
+                if st.button("🚀 Process Inspection Data", type="primary", use_container_width=True):
+                    st.session_state.pop(allow_key, None)
+                    st.session_state['last_processed_hash'] = file_hash  # Mark as just processed
+                    self._process_inspection_data_simplified(uploaded_csv)
                     
             except Exception as e:
                 st.error(f"Error: {e}")
-                logger.error(f"File upload error: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                
+                # ADD THIS AFTER SUCCESSFUL PROCESSING (when self.processed_data is not None)
+                if st.button("🧪 Test Data Flow", key="test_data_flow"):
+                    st.markdown("### 🧪 Data Flow Test")
+                    
+                    # TEST 1: Check processed DataFrame
+                    st.markdown("#### 1️⃣ Processed DataFrame")
+                    if self.processed_data is not None:
+                        defects = self.processed_data[self.processed_data['StatusClass'] == 'Not OK']
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Rows", len(self.processed_data))
+                        with col2:
+                            st.metric("Defects (Not OK)", len(defects))
+                        with col3:
+                            unique_types = defects['UnitType'].unique()
+                            st.metric("Unique Unit Types", len(unique_types))
+                            st.caption(", ".join(sorted(unique_types)))
+                        
+                        st.markdown("**Sample Defects:**")
+                        st.dataframe(defects[['Unit', 'UnitType', 'Room', 'Component', 'Trade', 'Urgency']].head(5))
+                    else:
+                        st.error("No processed data!")
+                    
+                    # TEST 2: Check what would be saved
+                    st.markdown("#### 2️⃣ Data Prepared for Save")
+                    if self.processed_data is not None:
+                        defects_df = self.processed_data[self.processed_data['StatusClass'] == 'Not OK'].copy()
+                        
+                        # Simulate preparing inspection_items
+                        inspection_items = []
+                        for idx, row in defects_df.iterrows():
+                            item_data = {
+                                'unit': str(row['Unit']),
+                                'unit_type': str(row['UnitType']),
+                                'room': str(row['Room']),
+                                'component': str(row['Component']),
+                                'trade': str(row['Trade']),
+                                'status': str(row['StatusClass']),
+                                'urgency': str(row['Urgency'])
+                            }
+                            inspection_items.append(item_data)
+                            
+                            if idx >= 2:  # Only process 3 samples
+                                break
+                        
+                        st.write(f"**Total items to save:** {len(defects_df)}")
+                        st.write(f"**Sample prepared items:**")
+                        
+                        for i, item in enumerate(inspection_items):
+                            with st.expander(f"Item {i+1}", expanded=i==0):
+                                st.json(item)
+                        
+                        # Check unique unit types in prepared data
+                        unique_types_in_prepared = set(item['unit_type'] for item in inspection_items)
+                        st.success(f"✅ Unit types in prepared data: {sorted(unique_types_in_prepared)}")
+                    
+                    # TEST 3: Check database (if inspection was saved)
+                    if hasattr(self, 'current_inspection_id') and self.current_inspection_id:
+                        st.markdown("#### 3️⃣ Data in Database")
+                        
+                        try:
+                            conn = self._get_connection()
+                            cursor = conn.cursor()
+                            
+                            # Get sample from database
+                            cursor.execute("""
+                                SELECT unit_number, room, item_description, notes
+                                FROM inspector_inspection_items
+                                WHERE inspection_id = %s
+                                LIMIT 3
+                            """, (self.current_inspection_id,))
+                            
+                            db_rows = cursor.fetchall()
+                            
+                            st.write(f"**Sample database rows:**")
+                            
+                            import json
+                            for i, row in enumerate(db_rows):
+                                with st.expander(f"DB Row {i+1}", expanded=i==0):
+                                    unit_num = row[0]
+                                    room = row[1]
+                                    desc = row[2]
+                                    notes_json = row[3]
+                                    
+                                    st.write(f"**Unit:** {unit_num}")
+                                    st.write(f"**Room:** {room}")
+                                    st.write(f"**Description:** {desc}")
+                                    st.write(f"**Notes JSON:**")
+                                    
+                                    try:
+                                        notes = json.loads(notes_json) if notes_json else {}
+                                        st.json(notes)
+                                        
+                                        if notes.get('unit_type'):
+                                            st.success(f"✅ unit_type found: {notes['unit_type']}")
+                                        else:
+                                            st.error("❌ unit_type MISSING in JSON!")
+                                    except Exception as e:
+                                        st.error(f"❌ JSON parse error: {e}")
+                                        st.code(notes_json)
+                            
+                            # Check unique unit types in database
+                            cursor.execute("""
+                                SELECT notes FROM inspector_inspection_items
+                                WHERE inspection_id = %s
+                            """, (self.current_inspection_id,))
+                            
+                            all_notes = cursor.fetchall()
+                            unit_types_in_db = set()
+                            
+                            for note_row in all_notes:
+                                try:
+                                    if note_row[0]:
+                                        data = json.loads(note_row[0])
+                                        if data.get('unit_type'):
+                                            unit_types_in_db.add(data['unit_type'])
+                                except:
+                                    pass
+                            
+                            if len(unit_types_in_db) > 0:
+                                st.success(f"✅ Unit types in database: {sorted(unit_types_in_db)}")
+                            else:
+                                st.error("❌ NO unit types found in database JSON!")
+                            
+                            cursor.close()
+                            conn.close()
+                            
+                        except Exception as e:
+                            st.error(f"Database check failed: {e}")
+                    else:
+                        st.warning("No inspection ID - data not saved yet")
 
     def _process_inspection_data_simplified(self, uploaded_csv):
         """Simplified processing without unnecessary user input"""

@@ -1,186 +1,485 @@
 """
-File Storage System for Work Orders
-===================================
+File Storage Manager for Building Inspection System
+===================================================
+PostgreSQL & SQLite compatible file storage with database tracking
+Matches YOUR actual database structure (6 columns)
 
-Handles file uploads, storage, and retrieval for builder work orders.
+USAGE:
+------
+from core.file_storage import FileStorageManager
+
+# Initialize
+file_mgr = FileStorageManager(conn_manager)
+
+# Save files
+saved = file_mgr.save_files(
+    work_order_id="abc-123",
+    uploaded_files=streamlit_files,
+    uploaded_by="John Builder",
+    category="progress"
+)
+
+# Get files
+files = file_mgr.get_files("abc-123")
+
+# Get count
+count = file_mgr.get_file_count("abc-123")
 """
 
 import os
-import shutil
 import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class WorkOrderFileManager:
-    """Manages file uploads and storage for work orders"""
+class FileStorageManager:
+    """
+    Manages file storage for work orders with database integration.
     
-    def __init__(self, base_upload_path: str = "uploads/work_orders"):
-        self.base_upload_path = Path(base_upload_path)
-        self.base_upload_path.mkdir(parents=True, exist_ok=True)
+    Features:
+    - Stores files on disk (not in database)
+    - Tracks metadata in database
+    - Works with both PostgreSQL and SQLite
+    - Simple 6-column structure
+    - Organized folder structure
+    """
     
-    def save_files(self, work_order_id: str, uploaded_files: list, 
-                   db_manager) -> Tuple[bool, List[str]]:
+    def __init__(self, conn_manager, base_path: str = "uploads"):
+        """
+        Initialize file storage manager.
+        
+        Args:
+            conn_manager: Database connection manager
+            base_path: Base directory for file uploads (default: "uploads")
+        """
+        self.conn_manager = conn_manager
+        self.db_type = conn_manager.db_type
+        self.base_path = Path(base_path)
+        
+        # Create directory structure
+        self.work_orders_path = self.base_path / "work_orders"
+        self.work_orders_path.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"✅ File storage initialized: {self.work_orders_path} ({self.db_type.upper()})")
+        
+        # Ensure database table exists
+        self._ensure_file_table_exists()
+    
+    def _ensure_file_table_exists(self):
+        """Create work_order_files table if it doesn't exist - same for both DBs"""
+        try:
+            conn = self.conn_manager.get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                # PostgreSQL version
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS work_order_files (
+                        id TEXT PRIMARY KEY,
+                        work_order_id TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        file_type TEXT,
+                        uploaded_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_work_order_files_wo_id 
+                    ON work_order_files(work_order_id);
+                """)
+                
+            else:  # SQLite
+                # SQLite version (matches your current structure)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS work_order_files (
+                        id TEXT PRIMARY KEY,
+                        work_order_id TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        file_type TEXT,
+                        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_work_order_files_wo_id 
+                    ON work_order_files(work_order_id);
+                """)
+            
+            conn.commit()
+            cursor.close()
+            logger.info(f"✅ File table ready ({self.db_type})")
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating file table: {e}")
+    
+    def save_files(self, work_order_id: str, uploaded_files: List, 
+                   uploaded_by: str = "Builder", 
+                   category: str = "progress") -> List[Dict]:
         """
         Save uploaded files to disk and database.
         
         Args:
             work_order_id: ID of the work order
-            uploaded_files: List of Streamlit UploadedFile objects
-            db_manager: Database manager instance
-            
+            uploaded_files: List of Streamlit uploaded file objects
+            uploaded_by: Name of user uploading
+            category: Category (progress, before, after, completion)
+        
         Returns:
-            Tuple of (success: bool, saved_file_names: List[str])
+            List of saved file info dictionaries with keys:
+            - id: File ID
+            - filename: Stored filename
+            - original_filename: Original filename
+            - path: Full path on disk
+            - type: MIME type
+            - size: Size in bytes
         """
         if not uploaded_files:
-            return True, []
+            return []
+        
+        # Create work order directory
+        wo_dir = self.work_orders_path / str(work_order_id)
+        wo_dir.mkdir(parents=True, exist_ok=True)
         
         saved_files = []
-        work_order_dir = self.base_upload_path / work_order_id
-        work_order_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            conn = db_manager.connect()
+            conn = self.conn_manager.get_connection()
             cursor = conn.cursor()
             
-            for file in uploaded_files:
-                # Generate unique filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                file_extension = Path(file.name).suffix
-                unique_name = f"{timestamp}_{uuid.uuid4().hex[:8]}{file_extension}"
-                
-                # Save file to disk
-                file_path = work_order_dir / unique_name
-                with open(file_path, "wb") as f:
-                    f.write(file.getbuffer())
-                
-                # Get file info
-                file_size = file.size
-                file_type = file.type or 'application/octet-stream'
-                
-                # Save to database
-                file_id = str(uuid.uuid4())
-                cursor.execute("""
-                    INSERT INTO work_order_files (
-                        id, work_order_id, original_filename, stored_filename,
-                        file_path, file_size, file_type, uploaded_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    file_id, work_order_id, file.name, unique_name,
-                    str(file_path), file_size, file_type, datetime.now()
-                ))
-                
-                saved_files.append(file.name)
-                logger.info(f"Saved file: {file.name} -> {unique_name}")
+            for uploaded_file in uploaded_files:
+                try:
+                    # Read file content
+                    file_content = uploaded_file.read()
+                    uploaded_file.seek(0)  # Reset for potential re-read
+                    
+                    # Generate unique filename
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    file_ext = Path(uploaded_file.name).suffix
+                    unique_id = uuid.uuid4().hex[:6]
+                    
+                    # Format: category_timestamp_uniqueid.ext
+                    new_filename = f"{category}_{timestamp}_{unique_id}{file_ext}"
+                    file_path = wo_dir / new_filename
+                    
+                    # Save to disk
+                    with open(file_path, "wb") as f:
+                        f.write(file_content)
+                    
+                    # Save metadata to database
+                    file_id = str(uuid.uuid4())
+                    
+                    if self.db_type == "postgresql":
+                        cursor.execute("""
+                            INSERT INTO work_order_files 
+                            (id, work_order_id, original_filename, file_path, file_type, uploaded_at)
+                            VALUES (%s, %s, %s, %s, %s, NOW())
+                        """, (
+                            file_id, work_order_id, uploaded_file.name,
+                            str(file_path), uploaded_file.type
+                        ))
+                    else:  # SQLite
+                        cursor.execute("""
+                            INSERT INTO work_order_files 
+                            (id, work_order_id, original_filename, file_path, file_type, uploaded_at)
+                            VALUES (?, ?, ?, ?, ?, datetime('now'))
+                        """, (
+                            file_id, work_order_id, uploaded_file.name,
+                            str(file_path), uploaded_file.type
+                        ))
+                    
+                    saved_files.append({
+                        'id': file_id,
+                        'filename': new_filename,
+                        'original_filename': uploaded_file.name,
+                        'path': str(file_path),
+                        'type': uploaded_file.type,
+                        'size': len(file_content)
+                    })
+                    
+                    logger.info(f"✅ Saved: {uploaded_file.name} → {new_filename}")
+                    
+                except Exception as file_error:
+                    logger.error(f"❌ Error saving file {uploaded_file.name}: {file_error}")
+                    continue
             
             conn.commit()
-            return True, saved_files
+            cursor.close()
+            
+            logger.info(f"Saved {len(saved_files)} file(s) for work order {work_order_id}")
+            return saved_files
             
         except Exception as e:
-            logger.error(f"Error saving files: {e}")
-            # Clean up any partially saved files
-            if work_order_dir.exists():
-                shutil.rmtree(work_order_dir, ignore_errors=True)
-            return False, []
+            logger.error(f"❌ Error in save_files: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return saved_files  # Return what we managed to save
     
-    def get_files(self, work_order_id: str, db_manager) -> List[dict]:
+    def get_files(self, work_order_id: str, 
+                  category: Optional[str] = None) -> List[Dict]:
         """
         Get all files for a work order.
         
+        Args:
+            work_order_id: Work order ID
+            category: Optional category filter (not used, for compatibility)
+        
         Returns:
-            List of dicts with file info: {id, original_filename, file_path, file_type, uploaded_at}
+            List of file metadata dictionaries with keys:
+            - id, original_filename, file_path, file_type, uploaded_at
         """
         try:
-            conn = db_manager.connect()
+            conn = self.conn_manager.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                SELECT id, original_filename, file_path, file_type, file_size, uploaded_at
-                FROM work_order_files
-                WHERE work_order_id = ?
-                ORDER BY uploaded_at DESC
-            """, (work_order_id,))
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT id, work_order_id, original_filename, file_path, 
+                           file_type, uploaded_at
+                    FROM work_order_files
+                    WHERE work_order_id = %s
+                    ORDER BY uploaded_at DESC
+                """
+                cursor.execute(query, (work_order_id,))
+            else:  # SQLite
+                query = """
+                    SELECT id, work_order_id, original_filename, file_path, 
+                           file_type, uploaded_at
+                    FROM work_order_files
+                    WHERE work_order_id = ?
+                    ORDER BY uploaded_at DESC
+                """
+                cursor.execute(query, (work_order_id,))
             
             rows = cursor.fetchall()
+            cursor.close()
             
             files = []
             for row in rows:
-                files.append({
-                    'id': row[0],
-                    'original_filename': row[1],
-                    'file_path': row[2],
-                    'file_type': row[3],
-                    'file_size': row[4],
-                    'uploaded_at': row[5]
-                })
+                if isinstance(row, dict):
+                    # PostgreSQL with RealDictCursor
+                    files.append({
+                        'id': row['id'],
+                        'work_order_id': row['work_order_id'],
+                        'original_filename': row['original_filename'],
+                        'file_path': row['file_path'],
+                        'file_type': row['file_type'],
+                        'uploaded_at': row.get('uploaded_at'),
+                        'created_at': row.get('uploaded_at'),  # Alias
+                    })
+                else:
+                    # SQLite or standard cursor
+                    files.append({
+                        'id': row[0],
+                        'work_order_id': row[1],
+                        'original_filename': row[2],
+                        'file_path': row[3],
+                        'file_type': row[4],
+                        'uploaded_at': row[5] if len(row) > 5 else None,
+                        'created_at': row[5] if len(row) > 5 else None,
+                    })
             
+            logger.info(f"Retrieved {len(files)} files for work order {work_order_id}")
             return files
             
         except Exception as e:
             logger.error(f"Error getting files: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
     
-    def file_exists(self, file_path: str) -> bool:
-        """Check if file exists on disk"""
-        return Path(file_path).exists()
-    
-    def get_file_bytes(self, file_path: str) -> Optional[bytes]:
-        """Read file bytes for download or preview"""
+    def get_file_count(self, work_order_id: str) -> int:
+        """Get count of files for a work order"""
         try:
-            with open(file_path, 'rb') as f:
-                return f.read()
+            conn = self.conn_manager.get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    SELECT COUNT(*) FROM work_order_files WHERE work_order_id = %s
+                """, (work_order_id,))
+            else:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM work_order_files WHERE work_order_id = ?
+                """, (work_order_id,))
+            
+            result = cursor.fetchone()
+            count = result[0] if result else 0
+            
+            cursor.close()
+            return count
+            
         except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
-            return None
-
-
-def create_file_storage_table(db_manager):
-    """Create the work_order_files table if it doesn't exist"""
+            logger.error(f"Error getting file count: {e}")
+            return 0
     
-    try:
-        conn = db_manager.connect()
-        cursor = conn.cursor()
+    def delete_file(self, file_id: str) -> bool:
+        """
+        Delete a file from both disk and database.
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS work_order_files (
-                id TEXT PRIMARY KEY,
-                work_order_id TEXT NOT NULL,
-                original_filename TEXT NOT NULL,
-                stored_filename TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                file_size INTEGER,
-                file_type TEXT,
-                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (work_order_id) REFERENCES inspector_work_orders (id)
-            )
-        """)
+        Args:
+            file_id: File ID
         
-        # Create index for faster queries
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_work_order_files_order_id 
-            ON work_order_files(work_order_id)
-        """)
+        Returns:
+            True if successful
+        """
+        try:
+            conn = self.conn_manager.get_connection()
+            cursor = conn.cursor()
+            
+            # Get file path first
+            if self.db_type == "postgresql":
+                cursor.execute("SELECT file_path FROM work_order_files WHERE id = %s", (file_id,))
+            else:
+                cursor.execute("SELECT file_path FROM work_order_files WHERE id = ?", (file_id,))
+            
+            result = cursor.fetchone()
+            if not result:
+                return False
+            
+            file_path = Path(result[0] if isinstance(result, tuple) else result['file_path'])
+            
+            # Delete from disk
+            if file_path.exists():
+                file_path.unlink()
+                logger.info(f"🗑️ Deleted file from disk: {file_path}")
+            
+            # Delete from database
+            if self.db_type == "postgresql":
+                cursor.execute("DELETE FROM work_order_files WHERE id = %s", (file_id,))
+            else:
+                cursor.execute("DELETE FROM work_order_files WHERE id = ?", (file_id,))
+            
+            conn.commit()
+            cursor.close()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting file: {e}")
+            return False
+    
+    def cleanup_orphaned_files(self) -> Tuple[int, int]:
+        """
+        Clean up files that exist on disk but not in database, and vice versa.
         
-        conn.commit()
-        logger.info("Work order files table created successfully")
-        return True
+        Returns:
+            Tuple of (disk_cleaned, db_cleaned) counts
+        """
+        disk_cleaned = 0
+        db_cleaned = 0
         
-    except Exception as e:
-        logger.error(f"Error creating files table: {e}")
-        return False
+        try:
+            conn = self.conn_manager.get_connection()
+            cursor = conn.cursor()
+            
+            # Get all file paths from database
+            cursor.execute("SELECT id, file_path FROM work_order_files")
+            rows = cursor.fetchall()
+            
+            db_files = {}
+            for row in rows:
+                if isinstance(row, dict):
+                    db_files[row['id']] = row['file_path']
+                else:
+                    db_files[row[0]] = row[1]
+            
+            # Check database entries
+            for file_id, file_path in db_files.items():
+                if not Path(file_path).exists():
+                    # File missing from disk, remove from database
+                    if self.db_type == "postgresql":
+                        cursor.execute("DELETE FROM work_order_files WHERE id = %s", (file_id,))
+                    else:
+                        cursor.execute("DELETE FROM work_order_files WHERE id = ?", (file_id,))
+                    db_cleaned += 1
+            
+            # Check disk files
+            valid_paths = set(db_files.values())
+            for wo_dir in self.work_orders_path.iterdir():
+                if wo_dir.is_dir():
+                    for file_path in wo_dir.iterdir():
+                        if file_path.is_file() and str(file_path) not in valid_paths:
+                            # File on disk but not in database
+                            file_path.unlink()
+                            disk_cleaned += 1
+            
+            conn.commit()
+            cursor.close()
+            
+            logger.info(f"🧹 Cleanup complete: {disk_cleaned} disk files, {db_cleaned} database entries")
+            return disk_cleaned, db_cleaned
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            return disk_cleaned, db_cleaned
+    
+    def get_storage_stats(self) -> dict:
+        """Get storage statistics"""
+        try:
+            conn = self.conn_manager.get_connection()
+            cursor = conn.cursor()
+            
+            # Total files
+            cursor.execute("SELECT COUNT(*) FROM work_order_files")
+            total_files = cursor.fetchone()[0]
+            
+            # Total disk usage
+            total_size = 0
+            file_count_disk = 0
+            
+            if self.work_orders_path.exists():
+                for wo_dir in self.work_orders_path.iterdir():
+                    if wo_dir.is_dir():
+                        for file_path in wo_dir.iterdir():
+                            if file_path.is_file():
+                                total_size += file_path.stat().st_size
+                                file_count_disk += 1
+            
+            cursor.close()
+            
+            return {
+                'total_files_db': total_files,
+                'total_files_disk': file_count_disk,
+                'total_size_bytes': total_size,
+                'total_size_mb': round(total_size / (1024 * 1024), 2),
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting storage stats: {e}")
+            return {
+                'total_files_db': 0,
+                'total_files_disk': 0,
+                'total_size_bytes': 0,
+                'total_size_mb': 0,
+            }
 
 
 if __name__ == "__main__":
-    print("Work Order File Storage System")
-    print("=" * 50)
-    print("\nFeatures:")
-    print("  - Save uploaded files to organized directories")
-    print("  - Store file metadata in database")
-    print("  - Retrieve files for preview/download")
-    print("  - Clean file naming with timestamps")
-    print("  - Support for images, PDFs, and other files")
-    print("\nReady for integration with Builder interface!")
+    print("""
+File Storage Manager for Building Inspection System
+===================================================
+
+✅ PostgreSQL & SQLite compatible
+✅ Stores files on disk (fast, scalable)
+✅ Tracks metadata in database (searchable)
+✅ Simple 6-column structure
+
+Storage Structure:
+uploads/work_orders/{work_order_id}/{category}_{timestamp}_{id}.ext
+
+Table Structure (6 columns):
+- id (TEXT PRIMARY KEY)
+- work_order_id (TEXT)
+- original_filename (TEXT)
+- file_path (TEXT)
+- file_type (TEXT)
+- uploaded_at (TIMESTAMP)
+
+Ready for production!
+    """)
