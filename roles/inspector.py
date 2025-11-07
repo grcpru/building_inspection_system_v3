@@ -73,13 +73,27 @@ class InspectorInterface:
         self.auth_manager = None
         
         # Keep db_manager for legacy features only (SQLite)
-        if self.db_type == "sqlite":
+        try:
+            from database.setup import DatabaseManager
+            
             try:
-                from database.setup import DatabaseManager
-                self.db_manager = DatabaseManager(db_path)
-            except ImportError:
-                self.db_manager = None
-        else:
+                # Pass connection manager for PostgreSQL support
+                self.db_manager = DatabaseManager(db_path, conn_manager=self.conn_manager)
+                print(f"✅ DatabaseManager initialized with {self.db_type}")
+            except TypeError:
+                # Fallback if DatabaseManager doesn't accept conn_manager yet
+                if self.db_type == "sqlite":
+                    self.db_manager = DatabaseManager(db_path)
+                    print(f"⚠️  DatabaseManager: SQLite only")
+                else:
+                    # Create minimal wrapper for PostgreSQL
+                    print(f"⚠️  Creating database wrapper for {self.db_type}")
+                    self.db_manager = type('DatabaseWrapper', (object,), {
+                        'connect': lambda: self.conn_manager.get_connection(),
+                        'db_type': self.db_type
+                    })()
+        except ImportError as e:
+            print(f"⚠️  DatabaseManager not available: {e}")
             self.db_manager = None
         
         if 'report_images' not in st.session_state:

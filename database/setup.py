@@ -31,25 +31,24 @@ def _resolve_db_path(db_path: str | None) -> str:
 class DatabaseManager:
     """Enhanced database management system with Inspector integration"""
     
-    def __init__(self, db_path: str = "building_inspection.db"):
-        self.db_path = _resolve_db_path(db_path)
-        self.migrations_dir = Path("migrations")
-        self.migrations_dir.mkdir(exist_ok=True)
-        self.connection = None
+    class DatabaseManager:
+        def __init__(self, db_path: str = "building_inspection.db", conn_manager=None):
+            """Initialize with optional connection manager for PostgreSQL support"""
+            if conn_manager:
+                self.conn_manager = conn_manager
+                self.db_type = conn_manager.db_type
+            else:
+                self.db_path = db_path
+                self.db_type = "sqlite"
+                self.conn_manager = None
         
-    def connect(self) -> sqlite3.Connection:
-        if not self.connection:
-            self.connection = sqlite3.connect(
-                self.db_path,
-                check_same_thread=False,
-                timeout=30.0,
-                detect_types=0  # CHANGED: Disable automatic type detection to prevent timestamp parsing errors
-            )
-            self.connection.execute("PRAGMA foreign_keys = ON")
-            self.connection.execute("PRAGMA journal_mode = WAL")
-            self.connection.execute("PRAGMA synchronous = NORMAL")
-            logger.info(f"🗄️ SQLite connected to: {self.db_path}")
-        return self.connection
+        def connect(self):
+            """Get database connection"""
+            if self.conn_manager:
+                return self.conn_manager.get_connection()
+            else:
+                import sqlite3
+                return sqlite3.connect(self.db_path, check_same_thread=False)
 
     
     def initialize_database(self, force_recreate: bool = False):
