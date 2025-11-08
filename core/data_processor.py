@@ -299,10 +299,10 @@ class InspectionDataProcessor:
                 if self.db_type == "postgresql":
                     execute_values(cursor, """
                         INSERT INTO inspector_inspection_items
-                        (id, inspection_id, building_id, unit_number, floor, zone, room,
+                        (id, inspection_id, unit_number, floor, zone, room,
                         item_description, defect_type, severity, status, notes, created_at)
                         VALUES %s
-                    """, [(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], 'NOW()') 
+                    """, [(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], 'NOW()') 
                         for v in all_values],
                     page_size=1000)
                 
