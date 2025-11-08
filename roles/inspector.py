@@ -87,11 +87,22 @@ class InspectorInterface:
                     print(f"⚠️  DatabaseManager: SQLite only")
                 else:
                     # Create minimal wrapper for PostgreSQL
-                    print(f"⚠️  Creating database wrapper for {self.db_type}")
-                    self.db_manager = type('DatabaseWrapper', (object,), {
-                        'connect': lambda: self.conn_manager.get_connection(),
-                        'db_type': self.db_type
-                    })()
+                    class DBWrapper:
+                        def __init__(self, cm):
+                            self.cm = cm
+                            self.db_type = getattr(cm, 'db_type', 'postgresql')
+                        def connect(self):
+                            return self.cm.get_connection()
+                    self.db_manager = DBWrapper(self.conn_manager)
+                    print(f"✅ DatabaseManager: Using DBWrapper for {self.db_type}")
+            
+            # ✅ MOVED THIS OUTSIDE! Now it ALWAYS runs
+            # Ensure processor has database access
+            if hasattr(self, 'processor') and self.processor:
+                if not hasattr(self.processor, 'db_manager') or self.processor.db_manager is None:
+                    self.processor.db_manager = self.db_manager
+                    print(f"✅ Assigned db_manager to processor")
+                    
         except ImportError as e:
             print(f"⚠️  DatabaseManager not available: {e}")
             self.db_manager = None
