@@ -51,81 +51,81 @@ logger = logging.getLogger(__name__)
 class InspectorInterface:
     """Inspector interface with enhanced V3 database integration for cross-role data access"""
     if st.button("🧪 TEST DATABASE SAVE"):
-    st.write("### 🎯 Quick Save Test")
-    
-    try:
-        # Get connection manager
-        from database.connection_manager import get_connection_manager
-        conn_manager = get_connection_manager()
-        st.success(f"✅ Connection: {conn_manager.db_type}")
+        st.write("### 🎯 Quick Save Test")
         
-        # Get processor
-        if hasattr(st.session_state, 'inspector') and st.session_state.inspector:
-            processor = st.session_state.inspector.processor
-        else:
-            from roles.inspector import InspectorInterface
-            inspector = InspectorInterface(conn_manager=conn_manager)
-            processor = inspector.processor
-        
-        # Check processor
-        st.write(f"**processor.conn_manager:** {processor.conn_manager}")
-        
-        if processor.conn_manager is None:
-            st.error("❌ PROBLEM: processor.conn_manager is None!")
-            st.stop()
-        
-        st.success("✅ Processor has conn_manager")
-        
-        # Create test data
-        test_data = {
-            'auditName': ['08/11/2025 / 101 / TEST'],
-            'Title Page_Conducted on': ['2025-11-08'],
-            'Lot Details_Lot Number': ['101'],
-            'Pre-Settlement Inspection_Unit Type': ['Apartment'],
-            'Pre-Settlement Inspection_Living Room_Paint': ['Not OK'],
-        }
-        test_df = pd.DataFrame(test_data)
-        
-        # Load mapping
-        from core.data_processor import load_master_trade_mapping
-        mapping = load_master_trade_mapping()
-        
-        building_info = {'name': 'TEST', 'address': 'Test', 'date': '2025-11-08'}
-        file_hash = hashlib.md5(str(test_data).encode()).hexdigest()
-        
-        st.write("🔄 Processing...")
-        
-        # PROCESS - THIS SHOULD SAVE!
-        final_df, metrics, inspection_id = processor.process_inspection_data(
-            df=test_df,
-            mapping=mapping,
-            building_info=building_info,
-            inspector_name="Test Inspector",
-            original_filename="test.csv",
-            file_hash=file_hash
-        )
-        
-        if inspection_id:
-            st.success(f"🎉 SAVED! ID: {inspection_id}")
-            st.balloons()
+        try:
+            # Get connection manager
+            from database.connection_manager import get_connection_manager
+            conn_manager = get_connection_manager()
+            st.success(f"✅ Connection: {conn_manager.db_type}")
             
-            # Verify
-            conn = conn_manager.get_connection()
-            cursor = conn.cursor()
-            if conn_manager.db_type == "postgresql":
-                cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = %s", (inspection_id,))
+            # Get processor
+            if hasattr(st.session_state, 'inspector') and st.session_state.inspector:
+                processor = st.session_state.inspector.processor
             else:
-                cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = ?", (inspection_id,))
-            count = cursor.fetchone()[0]
-            cursor.close()
-            st.success(f"✅ {count} items in database!")
-        else:
-            st.error("❌ FAILED: inspection_id is None")
-            st.error("Check console logs!")
+                from roles.inspector import InspectorInterface
+                inspector = InspectorInterface(conn_manager=conn_manager)
+                processor = inspector.processor
             
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
-        st.exception(e)
+            # Check processor
+            st.write(f"**processor.conn_manager:** {processor.conn_manager}")
+            
+            if processor.conn_manager is None:
+                st.error("❌ PROBLEM: processor.conn_manager is None!")
+                st.stop()
+            
+            st.success("✅ Processor has conn_manager")
+            
+            # Create test data
+            test_data = {
+                'auditName': ['08/11/2025 / 101 / TEST'],
+                'Title Page_Conducted on': ['2025-11-08'],
+                'Lot Details_Lot Number': ['101'],
+                'Pre-Settlement Inspection_Unit Type': ['Apartment'],
+                'Pre-Settlement Inspection_Living Room_Paint': ['Not OK'],
+            }
+            test_df = pd.DataFrame(test_data)
+            
+            # Load mapping
+            from core.data_processor import load_master_trade_mapping
+            mapping = load_master_trade_mapping()
+            
+            building_info = {'name': 'TEST', 'address': 'Test', 'date': '2025-11-08'}
+            file_hash = hashlib.md5(str(test_data).encode()).hexdigest()
+            
+            st.write("🔄 Processing...")
+            
+            # PROCESS - THIS SHOULD SAVE!
+            final_df, metrics, inspection_id = processor.process_inspection_data(
+                df=test_df,
+                mapping=mapping,
+                building_info=building_info,
+                inspector_name="Test Inspector",
+                original_filename="test.csv",
+                file_hash=file_hash
+            )
+            
+            if inspection_id:
+                st.success(f"🎉 SAVED! ID: {inspection_id}")
+                st.balloons()
+                
+                # Verify
+                conn = conn_manager.get_connection()
+                cursor = conn.cursor()
+                if conn_manager.db_type == "postgresql":
+                    cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = %s", (inspection_id,))
+                else:
+                    cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = ?", (inspection_id,))
+                count = cursor.fetchone()[0]
+                cursor.close()
+                st.success(f"✅ {count} items in database!")
+            else:
+                st.error("❌ FAILED: inspection_id is None")
+                st.error("Check console logs!")
+                
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
+            st.exception(e)
         
     def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
         """Initialize with connection manager"""
