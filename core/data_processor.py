@@ -276,8 +276,7 @@ class InspectionDataProcessor:
                     
                     all_values.append((
                         str(uuid.uuid4()), 
-                        inspection_id, 
-                        building_id,
+                        inspection_id,                        
                         unit, 
                         floor, 
                         '', 
