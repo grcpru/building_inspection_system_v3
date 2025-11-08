@@ -75,13 +75,39 @@ class BuilderInterface:
             # Show inspection data even without work orders
             with st.expander("🔍 View Inspection Data"):
                 try:
-                    inspection_query = """
-                        SELECT i.id, i.inspection_date, i.inspector_name, 
-                            i.total_units, i.total_defects
-                        FROM inspector_inspections i
-                        WHERE i.building_id = %s if self.db_type == "postgresql" else ?
-                        ORDER BY i.created_at DESC
-                    """
+                    # Build query based on database type
+                    if self.db_type == "postgresql":
+                        inspection_query = """
+                            SELECT i.id, i.inspection_date, i.inspector_name, 
+                                i.total_units, i.total_defects
+                            FROM inspector_inspections i
+                            WHERE i.building_id = %s
+                            ORDER BY i.created_at DESC
+                        """
+                    else:
+                        inspection_query = """
+                            SELECT i.id, i.inspection_date, i.inspector_name, 
+                                i.total_units, i.total_defects
+                            FROM inspector_inspections i
+                            WHERE i.building_id = ?
+                            ORDER BY i.created_at DESC
+                        """
+                    
+                    inspections = pd.read_sql_query(
+                        inspection_query,
+                        self.conn_manager.get_connection(),
+                        params=[building_id]
+                    )
+                    
+                    if not inspections.empty:
+                        st.success(f"Found {len(inspections)} inspection(s)")
+                        st.dataframe(inspections, use_container_width=True)
+                    else:
+                        st.info("No inspections found for this building")
+                        
+                except Exception as e:
+                    st.error(f"Error loading inspections: {e}")
+                    logger.error(f"Inspection query error: {e}")
                     
                     if self.db_type == "postgresql":
                         inspections = pd.read_sql_query(
