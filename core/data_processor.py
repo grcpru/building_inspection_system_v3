@@ -224,48 +224,15 @@ class InspectionDataProcessor:
                     room = str(item.get('room', ''))
                     component = str(item.get('component', ''))
                     trade = str(item.get('trade', ''))
-                    status = str(item.get('status', 'Not OK'))  # ✅ Now includes OK items!
+                    status = str(item.get('status', 'Not OK'))
                     urgency = str(item.get('urgency', 'Normal'))
                     planned_completion = str(item.get('planned_completion', ''))
                     inspection_date = str(item.get('inspection_date', ''))
                     owner_signoff = item.get('owner_signoff_timestamp')
-                    defect_type = str(item.get('defect_type', ''))
                     
                     # Track unit types and statuses
                     unit_types_seen.add(unit_type)
                     status_counts[status] = status_counts.get(status, 0) + 1
-                    
-                    # Build description
-                    desc_parts = []
-                    if component:
-                        desc_parts.append(component)
-                    if trade:
-                        desc_parts.append(f"[{trade}]")
-                    description = " - ".join(desc_parts) if desc_parts else 'Inspection item'
-                    
-                    # Map urgency to severity (only for defects)
-                    if status == 'Not OK':
-                        severity = 'critical' if urgency == 'Urgent' else 'high' if urgency == 'High Priority' else 'medium'
-                    else:
-                        severity = 'none'  # OK items have no severity
-                    
-                    # Extract floor
-                    floor = unit[0] if len(unit) >= 1 and unit[0].isdigit() else ''
-                    
-                    # ✅ CREATE COMPLETE JSON with ALL fields
-                    notes_data = {
-                        'component': component,
-                        'trade': trade,
-                        'unit_type': unit_type,
-                        'urgency': urgency,
-                        'planned_completion': planned_completion,
-                        'inspection_date': inspection_date,
-                        'owner_signoff_timestamp': str(owner_signoff) if owner_signoff else None,
-                        'defect_type': defect_type,
-                        'status': status  # ✅ Store status in JSON too
-                    }
-                    
-                    notes_json = json.dumps(notes_data)
                     
                     # Debug first few items
                     if idx < 3:
@@ -274,18 +241,21 @@ class InspectionDataProcessor:
                         logger.info(f"     Status: {status}, Trade: {trade}")
                         logger.info(f"     Component: {component}, Room: {room}")
                     
+                    # ✅ Build tuple matching YOUR table structure
                     all_values.append((
-                        str(uuid.uuid4()), 
-                        inspection_id,                        
-                        unit, 
-                        floor, 
-                        '', 
-                        room,
-                        description, 
-                        defect_type,
-                        severity, 
-                        status,  # ✅ Save actual status (OK or Not OK)
-                        notes_json
+                        str(uuid.uuid4()),              # id
+                        inspection_id,                   # inspection_id
+                        unit,                           # unit
+                        unit_type,                      # unit_type
+                        inspection_date,                # inspection_date
+                        room,                           # room
+                        component,                      # component
+                        trade,                          # trade
+                        status,                         # status_class
+                        urgency,                        # urgency
+                        planned_completion,             # planned_completion
+                        owner_signoff,                  # owner_signoff_timestamp
+                        status                          # original_status
                     ))
                 
                 # Log summary
@@ -295,14 +265,15 @@ class InspectionDataProcessor:
                 logger.info(f"📊 SAVE - Unit types in data: {sorted(unit_types_seen)}")
                 logger.info(f"📊 SAVE - Inserting {len(all_values)} items...")
                 
-                # Bulk insert
+                # ✅ Bulk insert with CORRECT column names
                 if self.db_type == "postgresql":
                     execute_values(cursor, """
                         INSERT INTO inspector_inspection_items
-                        (id, inspection_id, unit_number, floor, zone, room,
-                        item_description, defect_type, severity, status, notes, created_at)
+                        (id, inspection_id, unit, unit_type, inspection_date, room,
+                        component, trade, status_class, urgency, planned_completion,
+                        owner_signoff_timestamp, original_status, created_at)
                         VALUES %s
-                    """, [(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], 'NOW()') 
+                    """, [(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], 'NOW()') 
                         for v in all_values],
                     page_size=1000)
                 
