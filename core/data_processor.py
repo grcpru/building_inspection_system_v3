@@ -783,155 +783,94 @@ class InspectionDataProcessor:
 
 
     # ADD THIS NEW METHOD (after _save_to_database_with_conn_manager)
-    def _create_work_orders_with_conn_manager(self, inspection_id: str, conn_manager):
+    def _create_work_orders_with_conn_manager(self, inspection_id: str, defects_df):
         """
-        Create work orders from inspection items using connection manager.
-        Fixed to work with PostgreSQL schema that has unit, trade, component, room, urgency columns.
+        Create work orders from defects DataFrame
+        
+        Args:
+            inspection_id: The inspection ID
+            defects_df: DataFrame containing defect items
+        
+        Returns:
+            int: Number of work orders created
         """
         import pandas as pd
         import streamlit as st
+        from datetime import datetime, timedelta
         
         try:
-            db_type = conn_manager.db_type
-            
-            # Get inspection items that need work orders
-            if db_type == "postgresql":
-                query = """
-                    SELECT 
-                        id,
-                        inspection_id,
-                        unit,
-                        trade,
-                        component,
-                        room,
-                        defect_description,
-                        urgency,
-                        status
-                    FROM inspector_inspection_items
-                    WHERE inspection_id = %s
-                    AND status IN ('Open', 'In Progress')
-                """
-                params = (inspection_id,)
-            else:  # SQLite
-                query = """
-                    SELECT 
-                        id,
-                        inspection_id,
-                        unit,
-                        trade,
-                        component,
-                        room,
-                        defect_description,
-                        urgency,
-                        status
-                    FROM inspector_inspection_items
-                    WHERE inspection_id = ?
-                    AND status IN ('Open', 'In Progress')
-                """
-                params = (inspection_id,)
-            
-            items_df = pd.read_sql_query(query, conn_manager.get_connection(), params=params)
-            
-            if items_df.empty:
-                st.warning("No open items found to create work orders.")
+            # Use self.conn_manager (not a parameter)
+            if not self.conn_manager:
+                st.warning("No connection manager available")
                 return 0
             
-            # Create work orders - one per item
+            db_type = self.conn_manager.db_type
+            
+            # Get defects that need work orders (status = Not OK)
+            if isinstance(defects_df, pd.DataFrame) and len(defects_df) > 0:
+                # Filter for defects only
+                if 'StatusClass' in defects_df.columns:
+                    work_order_items = defects_df[defects_df['StatusClass'] == 'Not OK']
+                else:
+                    work_order_items = defects_df
+            else:
+                st.info("No defects to create work orders from")
+                return 0
+            
+            if len(work_order_items) == 0:
+                st.info("No defect items found for work orders")
+                return 0
+            
+            # Create work orders
+            conn = self.conn_manager.get_connection()
+            cursor = conn.cursor()
+            
             work_orders_created = 0
             
-            with conn_manager.get_connection() as conn:
-                cursor = conn.cursor()
+            for _, item in work_order_items.iterrows():
+                wo_number = f"WO-{inspection_id[:8]}-{work_orders_created+1:03d}"
                 
-                for _, item in items_df.iterrows():
-                    # Generate work order number
-                    wo_number = f"WO-{inspection_id[:8]}-{item['id'][:8]}"
-                    
-                    # Create title from component and defect
-                    title = f"{item['component']}: {item['defect_description'][:50]}"
-                    
-                    if db_type == "postgresql":
-                        insert_query = """
-                            INSERT INTO inspector_work_orders (
-                                work_order_number,
-                                inspection_id,
-                                inspection_item_id,
-                                unit,
-                                trade,
-                                component,
-                                room,
-                                title,
-                                description,
-                                urgency,
-                                priority,
-                                status,
-                                assigned_to,
-                                created_at
-                            ) VALUES (
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
-                            )
-                            ON CONFLICT (work_order_number) DO NOTHING
-                        """
-                        cursor.execute(insert_query, (
-                            wo_number,
-                            inspection_id,
-                            item['id'],
-                            item['unit'],
-                            item['trade'],
-                            item['component'],
-                            item['room'],
-                            title,
-                            item['defect_description'],
-                            item['urgency'],
-                            item['urgency'],  # Map urgency to priority
-                            'Pending',
-                            item['trade'],  # Assign to the trade
-                        ))
-                    else:  # SQLite
-                        insert_query = """
-                            INSERT OR IGNORE INTO inspector_work_orders (
-                                work_order_number,
-                                inspection_id,
-                                inspection_item_id,
-                                unit,
-                                trade,
-                                component,
-                                room,
-                                title,
-                                description,
-                                urgency,
-                                priority,
-                                status,
-                                assigned_to,
-                                created_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                        """
-                        cursor.execute(insert_query, (
-                            wo_number,
-                            inspection_id,
-                            item['id'],
-                            item['unit'],
-                            item['trade'],
-                            item['component'],
-                            item['room'],
-                            title,
-                            item['defect_description'],
-                            item['urgency'],
-                            item['urgency'],
-                            'Pending',
-                            item['trade'],
-                        ))
-                    
-                    work_orders_created += 1
+                # Calculate due date based on urgency
+                urgency = item.get('Urgency', 'Normal')
+                if urgency == 'Urgent':
+                    days_offset = 3
+                elif urgency == 'High Priority':
+                    days_offset = 7
+                else:
+                    days_offset = 14
                 
-                conn.commit()
+                due_date = datetime.now() + timedelta(days=days_offset)
+                
+                # Insert work order
+                if db_type == "postgresql":
+                    cursor.execute("""
+                        INSERT INTO inspector_work_orders 
+                        (id, work_order_number, inspection_id, unit, trade, component, 
+                        room, urgency, status, due_date, created_at)
+                        VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    """, (
+                        wo_number,
+                        inspection_id,
+                        item.get('Unit', ''),
+                        item.get('Trade', ''),
+                        item.get('Component', ''),
+                        item.get('Room', ''),
+                        urgency,
+                        'Pending',
+                        due_date.date()
+                    ))
+                
+                work_orders_created += 1
             
-            st.success(f"✅ Created {work_orders_created} work orders from inspection items")
+            conn.commit()
+            cursor.close()
+            
+            st.success(f"✅ Created {work_orders_created} work orders")
             return work_orders_created
             
         except Exception as e:
-            st.error(f"Error creating work orders: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
+            st.warning(f"Work orders not created: {str(e)}")
+            logger.warning(f"Work order creation failed: {e}")
             return 0
     
     def _log_csv_processing(self, original_df, metrics, inspection_id, mapping_success_rate, 
@@ -949,28 +888,53 @@ class InspectionDataProcessor:
             log_id = str(uuid.uuid4())
             filename = original_filename or "uploaded_file.csv"
             
-            cursor.execute("""
-                INSERT INTO inspector_csv_processing_log (
-                    id, original_filename, file_checksum, file_size, inspector_id, 
-                    building_name, total_rows, processed_rows, defects_found, 
-                    mapping_success_rate, status, inspection_id, created_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                log_id, 
-                filename, 
-                file_hash, 
-                len(original_df) * 100,
-                None,  # inspector_id
-                metrics.get('building_name', 'Unknown Building'), 
-                len(original_df), 
-                len(original_df), 
-                metrics.get('total_defects', 0), 
-                mapping_success_rate,
-                'completed', 
-                inspection_id, 
-                datetime.now(), 
-                datetime.now()
-            ))
+            # Check database type and use correct placeholder
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    INSERT INTO inspector_csv_processing_log (
+                        id, original_filename, file_checksum, file_size, inspector_id, 
+                        building_name, total_rows, processed_rows, defects_found, 
+                        mapping_success_rate, status, inspection_id, created_at, completed_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    log_id, 
+                    filename, 
+                    file_hash, 
+                    len(original_df) * 100,
+                    None,
+                    metrics.get('building_name', 'Unknown Building'), 
+                    len(original_df), 
+                    len(original_df), 
+                    metrics.get('total_defects', 0), 
+                    mapping_success_rate,
+                    'completed', 
+                    inspection_id, 
+                    datetime.now(), 
+                    datetime.now()
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO inspector_csv_processing_log (
+                        id, original_filename, file_checksum, file_size, inspector_id, 
+                        building_name, total_rows, processed_rows, defects_found, 
+                        mapping_success_rate, status, inspection_id, created_at, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    log_id, 
+                    filename, 
+                    file_hash, 
+                    len(original_df) * 100,
+                    None,
+                    metrics.get('building_name', 'Unknown Building'), 
+                    len(original_df), 
+                    len(original_df), 
+                    metrics.get('total_defects', 0), 
+                    mapping_success_rate,
+                    'completed', 
+                    inspection_id, 
+                    datetime.now(), 
+                    datetime.now()
+                ))
             
             conn.commit()
             logger.info(f"CSV processing logged: {work_order_count} work orders created")
