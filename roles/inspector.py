@@ -47,8 +47,10 @@ except ImportError:
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-if st.button("🧪 TEST DATABASE SAVE"):
+        
+class InspectorInterface:
+    """Inspector interface with enhanced V3 database integration for cross-role data access"""
+    if st.button("🧪 TEST DATABASE SAVE"):
     st.write("### 🎯 Quick Save Test")
     
     try:
@@ -125,9 +127,6 @@ if st.button("🧪 TEST DATABASE SAVE"):
         st.error(f"❌ Error: {e}")
         st.exception(e)
         
-class InspectorInterface:
-    """Inspector interface with enhanced V3 database integration for cross-role data access"""
-    
     def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
         """Initialize with connection manager"""
         self._button_counter = 0
