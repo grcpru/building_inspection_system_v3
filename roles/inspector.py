@@ -2906,24 +2906,26 @@ def render_inspector_interface(user_info=None, auth_manager=None):
             conn_manager = get_connection_manager()
             st.success(f"✅ Connection: {conn_manager.db_type}")
             
-            # Get processor
-            if hasattr(st.session_state, 'inspector') and st.session_state.inspector:
-                processor = st.session_state.inspector.processor
-            else:
-                from roles.inspector import InspectorInterface
-                inspector = InspectorInterface(conn_manager=conn_manager)
-                processor = inspector.processor
+            # ✅ FIX: Create InspectorInterface WITHOUT conn_manager parameter
+            # It gets conn_manager internally in __init__
+            inspector = InspectorInterface()  # ← NO conn_manager parameter!
+            processor = inspector.processor
             
             # Check processor
+            st.write(f"**inspector.conn_manager:** {inspector.conn_manager}")
             st.write(f"**processor.conn_manager:** {processor.conn_manager}")
             
             if processor.conn_manager is None:
                 st.error("❌ PROBLEM: processor.conn_manager is None!")
+                st.error("This is why data isn't saving!")
                 st.stop()
             
             st.success("✅ Processor has conn_manager")
             
             # Create test data
+            import pandas as pd
+            import hashlib
+            
             test_data = {
                 'auditName': ['08/11/2025 / 101 / TEST'],
                 'Title Page_Conducted on': ['2025-11-08'],
@@ -2940,7 +2942,7 @@ def render_inspector_interface(user_info=None, auth_manager=None):
             building_info = {'name': 'TEST', 'address': 'Test', 'date': '2025-11-08'}
             file_hash = hashlib.md5(str(test_data).encode()).hexdigest()
             
-            st.write("🔄 Processing...")
+            st.write("🔄 Processing test data...")
             
             # PROCESS - THIS SHOULD SAVE!
             final_df, metrics, inspection_id = processor.process_inspection_data(
@@ -2952,26 +2954,53 @@ def render_inspector_interface(user_info=None, auth_manager=None):
                 file_hash=file_hash
             )
             
+            st.write(f"**Result:** inspection_id = {inspection_id}")
+            
             if inspection_id:
-                st.success(f"🎉 SAVED! ID: {inspection_id}")
+                st.success(f"🎉 SUCCESS! Saved with ID: {inspection_id}")
                 st.balloons()
                 
-                # Verify
+                # Verify in database
                 conn = conn_manager.get_connection()
                 cursor = conn.cursor()
+                
                 if conn_manager.db_type == "postgresql":
                     cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = %s", (inspection_id,))
                 else:
                     cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = ?", (inspection_id,))
+                
                 count = cursor.fetchone()[0]
                 cursor.close()
-                st.success(f"✅ {count} items in database!")
+                
+                st.success(f"✅ Found {count} items in database!")
+                
+                # Cleanup option
+                if st.checkbox("🗑️ Delete test data"):
+                    cursor = conn.cursor()
+                    if conn_manager.db_type == "postgresql":
+                        cursor.execute("DELETE FROM inspector_inspection_items WHERE inspection_id = %s", (inspection_id,))
+                        cursor.execute("DELETE FROM inspector_inspections WHERE id = %s", (inspection_id,))
+                    else:
+                        cursor.execute("DELETE FROM inspector_inspection_items WHERE inspection_id = ?", (inspection_id,))
+                        cursor.execute("DELETE FROM inspector_inspections WHERE id = ?", (inspection_id,))
+                    conn.commit()
+                    cursor.close()
+                    st.info("✅ Test data deleted")
+                    
             else:
                 st.error("❌ FAILED: inspection_id is None")
-                st.error("Check console logs!")
+                st.error("Data was processed but NOT saved!")
+                st.warning("Check your console/logs for error messages")
+                
+                st.info("""
+                **What to check:**
+                1. Look for messages starting with 🔍 or ❌ in console
+                2. Check if processor.conn_manager is None above
+                3. Look for "PostgreSQL save failed" errors
+                """)
                 
         except Exception as e:
-            st.error(f"❌ Error: {e}")
+            st.error(f"❌ Test failed: {e}")
             st.exception(e)
     # Initialize or update the inspector interface with user context
     if 'inspector_interface' not in st.session_state:
