@@ -64,7 +64,45 @@ class BuilderInterface:
         # Get all work orders once
         all_orders = self._get_orders(building_id)
         if all_orders.empty:
-            st.warning("No work orders found for this building")
+            st.info("📋 No work orders yet for this building")
+            st.write("""
+            **Work orders will appear here when:**
+            1. Inspection data is processed
+            2. Defects are identified (items marked "Not OK")
+            3. Work orders are automatically created from defects
+            """)
+            
+            # Show inspection data even without work orders
+            with st.expander("🔍 View Inspection Data"):
+                try:
+                    inspection_query = """
+                        SELECT i.id, i.inspection_date, i.inspector_name, 
+                            i.total_units, i.total_defects
+                        FROM inspector_inspections i
+                        WHERE i.building_id = %s if self.db_type == "postgresql" else ?
+                        ORDER BY i.created_at DESC
+                    """
+                    
+                    if self.db_type == "postgresql":
+                        inspections = pd.read_sql_query(
+                            inspection_query.replace("?", "%s"),
+                            self.conn_manager.get_connection(),
+                            params=[building_id]
+                        )
+                    else:
+                        inspections = pd.read_sql_query(
+                            inspection_query.replace("%s", "?"),
+                            self.conn_manager.get_connection(),
+                            params=[building_id]
+                        )
+                    
+                    if not inspections.empty:
+                        st.dataframe(inspections, use_container_width=True)
+                    else:
+                        st.info("No inspections found")
+                except Exception as e:
+                    st.error(f"Error loading inspections: {e}")
+            
             return
         
         # Reports section
@@ -90,28 +128,48 @@ class BuilderInterface:
         self._show_tabs(all_orders, building_id)
     
     def _select_building(self):
-        """Building selector with rejected count"""
-        # Use connection manager
-        buildings = pd.read_sql_query("""
-            SELECT DISTINCT b.id, b.name,
-                COUNT(CASE WHEN wo.status = 'pending' THEN 1 END) as p,
-                COUNT(CASE WHEN wo.status = 'in_progress' AND (wo.builder_notes NOT LIKE '%REJECTED%' OR wo.builder_notes IS NULL) THEN 1 END) as a,
-                COUNT(CASE WHEN wo.status = 'in_progress' AND wo.builder_notes LIKE '%REJECTED%' THEN 1 END) as r,
-                COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as w
-            FROM inspector_buildings b
-            JOIN inspector_inspections i ON b.id = i.building_id
-            JOIN inspector_work_orders wo ON i.id = wo.inspection_id
-            GROUP BY b.id, b.name
-        """, self.conn_manager.get_connection())
-        
-        if buildings.empty:
+        """Building selector with work order counts - shows all buildings"""
+        try:
+            # Use LEFT JOIN to show buildings even without work orders
+            query = """
+                SELECT DISTINCT b.id, b.name,
+                    COUNT(CASE WHEN wo.status = 'pending' THEN 1 END) as p,
+                    COUNT(CASE WHEN wo.status = 'in_progress' AND (wo.builder_notes NOT LIKE '%REJECTED%' OR wo.builder_notes IS NULL) THEN 1 END) as a,
+                    COUNT(CASE WHEN wo.status = 'in_progress' AND wo.builder_notes LIKE '%REJECTED%' THEN 1 END) as r,
+                    COUNT(CASE WHEN wo.status = 'waiting_approval' THEN 1 END) as w
+                FROM inspector_buildings b
+                LEFT JOIN inspector_inspections i ON b.id = i.building_id
+                LEFT JOIN inspector_work_orders wo ON i.id = wo.inspection_id
+                GROUP BY b.id, b.name
+                ORDER BY b.name
+            """
+            
+            buildings = pd.read_sql_query(query, self.conn_manager.get_connection())
+            
+            if buildings.empty:
+                st.warning("No buildings found in the database")
+                st.info("Buildings will appear here after inspection data is processed")
+                return None
+            
+            # Create options with counts
+            options = {}
+            for _, r in buildings.iterrows():
+                total_wo = r['p'] + r['a'] + r['r'] + r['w']
+                if total_wo > 0:
+                    # Show counts if work orders exist
+                    label = f"{r['name']} (P:{r['p']} A:{r['a']} R:{r['r']} W:{r['w']})"
+                else:
+                    # Show "No work orders" if none exist
+                    label = f"{r['name']} (No work orders yet)"
+                options[label] = r['id']
+            
+            selected = st.selectbox("Building:", list(options.keys()), key="builder_building_selector")
+            return options[selected]
+            
+        except Exception as e:
+            logger.error(f"Building selector error: {e}")
+            st.error(f"Error loading buildings: {str(e)}")
             return None
-        
-        options = {f"{r['name']} (P:{r['p']} A:{r['a']} R:{r['r']} W:{r['w']})": r['id'] 
-                for _, r in buildings.iterrows()}
-        
-        selected = st.selectbox("Building:", list(options.keys()))
-        return options[selected]
     
     def _get_orders(self, building_id):
         """Get all work orders - PostgreSQL/SQLite compatible"""

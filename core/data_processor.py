@@ -712,17 +712,22 @@ class InspectionDataProcessor:
                         
                         # STEP 13b: Create work orders from defects only
                         defects_df = final_df[final_df['StatusClass'] == 'Not OK'].copy()
-                        
-                        work_order_count = self._create_work_orders_with_conn_manager(
-                            inspection_id, 
-                            defects_df
-                        )
-                        
-                        if work_order_count > 0:
-                            logger.info(f"✅ Created {work_order_count} work orders")
-                            metrics['work_orders_created'] = work_order_count
+
+                        # Only create work orders if there are defects
+                        if len(defects_df) > 0:
+                            work_order_count = self._create_work_orders_with_conn_manager(
+                                inspection_id, 
+                                defects_df
+                            )
+                            
+                            if work_order_count > 0:
+                                logger.info(f"✅ Created {work_order_count} work orders")
+                                metrics['work_orders_created'] = work_order_count
+                            else:
+                                logger.info("No work orders created")
+                                metrics['work_orders_created'] = 0
                         else:
-                            logger.info("No work orders created")
+                            logger.info("No defects - no work orders needed")
                             metrics['work_orders_created'] = 0
                     else:
                         logger.error("❌ Failed to save to PostgreSQL")
