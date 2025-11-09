@@ -972,13 +972,13 @@ class InspectionDataProcessor:
                     log_id, 
                     filename, 
                     file_hash, 
-                    len(original_df) * 100,
+                    int(len(original_df)) * 100,  # ← Convert to int
                     None,
-                    metrics.get('building_name', 'Unknown Building'), 
-                    len(original_df), 
-                    len(original_df), 
-                    metrics.get('total_defects', 0), 
-                    mapping_success_rate,
+                    str(metrics.get('building_name', 'Unknown Building')),  # ← Convert to str
+                    int(len(original_df)),  # ← Convert to int
+                    int(len(original_df)),  # ← Convert to int
+                    int(metrics.get('total_defects', 0)),  # ← Convert to int
+                    float(mapping_success_rate),  # ← Convert to float
                     'completed', 
                     inspection_id, 
                     datetime.now(), 
