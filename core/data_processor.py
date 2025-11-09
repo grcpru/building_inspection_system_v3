@@ -887,12 +887,11 @@ class InspectionDataProcessor:
                 if db_type == "postgresql":
                     cursor.execute("""
                         INSERT INTO inspector_work_orders 
-                        (id, work_order_number, inspection_id, unit, trade, component, 
+                        (id, inspection_id, unit, trade, component, 
                         room, urgency, status, planned_date, created_at, updated_at)
-                        VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                        VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                     """, (
-                        wo_number,
-                        inspection_id,
+                        inspection_id,    # ← Removed wo_number
                         unit,
                         trade,
                         component,
