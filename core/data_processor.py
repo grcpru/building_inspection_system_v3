@@ -711,14 +711,38 @@ class InspectionDataProcessor:
                         logger.info(f"✅ Saved to PostgreSQL: {inspection_id}")
                         
                         # STEP 13b: Create work orders from defects only
+                        logger.info(f"🔍 WORK ORDERS - Starting creation process...")
+                        
                         defects_df = final_df[final_df['StatusClass'] == 'Not OK'].copy()
-
-                        # Only create work orders if there are defects
+                        logger.info(f"🔍 WORK ORDERS - Found {len(defects_df)} defects to process")
+                        
                         if len(defects_df) > 0:
-                            work_order_count = self._create_work_orders_with_conn_manager(
-                                inspection_id, 
-                                defects_df
-                            )
+                            logger.info(f"🔍 WORK ORDERS - Calling _create_work_orders_with_conn_manager...")
+                            logger.info(f"🔍 WORK ORDERS - inspection_id = {inspection_id}")
+                            logger.info(f"🔍 WORK ORDERS - defects_df type = {type(defects_df)}")
+                            logger.info(f"🔍 WORK ORDERS - self.conn_manager = {self.conn_manager}")
+                            
+                            try:
+                                work_order_count = self._create_work_orders_with_conn_manager(
+                                    inspection_id, 
+                                    defects_df
+                                )
+                                
+                                logger.info(f"✅ WORK ORDERS - Created {work_order_count} work orders")
+                                
+                                if work_order_count > 0:
+                                    metrics['work_orders_created'] = work_order_count
+                                else:
+                                    logger.warning("⚠️ WORK ORDERS - Function returned 0")
+                                    metrics['work_orders_created'] = 0
+                            except Exception as wo_error:
+                                logger.error(f"❌ WORK ORDERS - Exception: {wo_error}")
+                                import traceback
+                                logger.error(f"❌ WORK ORDERS - Traceback: {traceback.format_exc()}")
+                                metrics['work_orders_created'] = 0
+                        else:
+                            logger.info("ℹ️ WORK ORDERS - No defects found, no work orders needed")
+                            metrics['work_orders_created'] = 0
                             
                             if work_order_count > 0:
                                 logger.info(f"✅ Created {work_order_count} work orders")

@@ -2897,6 +2897,8 @@ Developer Access:
 
 def render_inspector_interface(user_info=None, auth_manager=None):
     """Main inspector interface function for integration with main.py"""
+    
+    # ✅ BUTTON 1: Test Database Save
     if st.button("🧪 TEST DATABASE SAVE"):
         st.write("### 🎯 Quick Save Test")
         
@@ -2906,9 +2908,8 @@ def render_inspector_interface(user_info=None, auth_manager=None):
             conn_manager = get_connection_manager()
             st.success(f"✅ Connection: {conn_manager.db_type}")
             
-            # ✅ FIX: Create InspectorInterface WITHOUT conn_manager parameter
-            # It gets conn_manager internally in __init__
-            inspector = InspectorInterface()  # ← NO conn_manager parameter!
+            # Create InspectorInterface WITHOUT conn_manager parameter
+            inspector = InspectorInterface()
             processor = inspector.processor
             
             # Check processor
@@ -3002,6 +3003,49 @@ def render_inspector_interface(user_info=None, auth_manager=None):
         except Exception as e:
             st.error(f"❌ Test failed: {e}")
             st.exception(e)
+    
+    # ✅ Separator OUTSIDE the first button
+    st.write("---")
+    
+    # ✅ BUTTON 2: Check Work Order Table Schema (OUTSIDE the first button's if block)
+    if st.button("🔍 Check Work Order Table Schema"):
+        st.write("### 📊 Work Order Table Structure")
+        
+        try:
+            from database.connection_manager import get_connection_manager
+            conn_manager = get_connection_manager()
+            conn = conn_manager.get_connection()
+            cursor = conn.cursor()
+            
+            st.write("Checking `inspector_work_orders` table...")
+            
+            cursor.execute("""
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns 
+                WHERE table_name = 'inspector_work_orders'
+                ORDER BY ordinal_position
+            """)
+            
+            columns = cursor.fetchall()
+            cursor.close()
+            
+            if columns:
+                st.success(f"✅ Found {len(columns)} columns in inspector_work_orders table:")
+                
+                for i, col in enumerate(columns, 1):
+                    nullable = "✅ nullable" if col[2] == 'YES' else "❌ NOT NULL"
+                    st.write(f"{i}. **{col[0]}** - `{col[1]}` - {nullable}")
+            else:
+                st.error("❌ Table 'inspector_work_orders' not found or has no columns!")
+                
+        except Exception as e:
+            st.error(f"❌ Error checking table: {e}")
+            st.exception(e)
+    
+    # ✅ Another separator
+    st.write("---")
+    
+    # ✅ REST OF YOUR CODE (Initialize inspector interface)
     # Initialize or update the inspector interface with user context
     if 'inspector_interface' not in st.session_state:
         st.session_state.inspector_interface = InspectorInterface(user_info=user_info)
@@ -3029,7 +3073,7 @@ def render_inspector_interface(user_info=None, auth_manager=None):
     """, unsafe_allow_html=True)
     
     # Show the main dashboard
-    inspector.show_inspector_dashboard()  # ✅ CORRECT
+    inspector.show_inspector_dashboard()
     
 if __name__ == "__main__":
     print("Enhanced Inspector Interface V3 with Database Integration")
