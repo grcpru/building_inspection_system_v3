@@ -743,16 +743,6 @@ class InspectionDataProcessor:
                         else:
                             logger.info("ℹ️ WORK ORDERS - No defects found, no work orders needed")
                             metrics['work_orders_created'] = 0
-                            
-                            if work_order_count > 0:
-                                logger.info(f"✅ Created {work_order_count} work orders")
-                                metrics['work_orders_created'] = work_order_count
-                            else:
-                                logger.info("No work orders created")
-                                metrics['work_orders_created'] = 0
-                        else:
-                            logger.info("No defects - no work orders needed")
-                            metrics['work_orders_created'] = 0
                     else:
                         logger.error("❌ Failed to save to PostgreSQL")
                         
