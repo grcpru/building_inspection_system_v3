@@ -803,64 +803,35 @@ class InspectionDataProcessor:
 
     # ADD THIS NEW METHOD (after _save_to_database_with_conn_manager)
     def _create_work_orders_with_conn_manager(self, inspection_id: str, defects_df):
-        """
-        Create work orders from defects DataFrame using connection manager
-        
-        Args:
-            inspection_id: The inspection ID
-            defects_df: DataFrame with defect items (StatusClass == 'Not OK')
-        
-        Returns:
-            int: Number of work orders created
-        """
+        """Create work orders from defects DataFrame"""
         import pandas as pd
         from datetime import datetime, timedelta
         
-        logger.info(f"📋 WO Creation - Starting for inspection {inspection_id[:8]}...")
-        logger.info(f"📋 WO Creation - Defects DataFrame has {len(defects_df)} rows")
+        logger.info(f"📋 Creating work orders for {inspection_id[:8]}...")
         
-        if not isinstance(defects_df, pd.DataFrame):
-            logger.error(f"❌ WO Creation - Expected DataFrame, got {type(defects_df)}")
-            return 0
-        
-        if len(defects_df) == 0:
-            logger.info("📋 WO Creation - No defects to create work orders from")
-            return 0
-        
-        # Check required columns
-        required_cols = ['Unit', 'Trade', 'Component', 'Room', 'Urgency']
-        missing_cols = [col for col in required_cols if col not in defects_df.columns]
-        if missing_cols:
-            logger.error(f"❌ WO Creation - Missing columns: {missing_cols}")
-            logger.error(f"   Available columns: {defects_df.columns.tolist()}")
+        if not isinstance(defects_df, pd.DataFrame) or len(defects_df) == 0:
+            logger.info("No defects to create work orders from")
             return 0
         
         try:
-            # Use self.conn_manager (not a parameter!)
             if not self.conn_manager:
-                logger.error("❌ WO Creation - No connection manager available")
+                logger.error("No connection manager available")
                 return 0
             
             db_type = self.conn_manager.db_type
-            logger.info(f"📋 WO Creation - Using {db_type} database")
-            
             conn = self.conn_manager.get_connection()
             cursor = conn.cursor()
             
             work_orders_created = 0
             
             for idx, item in defects_df.iterrows():
-                # Generate work order number
-                wo_number = f"WO-{inspection_id[:8]}-{work_orders_created+1:04d}"
-                
-                # Extract data
                 unit = str(item.get('Unit', ''))
                 trade = str(item.get('Trade', ''))
                 component = str(item.get('Component', ''))
                 room = str(item.get('Room', ''))
                 urgency = str(item.get('Urgency', 'Normal'))
                 
-                # Calculate due date based on urgency
+                # Calculate due date
                 if urgency == 'Urgent':
                     days_offset = 3
                 elif urgency == 'High Priority':
@@ -870,69 +841,33 @@ class InspectionDataProcessor:
                 
                 due_date = datetime.now() + timedelta(days=days_offset)
                 
-                # Create description
-                description = f"{component} in {room}"
-                
                 # Insert work order
                 if db_type == "postgresql":
                     cursor.execute("""
                         INSERT INTO inspector_work_orders 
-                        (id, inspection_id, unit, trade, component, 
-                        room, urgency, status, planned_date, created_at, updated_at)
+                        (id, inspection_id, unit, trade, component, room, urgency, status, planned_date, created_at, updated_at)
                         VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                    """, (
-                        inspection_id,    # ← Removed wo_number
-                        unit,
-                        trade,
-                        component,
-                        room,
-                        urgency,
-                        'pending',
-                        due_date.date()
-                    ))
-                else:  # SQLite
+                    """, (inspection_id, unit, trade, component, room, urgency, 'pending', due_date.date()))
+                else:
+                    wo_number = f"WO-{inspection_id[:8]}-{work_orders_created+1:04d}"
                     cursor.execute("""
                         INSERT INTO inspector_work_orders 
-                        (id, work_order_number, inspection_id, unit, trade, component, 
-                        room, urgency, status, planned_date, created_at, updated_at)
+                        (id, work_order_number, inspection_id, unit, trade, component, room, urgency, status, planned_date, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-                    """, (
-                        str(uuid.uuid4()),
-                        wo_number,
-                        inspection_id,
-                        unit,
-                        trade,
-                        component,
-                        room,
-                        urgency,
-                        'pending',
-                        str(due_date.date())
-                    ))
+                    """, (str(uuid.uuid4()), wo_number, inspection_id, unit, trade, component, room, urgency, 'pending', str(due_date.date())))
                 
                 work_orders_created += 1
-                
-                # Log first few for debugging
-                if work_orders_created <= 3:
-                    logger.info(f"  ✓ WO {work_orders_created}: {wo_number} - Unit {unit}, {trade}, {component}")
             
-            # Commit all work orders
             conn.commit()
             cursor.close()
             
-            logger.info(f"✅ WO Creation - Successfully created {work_orders_created} work orders")
+            logger.info(f"✅ Created {work_orders_created} work orders")
             return work_orders_created
             
         except Exception as e:
-            logger.error(f"❌ WO Creation - Exception: {e}")
+            logger.error(f"❌ Work order creation failed: {e}")
             import traceback
-            logger.error(f"❌ WO Creation - Full traceback:\n{traceback.format_exc()}")
-            
-            if 'conn' in locals():
-                try:
-                    conn.rollback()
-                except:
-                    pass
-            
+            logger.error(traceback.format_exc())
             return 0
     
     def _log_csv_processing(self, original_df, metrics, inspection_id, mapping_success_rate, 
