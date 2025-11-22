@@ -998,58 +998,49 @@ class InspectionDataProcessor:
                 inspection_dict = dict(inspection_row)
             
             logger.info(f"📂 Found: {inspection_dict['building_name']}")
-            
+
             # === GET INSPECTION ITEMS ===
             if self.db_type == "postgresql":
-                # PostgreSQL: Parse from JSON in notes column
+                # PostgreSQL: Read directly from columns (same as SQLite)
                 items_query = """
                     SELECT 
-                        unit_number,
+                        unit,
+                        unit_type,
                         room,
-                        item_description,
-                        severity,
-                        status,
-                        notes
+                        component,
+                        trade,
+                        status_class,
+                        urgency,
+                        planned_completion,
+                        inspection_date,
+                        owner_signoff_timestamp
                     FROM inspector_inspection_items
                     WHERE inspection_id = %s
-                    ORDER BY unit_number, room
+                    ORDER BY unit, room
                 """
                 cursor.execute(items_query, (inspection_id,))
+                
+                # Get column names
+                columns = [desc[0] for desc in cursor.description]
                 rows = cursor.fetchall()
                 
-                # Parse JSON from notes column
-                import json
+                # Convert to DataFrame with proper column mapping
                 import pandas as pd
-                items_data = []
+                items_df = pd.DataFrame(rows, columns=columns)
                 
-                for row in rows:
-                    # Convert row to dict
-                    if isinstance(row, (list, tuple)):
-                        columns = [desc[0] for desc in cursor.description]
-                        row_dict = dict(zip(columns, row))
-                    else:
-                        row_dict = dict(row)
-                    
-                    # Parse notes JSON
-                    notes_json = row_dict.get('notes', '{}')
-                    notes = json.loads(notes_json) if notes_json else {}
-                    
-                    # Reconstruct item with all fields
-                    item = {
-                        'Unit': row_dict['unit_number'],
-                        'UnitType': notes.get('unit_type', 'Apartment'),
-                        'Room': row_dict['room'],
-                        'Component': notes.get('component', ''),
-                        'Trade': notes.get('trade', ''),
-                        'StatusClass': notes.get('status', 'Not OK'),
-                        'Urgency': notes.get('urgency', 'Normal'),
-                        'PlannedCompletion': notes.get('planned_completion', ''),
-                        'InspectionDate': notes.get('inspection_date', ''),
-                        'OwnerSignoffTimestamp': notes.get('owner_signoff_timestamp', None)
-                    }
-                    items_data.append(item)
-                
-                items_df = pd.DataFrame(items_data)
+                # Rename columns to match expected format
+                items_df = items_df.rename(columns={
+                    'unit': 'Unit',
+                    'unit_type': 'UnitType',
+                    'room': 'Room',
+                    'component': 'Component',
+                    'trade': 'Trade',
+                    'status_class': 'StatusClass',
+                    'urgency': 'Urgency',
+                    'planned_completion': 'PlannedCompletion',
+                    'inspection_date': 'InspectionDate',
+                    'owner_signoff_timestamp': 'OwnerSignoffTimestamp'
+                })
                 
             else:
                 # SQLite: Read directly from columns

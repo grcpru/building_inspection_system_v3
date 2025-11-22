@@ -8,7 +8,14 @@ import sqlite3
 from pathlib import Path
 import sys
 import os
+import logging  # ← ADD THIS
 
+# Configure logging - ADD THIS BLOCK
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.append(str(project_root))
@@ -28,6 +35,7 @@ from database.setup import DatabaseManager
 # DATABASE INITIALIZATION
 # ============================================================================
 
+@st.cache_resource
 def initialize_database():
     """
     Initialize database ONLY if tables don't exist
@@ -44,7 +52,7 @@ def initialize_database():
             st.sidebar.info("🔍 Checking PostgreSQL schema...")
             
             postgres_adapter = PostgresAdapter()
-            postgres_adapter.initialize_schema()  # Has built-in table existence check
+            postgres_adapter.initialize_schema()
             
             # Check if users exist, create if needed
             try:
@@ -75,24 +83,55 @@ def initialize_database():
                     
             except Exception as user_check_error:
                 st.sidebar.warning(f"⚠️ User check: {user_check_error}")
-                # Try creating users anyway
                 try:
                     postgres_adapter.create_default_users()
                 except:
                     pass
             
         else:
-            # SQLite initialization (local development only)
+            # SQLite initialization
             st.sidebar.info("📁 Using SQLite (local mode)")
-            db_manager = DatabaseManager()
             
-            # Check if database file exists
-            if not os.path.exists(db_manager.db_path):
-                st.sidebar.info("Creating new SQLite database...")
+            try:
+                # Import DatabaseManager
+                from database.setup import DatabaseManager
+                
+                # Get database path
+                db_path = st.secrets.get("database", {}).get("path", "building_inspection.db")
+                
+                # Create DatabaseManager instance
+                db_manager = DatabaseManager(db_path, conn_manager=conn_manager)
+                
+                # ✅ CRITICAL: Actually initialize the database (create tables)
+                st.sidebar.info("🔧 Creating database tables...")
                 db_manager.initialize_database()
-                st.sidebar.success("✅ SQLite database created!")
-            else:
-                st.sidebar.success("✅ SQLite connected!")
+                
+                # Verify tables were created
+                conn = conn_manager.get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name LIKE 'inspector_%'
+                """)
+                
+                tables = cursor.fetchall()
+                table_count = len(tables)
+                
+                cursor.close()
+                conn.close()
+                
+                if table_count > 0:
+                    st.sidebar.success(f"✅ SQLite ready ({table_count} tables)!")
+                else:
+                    st.sidebar.error("❌ No tables created!")
+                    return False
+                
+            except Exception as sqlite_error:
+                st.sidebar.error(f"SQLite initialization failed: {sqlite_error}")
+                import traceback
+                st.sidebar.code(traceback.format_exc())
+                return False
         
         return True
         
@@ -101,10 +140,8 @@ def initialize_database():
         import traceback
         st.error("Full error trace:")
         st.code(traceback.format_exc())
-        st.stop()
         return False
-
-
+    
 # Initialize database once per session
 if 'db_initialized' not in st.session_state:
     with st.spinner("Initializing database..."):

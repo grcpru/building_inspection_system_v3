@@ -31,58 +31,77 @@ def _resolve_db_path(db_path: str | None) -> str:
 class DatabaseManager:
     """Enhanced database management system with Inspector integration"""
     
-    class DatabaseManager:
-        def __init__(self, db_path: str = "building_inspection.db", conn_manager=None):
-            """Initialize with optional connection manager for PostgreSQL support"""
-            if conn_manager:
-                self.conn_manager = conn_manager
-                self.db_type = conn_manager.db_type
-            else:
-                self.db_path = db_path
-                self.db_type = "sqlite"
-                self.conn_manager = None
+    def __init__(self, db_path: str = "building_inspection.db", conn_manager=None):
+        """Initialize with optional connection manager for PostgreSQL support"""
+        if conn_manager:
+            self.conn_manager = conn_manager
+            self.db_type = conn_manager.db_type
+            self.db_path = None  # ← FIX: Explicitly set to None for PostgreSQL mode
+        else:
+            # SQLite mode - resolve path properly
+            self.db_path = _resolve_db_path(db_path)  # ← FIX: Use helper function
+            self.db_type = "sqlite"
+            self.conn_manager = None
+    
+    def connect(self):
+        """Get database connection"""
+        # During initialization, reuse the same connection
+        if hasattr(self, '_init_conn'):
+            return self._init_conn
         
-        def connect(self):
-            """Get database connection"""
-            if self.conn_manager:
-                return self.conn_manager.get_connection()
-            else:
-                import sqlite3
-                return sqlite3.connect(self.db_path, check_same_thread=False)
+        # Normal operation - create new connection
+        if self.conn_manager:
+            return self.conn_manager.get_connection()
+        else:
+            import sqlite3
+            return sqlite3.connect(self.db_path, check_same_thread=False)
 
     
     def initialize_database(self, force_recreate: bool = False):
         """Initialize database with complete schema including Inspector integration"""
-        if force_recreate and os.path.exists(self.db_path):
-            os.remove(self.db_path)
-            logger.info(f"Removed existing database: {self.db_path}")
+        if self.db_type == "sqlite" and self.db_path:
+            if force_recreate and os.path.exists(self.db_path):
+                os.remove(self.db_path)
+                logger.info(f"Removed existing database: {self.db_path}")
         
-        conn = self.connect()
+        # Store connection in instance variable for reuse
+        self._init_conn = self.connect()
         logger.info("Initializing Building Inspection System database...")
         
-        # Create all existing tables
-        self.create_core_tables()
-        self.create_user_tables()
-        self.create_inspection_tables()
-        self.create_defect_tables()
-        self.create_workflow_tables()
-        self.create_report_tables()
-        self.create_audit_tables()
-        
-        # NEW: Create Inspector integration tables
-        self.create_inspector_integration_tables()
-        
-        # Create indexes for performance
-        self.create_indexes()
-        
-        # Create initial data
-        self.seed_initial_data()
-        
-        # Create migration tracking
-        self.setup_migration_tracking()
-        
-        conn.commit()
-        logger.info("Database initialization completed successfully!")
+        try:
+            # Create all existing tables
+            self.create_core_tables()
+            self.create_user_tables()
+            self.create_inspection_tables()
+            self.create_defect_tables()
+            self.create_workflow_tables()
+            self.create_report_tables()
+            self.create_audit_tables()
+            
+            # NEW: Create Inspector integration tables
+            self.create_inspector_integration_tables()
+            
+            # Create indexes for performance
+            self.create_indexes()
+            
+            # Create initial data
+            self.seed_initial_data()
+            
+            # Create migration tracking
+            self.setup_migration_tracking()
+            
+            # Commit and close
+            self._init_conn.commit()
+            logger.info("Database initialization completed successfully!")
+            
+        except Exception as e:
+            self._init_conn.rollback()
+            logger.error(f"Database initialization failed: {e}")
+            raise
+        finally:
+            # Clean up
+            self._init_conn.close()
+            delattr(self, '_init_conn')
     
     def create_inspector_integration_tables(self):
         """Create tables specifically for Inspector data processing integration"""
@@ -203,6 +222,7 @@ class DatabaseManager:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inspector_work_orders (
                 id TEXT PRIMARY KEY,
+                work_order_number TEXT UNIQUE,
                 inspection_id TEXT NOT NULL,
                 unit TEXT NOT NULL,
                 trade TEXT NOT NULL,
@@ -972,8 +992,8 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_inspector_inspections_building ON inspector_inspections(building_id)",
             "CREATE INDEX IF NOT EXISTS idx_inspector_inspections_date ON inspector_inspections(inspection_date)",
             "CREATE INDEX IF NOT EXISTS idx_inspector_items_inspection ON inspector_inspection_items(inspection_id)",
-            "CREATE INDEX IF NOT EXISTS idx_inspector_items_unit ON inspector_inspection_items(unit_number)",
-            "CREATE INDEX IF NOT EXISTS idx_inspector_items_status ON inspector_inspection_items(status)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_items_unit ON inspector_inspection_items(unit)",
+            "CREATE INDEX IF NOT EXISTS idx_inspector_items_status ON inspector_inspection_items(status_class)",
             "CREATE INDEX IF NOT EXISTS idx_inspector_work_orders_status ON inspector_work_orders(status)",
             "CREATE INDEX IF NOT EXISTS idx_inspector_work_orders_assigned ON inspector_work_orders(assigned_to)",
             

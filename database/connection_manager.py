@@ -1,13 +1,14 @@
 """
-Database Connection Manager - FIXED VERSION
+Database Connection Manager - IMPROVED VERSION
 ============================================
 Handles both SQLite (local) and PostgreSQL (production) connections
-WITH PROPER TIMEOUT AND SSL HANDLING
+CAN BUILD CONNECTION STRING FROM INDIVIDUAL PARAMETERS
 """
 
 import os
 import sqlite3
 from typing import Any, Optional
+from urllib.parse import quote_plus
 import streamlit as st
 
 # Try to import psycopg2, but don't fail if not available
@@ -37,18 +38,20 @@ class ConnectionManager:
         database_url = self._get_database_url()
         
         if database_url and POSTGRES_AVAILABLE:
+            print(f"✅ PostgreSQL detected - URL starts with: {database_url[:30]}...")
             return "postgresql"
         else:
+            print("📁 Falling back to SQLite (local mode)")
             return "sqlite"
     
     def _get_database_url(self) -> Optional[str]:
         """
         Get database URL from multiple sources
-        Priority: Streamlit secrets > Environment variables
+        Priority: Connection string > Build from parameters > Environment variables
         """
-        # 1. Try Streamlit secrets first (most common in production)
+        # 1. Try to find a pre-built connection string
         try:
-            # Check for postgresql_url (our new format)
+            # Check for postgresql_url (preferred format)
             if "database" in st.secrets:
                 if "postgresql_url" in st.secrets["database"]:
                     return st.secrets["database"]["postgresql_url"]
@@ -62,14 +65,40 @@ class ConnectionManager:
             if "DATABASE_URL" in st.secrets:
                 return st.secrets["DATABASE_URL"]
         except Exception as e:
-            print(f"Note: Could not read from st.secrets: {e}")
+            print(f"Note: Could not read connection string from secrets: {e}")
         
-        # 2. Try environment variables
+        # 2. ✅ NEW: Try to BUILD URL from individual parameters
+        try:
+            if "database" in st.secrets:
+                db_config = st.secrets["database"]
+                
+                # Check if we have individual parameters
+                if all(key in db_config for key in ["host", "port", "database", "user", "password"]):
+                    print("🔧 Building PostgreSQL URL from individual parameters...")
+                    
+                    # URL-encode password to handle special characters
+                    password_encoded = quote_plus(db_config["password"])
+                    
+                    # Build the connection string
+                    connection_url = (
+                        f"postgresql://{db_config['user']}:{password_encoded}"
+                        f"@{db_config['host']}:{db_config['port']}/{db_config['database']}"
+                        f"?sslmode=require&connect_timeout=15"
+                    )
+                    
+                    print(f"✅ Built connection URL from parameters")
+                    return connection_url
+        except Exception as e:
+            print(f"Could not build URL from parameters: {e}")
+        
+        # 3. Try environment variables
         database_url = os.getenv('DATABASE_URL') or os.getenv('POSTGRESQL_URL')
         if database_url:
+            print("✅ Using DATABASE_URL from environment")
             return database_url
         
-        # 3. Not found
+        # 4. Not found
+        print("⚠️ No PostgreSQL configuration found")
         return None
     
     def get_connection(self):
@@ -85,79 +114,67 @@ class ConnectionManager:
             return self._get_sqlite_connection()
     
     def _get_postgres_connection(self):
-        """Create PostgreSQL connection - FIXED VERSION"""
+        """Create PostgreSQL connection"""
         database_url = self._get_database_url()
         
         if database_url is None:
             raise ValueError(
                 "PostgreSQL connection string not found. "
-                "Please add 'postgresql_url' to .streamlit/secrets.toml under [database] section"
+                "Please check your .streamlit/secrets.toml configuration"
             )
         
-        # 🔧 FIX 1: Add connection timeout and SSL mode to URL if not present
+        # Add connection parameters if not present
         if "?" not in database_url:
-            database_url += "?connect_timeout=15&sslmode=prefer&application_name=building_inspection"
+            database_url += "?connect_timeout=15&sslmode=require"
         elif "connect_timeout" not in database_url:
             database_url += "&connect_timeout=15"
         
         if "sslmode" not in database_url:
-            database_url += "&sslmode=prefer"
-        
-        if "application_name" not in database_url:
-            database_url += "&application_name=building_inspection"
+            database_url += "&sslmode=require"
         
         try:
-            # 🔧 FIX 2: Use connection with explicit timeout
+            # Create connection with explicit timeout
             conn = psycopg2.connect(
                 database_url,
-                connect_timeout=15,  # Explicit timeout
-                options='-c statement_timeout=30000'  # 30 second query timeout
+                connect_timeout=15,
+                options='-c statement_timeout=30000'
             )
-            conn.autocommit = False  # Explicit transaction control
+            conn.autocommit = False
             
-            # 🔧 FIX 3: Quick connection test with timeout
+            # Quick connection test
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.fetchone()
             cursor.close()
             
+            print("✅ PostgreSQL connection successful!")
             return conn
             
         except psycopg2.OperationalError as e:
             error_msg = str(e)
             
-            # 🔧 FIX 4: Better error messages
+            # Better error messages
             if "timeout" in error_msg.lower():
-                # If timeout, try one more time with different SSL mode
-                print("⚠️ Connection timeout, retrying with sslmode=disable...")
-                try:
-                    database_url_no_ssl = database_url.replace("sslmode=prefer", "sslmode=disable")
-                    database_url_no_ssl = database_url_no_ssl.replace("sslmode=require", "sslmode=disable")
-                    
-                    conn = psycopg2.connect(
-                        database_url_no_ssl,
-                        connect_timeout=10
-                    )
-                    print("✅ Connected with SSL disabled (development only)")
-                    return conn
-                except Exception as retry_error:
-                    raise ValueError(
-                        f"PostgreSQL connection timeout. Possible causes:\n"
-                        f"1. Connection pooler is blocked by firewall\n"
-                        f"2. IP address not whitelisted in Supabase\n"
-                        f"3. Network routing issues\n"
-                        f"Original error: {error_msg}"
-                    )
-            
+                raise ValueError(
+                    f"PostgreSQL connection timeout. Possible causes:\n"
+                    f"1. Firewall blocking connection\n"
+                    f"2. IP address not whitelisted in Supabase\n"
+                    f"3. Network routing issues\n"
+                    f"Original error: {error_msg}"
+                )
             elif "password authentication failed" in error_msg:
                 raise ValueError(
-                    "PostgreSQL authentication failed. Please check your password in secrets.toml. "
-                    "Note: Special characters in password may need URL encoding."
+                    "PostgreSQL authentication failed. Please check:\n"
+                    "1. Username and password in secrets.toml\n"
+                    "2. Special characters in password (use URL encoding)\n"
+                    "   Example: ! should be %21"
                 )
             elif "could not connect to server" in error_msg:
                 raise ValueError(
-                    "Could not connect to PostgreSQL server. "
-                    "Please check your internet connection and Supabase status."
+                    "Could not connect to PostgreSQL server. Check:\n"
+                    "1. Internet connection\n"
+                    "2. Supabase project status\n"
+                    "3. Host and port in secrets.toml"
                 )
             else:
                 raise ValueError(f"PostgreSQL connection error: {error_msg}")
@@ -168,7 +185,7 @@ class ConnectionManager:
         """Create SQLite connection"""
         print(f"📁 Using SQLite database: {self.sqlite_path}")
         conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row  # Return rows as dict-like objects
+        conn.row_factory = sqlite3.Row
         return conn
     
     def get_db_type(self) -> str:
@@ -216,21 +233,13 @@ class ConnectionManager:
     def convert_sql_for_db(self, sql: str) -> str:
         """
         Convert SQL syntax between SQLite and PostgreSQL if needed
-        
-        Common conversions:
-        - AUTOINCREMENT -> SERIAL (for PostgreSQL)
-        - DATETIME -> TIMESTAMP
-        - TEXT -> VARCHAR for PostgreSQL
-        - ? -> %s (parameter placeholders)
         """
         if self.db_type == "postgresql":
-            # Replace SQLite-specific syntax with PostgreSQL
             sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
             sql = sql.replace("AUTOINCREMENT", "")
             sql = sql.replace("DATETIME DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
             sql = sql.replace("DATETIME", "TIMESTAMP")
-            # Note: Parameter placeholders (? -> %s) should be handled at query time
-            
+        
         return sql
 
 
