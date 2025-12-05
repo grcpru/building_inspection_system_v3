@@ -454,6 +454,98 @@ class InspectionDataProcessor:
             logger.error(traceback.format_exc())
             return 0
 
+    def _apply_fuzzy_trade_mapping(self, df: pd.DataFrame, mapping: pd.DataFrame) -> pd.DataFrame:
+        """
+        Apply trade mapping with fuzzy matching and keyword fallback
+        
+        Strategy:
+        1. Exact match: Room + Component
+        2. Fuzzy match: Remove "(if applicable)" and try again
+        3. Keyword fallback: Component-based keywords
+        4. Default: "General" (better than "Unknown Trade")
+        """
+        
+        def fuzzy_match_trade(room, component):
+            """Match a single row's trade"""
+            
+            # Step 1: Exact match
+            exact = mapping[
+                (mapping['Room'].str.strip() == str(room).strip()) & 
+                (mapping['Component'].str.strip() == str(component).strip())
+            ]
+            if not exact.empty:
+                return exact.iloc[0]['Trade']
+            
+            # Step 2: Fuzzy match (remove "(if applicable)")
+            clean_room = str(room).replace(' (if applicable)', '').strip()
+            clean_comp = str(component).replace(' (if applicable)', '').strip()
+            
+            fuzzy = mapping[
+                (mapping['Room'].str.replace(' (if applicable)', '', regex=False).str.strip() == clean_room) &
+                (mapping['Component'].str.replace(' (if applicable)', '', regex=False).str.strip() == clean_comp)
+            ]
+            if not fuzzy.empty:
+                return fuzzy.iloc[0]['Trade']
+            
+            # Step 3: Keyword-based fallback
+            comp_lower = str(component).lower()
+            
+            # Flooring keywords
+            if any(k in comp_lower for k in ['flooring', 'carpet', 'tiles', 'tile']):
+                return 'Flooring'
+            
+            # Carpentry & Joinery keywords
+            if any(k in comp_lower for k in ['cabinet', 'wardrobe', 'desk', 'skirting', 
+                                            'table top', 'mirror', 'shelving', 'balustrade',
+                                            'railing', 'staircase']):
+                return 'Carpentry & Joinery'
+            
+            # Doors keywords
+            if any(k in comp_lower for k in ['door', 'lock', 'handle', 'latch', 'keys']):
+                return 'Doors'
+            
+            # Electrical keywords
+            if any(k in comp_lower for k in ['gpo', 'light', 'fixture', 'exhaust', 'fan',
+                                            'intercom', 'network', 'router', 'a/c', 'heating']):
+                return 'Electrical'
+            
+            # Plumbing keywords
+            if any(k in comp_lower for k in ['sink', 'toilet', 'shower', 'tap', 'bath',
+                                            'water', 'drainage', 'drain']):
+                return 'Plumbing'
+            
+            # Painting keywords
+            if any(k in comp_lower for k in ['paint', 'wall', 'ceiling']):
+                return 'Painting'
+            
+            # Glazing keywords
+            if any(k in comp_lower for k in ['window', 'glass', 'sliding door', 'glazing']):
+                return 'Glazing'
+            
+            # Appliances keywords
+            if any(k in comp_lower for k in ['dishwasher', 'oven', 'stovetop', 'rangehood',
+                                            'refrigerator', 'cooktop']):
+                return 'Appliances'
+            
+            # Step 4: Default fallback
+            logger.debug(f"No trade match for Room='{room}' Component='{component}' - using 'General'")
+            return 'General'
+        
+        # Apply fuzzy matching to each row
+        logger.info("Applying fuzzy trade mapping...")
+        df['Trade'] = df.apply(lambda row: fuzzy_match_trade(row['Room'], row['Component']), axis=1)
+        
+        # Log results
+        trade_counts = df['Trade'].value_counts()
+        logger.info(f"Trade mapping complete:")
+        for trade, count in trade_counts.items():
+            logger.info(f"  - {trade}: {count} items")
+        
+        general_pct = (df['Trade'] == 'General').sum() / len(df) * 100 if len(df) > 0 else 0
+        logger.info(f"Mapping success: {100-general_pct:.1f}% (General: {general_pct:.1f}%)")
+        
+        return df
+    
     def process_inspection_data(self, df: pd.DataFrame, mapping: pd.DataFrame, 
                     building_info: Dict[str, str], 
                     inspector_name: str = "Inspector",
@@ -482,22 +574,136 @@ class InspectionDataProcessor:
             signoff_count = df['OwnerSignoffTimestamp'].notna().sum()
             logger.info(f"Units with signoff: {signoff_count}/{len(df)}")
             
-            # STEP 2: Extract unit numbers
+            # STEP 2: Extract unit numbers - ENHANCED to preserve building identifiers
+            logger.info("Extracting unit numbers...")
+
+            # Priority 1: Argyle Square format - Lot Details_Lot Number
             if "Lot Details_Lot Number" in df.columns and df["Lot Details_Lot Number"].notna().any():
                 df["Unit"] = df["Lot Details_Lot Number"].astype(str).str.strip()
+                logger.info("✅ Using 'Lot Details_Lot Number' for units (Argyle format)")
+
+            # Priority 2: Highett Common format - Title Page_Address (Lot Number)  
+            elif "Title Page_Address (Lot Number)" in df.columns and df["Title Page_Address (Lot Number)"].notna().any():
+                def parse_highett_address(address):
+                    """
+                    Parse Highett format to get unit WITH building identifier
+                    
+                    Input: "409 / 9 Lightwood Avenue (G409)"
+                    Output: "G409" (preserves building identifier)
+                    
+                    Input: "408 / 8 Bottlebrush Walk (J408)"
+                    Output: "J408"
+                    """
+                    if pd.isna(address):
+                        return "Unknown"
+                    
+                    address_str = str(address).strip()
+                    
+                    # PRIORITY 1: Extract from parentheses (has building identifier)
+                    if "(" in address_str and ")" in address_str:
+                        try:
+                            start = address_str.index("(") + 1
+                            end = address_str.index(")")
+                            unit_with_building = address_str[start:end].strip()
+                            
+                            # Validate it looks like a unit (e.g., "G409", "J408")
+                            if unit_with_building and any(ch.isdigit() for ch in unit_with_building):
+                                return unit_with_building
+                        except:
+                            pass
+                    
+                    # FALLBACK: Split by "/" and take first part
+                    if "/" in address_str:
+                        unit_part = address_str.split("/")[0].strip()
+                        if unit_part:
+                            return unit_part
+                    
+                    # Last resort
+                    return address_str
+                
+                df["Unit"] = df["Title Page_Address (Lot Number)"].apply(parse_highett_address)
+                logger.info("✅ Using 'Title Page_Address (Lot Number)' for units (Highett format with building ID)")
+
+            # Priority 3: Parse from auditName (fallback)
             elif "auditName" in df.columns:
-                def extract_unit(audit_name):
+                def extract_unit_from_audit(audit_name):
+                    """
+                    Extract unit from auditName - prioritize building identifier
+                    
+                    Argyle: "9 Jul 2025 / 211 / Argyle Square"
+                        → parts[1] = "211"
+                    
+                    Highett: "26 Nov 2025 / Andrew Hoskin / 409 / 9 Lightwood Avenue (G409)"
+                        → Extract from parts[3] parentheses = "G409" (preferred)
+                    """
                     if pd.isna(audit_name):
                         return "Unknown"
-                    parts = str(audit_name).split("/")
-                    if len(parts) >= 3:
-                        candidate = parts[1].strip()
+                    
+                    parts = [p.strip() for p in str(audit_name).split("/")]
+                    
+                    # PRIORITY 1: Check parts[3] for building identifier in parentheses (Highett)
+                    if len(parts) >= 4:
+                        address_part = parts[3]
+                        if "(" in address_part and ")" in address_part:
+                            try:
+                                start = address_part.index("(") + 1
+                                end = address_part.index(")")
+                                unit_with_building = address_part[start:end].strip()
+                                
+                                if unit_with_building and any(ch.isdigit() for ch in unit_with_building):
+                                    return unit_with_building
+                            except:
+                                pass
+                    
+                    # PRIORITY 2: Check parts[1] (Argyle format)
+                    if len(parts) >= 2:
+                        candidate = parts[1]
                         if len(candidate) <= 6 and any(ch.isdigit() for ch in candidate):
-                            return candidate
-                    return f"Unit_{hash(str(audit_name)) % 1000}"
-                df["Unit"] = df["auditName"].apply(extract_unit)
+                            # Make sure it's not a person's name
+                            if not any(name_word in candidate.lower() for name_word in 
+                                    ['andrew', 'pat', 'john', 'smith', 'mike', 'david', 'james', 
+                                    'robert', 'mary', 'patricia', 'jennifer', 'linda', 'susan',
+                                    'arcuri', 'hoskin']):
+                                return candidate
+                    
+                    # PRIORITY 3: Check parts[2] (Highett without building ID)
+                    if len(parts) >= 3:
+                        candidate = parts[2]
+                        if len(candidate) <= 6 and any(ch.isdigit() for ch in candidate):
+                            if not any(name_word in candidate.lower() for name_word in 
+                                    ['andrew', 'pat', 'arcuri', 'hoskin']):
+                                return candidate
+                    
+                    # Last resort
+                    import hashlib
+                    hash_value = int(hashlib.md5(str(audit_name).encode()).hexdigest(), 16)
+                    return f"Unit_{hash_value % 1000}"
+                
+                df["Unit"] = df["auditName"].apply(extract_unit_from_audit)
+                logger.info("✅ Using 'auditName' for units (parsed with building ID when available)")
+
+            # Priority 4: Sequential fallback
             else:
                 df["Unit"] = [f"Unit_{i}" for i in range(1, len(df) + 1)]
+                logger.warning("⚠️ No unit column found - using sequential Unit_1, Unit_2, etc.")
+
+            # Log extraction results
+            unique_units = df['Unit'].nunique()
+            sample_units = df['Unit'].unique()[:10].tolist()
+            logger.info(f"✅ Extracted {unique_units} unique units")
+            logger.info(f"   Sample units: {sample_units}")
+
+            # Validate extraction
+            suspicious_units = df[df['Unit'].str.len() > 20]['Unit'].unique()
+            if len(suspicious_units) > 0:
+                logger.warning(f"⚠️ Some suspicious units detected: {suspicious_units[:3]}")
+
+            # Log units by building (for Highett Common)
+            if any(unit.startswith(('G', 'J')) and any(ch.isdigit() for ch in unit) for unit in df['Unit'].unique()):
+                building_g_units = df[df['Unit'].str.startswith('G', na=False)]['Unit'].nunique()
+                building_j_units = df[df['Unit'].str.startswith('J', na=False)]['Unit'].nunique()
+                if building_g_units > 0 or building_j_units > 0:
+                    logger.info(f"   Building G units: {building_g_units}, Building J units: {building_j_units}")
 
             # STEP 3: Derive unit type
             def derive_unit_type(row):
@@ -593,10 +799,17 @@ class InspectionDataProcessor:
             )
 
             # STEP 9: Merge with trade mapping
-            merged = long_df.merge(mapping, on=["Room", "Component"], how="left")
-            merged["Trade"] = merged["Trade"].fillna("Unknown Trade")
+            # merged = long_df.merge(mapping, on=["Room", "Component"], how="left")
+            # merged["Trade"] = merged["Trade"].fillna("Unknown Trade")
             
-            mapping_success_rate = ((merged["Trade"] != "Unknown Trade").sum() / len(merged) * 100) if len(merged) > 0 else 0
+            # mapping_success_rate = ((merged["Trade"] != "Unknown Trade").sum() / len(merged) * 100) if len(merged) > 0 else 0
+            
+            # STEP 9: Apply enhanced trade mapping with fuzzy matching
+            logger.info("Applying trade mapping...")
+            merged = self._apply_fuzzy_trade_mapping(long_df, mapping)
+
+            mapping_success_rate = ((merged["Trade"] != "General").sum() / len(merged) * 100) if len(merged) > 0 else 0
+            logger.info(f"Trade mapping success rate: {mapping_success_rate:.1f}%")
 
             # STEP 10: Add planned completion
             def assign_planned_completion(urgency, inspection_date):
@@ -1236,16 +1449,91 @@ class InspectionDataProcessor:
             logger.error(f"Error retrieving project overview: {e}")
             return pd.DataFrame()
     
+    def _fuzzy_match_trade(self, room: str, component: str, trade_mapping: pd.DataFrame) -> str:
+        """Enhanced trade matching with fuzzy logic and keyword fallback"""
+        
+        # Exact match
+        exact = trade_mapping[
+            (trade_mapping['Room'].str.strip() == room.strip()) & 
+            (trade_mapping['Component'].str.strip() == component.strip())
+        ]
+        if not exact.empty:
+            return exact.iloc[0]['Trade']
+        
+        # Fuzzy match (remove "(if applicable)")
+        clean_room = room.replace(' (if applicable)', '').strip()
+        clean_comp = component.replace(' (if applicable)', '').strip()
+        
+        fuzzy = trade_mapping[
+            (trade_mapping['Room'].str.replace(' (if applicable)', '', regex=False).str.strip() == clean_room) &
+            (trade_mapping['Component'].str.replace(' (if applicable)', '', regex=False).str.strip() == clean_comp)
+        ]
+        if not fuzzy.empty:
+            return fuzzy.iloc[0]['Trade']
+        
+        # Keyword matching
+        comp_lower = component.lower()
+        
+        if any(k in comp_lower for k in ['flooring', 'carpet', 'tiles', 'tile']):
+            return 'Flooring'
+        if any(k in comp_lower for k in ['cabinet', 'wardrobe', 'desk', 'skirting', 'mirror', 'shelving', 'balustrade']):
+            return 'Carpentry & Joinery'
+        if any(k in comp_lower for k in ['door', 'lock', 'handle', 'latch']):
+            return 'Doors'
+        if any(k in comp_lower for k in ['gpo', 'light', 'fixture', 'exhaust', 'intercom', 'network']):
+            return 'Electrical'
+        if any(k in comp_lower for k in ['sink', 'toilet', 'shower', 'tap', 'bath', 'water', 'drainage']):
+            return 'Plumbing'
+        if any(k in comp_lower for k in ['paint', 'wall', 'ceiling']):
+            return 'Painting'
+        if any(k in comp_lower for k in ['window', 'glass', 'sliding']):
+            return 'Glazing'
+        if any(k in comp_lower for k in ['dishwasher', 'oven', 'stovetop']):
+            return 'Appliances'
+        
+        return 'General'  # Better than 'Unknown'
+    
     def _calculate_comprehensive_metrics(self, final_df: pd.DataFrame, building_info: Dict, original_df: pd.DataFrame) -> Dict[str, Any]:
         """Calculate comprehensive metrics"""
         
-        # Extract building name from auditName
-        sample_audit = original_df.loc[0, "auditName"] if "auditName" in original_df.columns and len(original_df) > 0 else ""
-        if sample_audit:
-            audit_parts = str(sample_audit).split("/")
-            extracted_building_name = audit_parts[2].strip() if len(audit_parts) >= 3 else building_info["name"]
-        else:
-            extracted_building_name = building_info["name"]
+        # ✅ PRIORITY 1: Extract building name from templateName (most reliable)
+        extracted_building_name = building_info["name"]  # Default fallback
+        
+        if "templateName" in original_df.columns and len(original_df) > 0:
+            template_name = original_df.loc[0, "templateName"]
+            if template_name and pd.notna(template_name):
+                # Clean template name to get building name
+                clean_name = str(template_name).strip()
+                
+                # Remove common suffixes
+                suffixes_to_remove = [
+                    ' Pre-Settlement Inspection Checklist',
+                    ' Inspection Checklist',
+                    ' Pre Settlement Inspection Checklist',
+                    'Pre-Settlement Inspection Checklist'
+                ]
+                
+                for suffix in suffixes_to_remove:
+                    if clean_name.endswith(suffix):
+                        clean_name = clean_name[:-len(suffix)].strip()
+                        break
+                
+                extracted_building_name = clean_name
+                logger.info(f"✅ Building name from templateName: '{extracted_building_name}'")
+        
+        # ✅ FALLBACK: Try auditName if templateName not available
+        elif "auditName" in original_df.columns and len(original_df) > 0:
+            sample_audit = original_df.loc[0, "auditName"]
+            if sample_audit and pd.notna(sample_audit):
+                audit_parts = str(sample_audit).split("/")
+                # For Argyle: "9 Jul 2025 / 211 / Argyle Square" → take index 2
+                # For Highett: "26 Nov 2025 / Andrew Hoskin / 409 / ..." → too complex, skip
+                if len(audit_parts) >= 3 and len(audit_parts) <= 4:
+                    potential_name = audit_parts[2].strip()
+                    # Only use if it doesn't look like a unit number
+                    if not potential_name.isdigit() and len(potential_name) > 3:
+                        extracted_building_name = potential_name
+                        logger.info(f"✅ Building name from auditName: '{extracted_building_name}'")
         
         # Extract date
         if 'InspectionDate' in final_df.columns:
