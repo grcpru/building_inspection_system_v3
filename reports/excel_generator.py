@@ -68,6 +68,24 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         'font_size': 10,
         'bg_color': '#F7F9FC'   # zebra shade
     })
+    
+    # ===== INSPECTOR NOTES FORMATS (NEW) =====
+    notes_format = workbook.add_format({
+        'align': 'left',
+        'valign': 'top',           # Top align for long text
+        'border': 1,
+        'text_wrap': True,          # Enable wrapping!
+        'font_size': 10
+    })
+
+    notes_alt_row_format = workbook.add_format({
+        'align': 'left',
+        'valign': 'top',
+        'border': 1,
+        'text_wrap': True,
+        'font_size': 10,
+        'bg_color': '#F7F9FC'       # Zebra striping
+    })
 
     # === Date formats (exact from working code) ===
     date_cell_format = workbook.add_format({
@@ -362,7 +380,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
     create_data_sheet(
         workbook, final_df, "📋 All Inspections",
         table_header, cell_format, alt_row_format,
-        date_cell_format, date_alt_row_format
+        date_cell_format, date_alt_row_format,
+        notes_format, notes_alt_row_format  # ← ADD THIS
     )
 
     # ===== DEFECTS ONLY SHEET (exact from working code) =====
@@ -372,7 +391,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
             create_data_sheet(
                 workbook, defects_only, "🚨 Defects Only",
                 table_header, cell_format, alt_row_format,
-                date_cell_format, date_alt_row_format
+                date_cell_format, date_alt_row_format,
+                notes_format, notes_alt_row_format  # ← ADD THIS
             )
 
     # ===== SETTLEMENT READINESS SHEET (exact from working code) =====
@@ -386,7 +406,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         create_data_sheet(
             workbook, metrics['summary_trade'], "🔧 Trade Summary",
             table_header_dark, cell_format, alt_row_format,
-            date_cell_format, date_alt_row_format
+            date_cell_format, date_alt_row_format,
+            notes_format, notes_alt_row_format  # ← ADD THIS
         )
 
     # ===== ROOM SUMMARY SHEET (exact from working code) =====
@@ -394,7 +415,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         create_data_sheet(
             workbook, metrics['summary_room'], "🚪 Room Summary",
             table_header_dark, cell_format, alt_row_format,
-            date_cell_format, date_alt_row_format
+            date_cell_format, date_alt_row_format,
+            notes_format, notes_alt_row_format  # ← ADD THIS
         )
 
     # ===== COMPONENT SUMMARY SHEET (exact from working code) =====
@@ -402,7 +424,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         create_data_sheet(
             workbook, metrics['summary_component'], "🔧 Component Summary",
             table_header_dark, cell_format, alt_row_format,
-            date_cell_format, date_alt_row_format
+            date_cell_format, date_alt_row_format,
+            notes_format, notes_alt_row_format  # ← ADD THIS
         )
 
     # ===== UNIT SUMMARY SHEET (exact from working code) =====
@@ -410,7 +433,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         create_data_sheet(
             workbook, metrics['summary_unit'], "🏠 Unit Summary",
             table_header_dark, cell_format, alt_row_format,
-            date_cell_format, date_alt_row_format
+            date_cell_format, date_alt_row_format,
+            notes_format, notes_alt_row_format  # ← ADD THIS
         )
 
     # ===== COMPONENT DETAILS SHEET (exact from working code) =====
@@ -418,7 +442,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         create_data_sheet(
             workbook, metrics['component_details_summary'], "📝 Component Details",
             table_header_dark, cell_format, alt_row_format,
-            date_cell_format, date_alt_row_format
+            date_cell_format, date_alt_row_format,
+            notes_format, notes_alt_row_format  # ← ADD THIS
         )
         
     # ===== INSPECTION TIMELINE SHEET (NEW) =====
@@ -501,7 +526,7 @@ def get_quality_score_interpretation(quality_score: float) -> dict:
 
 
 def create_data_sheet(workbook, data_df, sheet_name: str, header_format, cell_format, alt_row_format,
-                     date_cell_format, date_alt_row_format):
+                     date_cell_format, date_alt_row_format, notes_format=None, notes_alt_row_format=None):
     """Create a data sheet with proper date cells (exact from working code)"""
     import pandas as pd
     from datetime import datetime as _dt
@@ -604,10 +629,14 @@ def create_data_sheet(workbook, data_df, sheet_name: str, header_format, cell_fo
     # Make sheet
     ws = workbook.add_worksheet(sheet_name)
 
-    # Column widths
+    # Column widths with special handling for Inspector Notes
     for col_idx, col in enumerate(df.columns):
-        width = min(max(len(str(col)), (df[col].astype(str).map(len).max() if len(df) else 0)) + 2, 50)
-        ws.set_column(col_idx, col_idx, width)
+        # Special width for Inspector Notes column
+        if col == 'InspectorNotes' or col == 'Inspector Notes':
+            ws.set_column(col_idx, col_idx, 50)  # Wider for notes
+        else:
+            width = min(max(len(str(col)), (df[col].astype(str).map(len).max() if len(df) else 0)) + 2, 50)
+            ws.set_column(col_idx, col_idx, width)
 
     # Header row
     for col_idx, value in enumerate(df.columns):
@@ -637,7 +666,12 @@ def create_data_sheet(workbook, data_df, sheet_name: str, header_format, cell_fo
                 else:
                     ws.write_blank(row_idx, col_idx, None, base_fmt)
             else:
-                ws.write(row_idx, col_idx, "" if pd.isna(val) else val, base_fmt)
+                # Special handling for Inspector Notes column
+                if (col_name == 'InspectorNotes' or col_name == 'Inspector Notes') and notes_format:
+                    notes_fmt = notes_alt_row_format if is_alt else notes_format
+                    ws.write(row_idx, col_idx, "" if pd.isna(val) else val, notes_fmt)
+                else:
+                    ws.write(row_idx, col_idx, "" if pd.isna(val) else val, base_fmt)
 
 def create_inspection_timeline_sheet(workbook, processed_data: pd.DataFrame, metrics: dict,
                                     header_format, cell_format, alt_row_format,
