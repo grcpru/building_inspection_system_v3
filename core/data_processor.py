@@ -216,6 +216,7 @@ class InspectionDataProcessor:
                 all_values = []
                 unit_types_seen = set()
                 status_counts = {'OK': 0, 'Not OK': 0, 'Blank': 0}
+                notes_count = 0  # ← NEW: Track how many items have notes
                 
                 for idx, item in enumerate(items):
                     # Extract data from item dict
@@ -230,6 +231,11 @@ class InspectionDataProcessor:
                     inspection_date = str(item.get('inspection_date', ''))
                     owner_signoff = item.get('owner_signoff_timestamp')
                     
+                    # ✅ NEW: Extract inspector notes
+                    inspector_notes = str(item.get('inspector_notes', ''))
+                    if inspector_notes:
+                        notes_count += 1
+                    
                     # Track unit types and statuses
                     unit_types_seen.add(unit_type)
                     status_counts[status] = status_counts.get(status, 0) + 1
@@ -240,8 +246,9 @@ class InspectionDataProcessor:
                         logger.info(f"     Unit: {unit}, UnitType: {unit_type}")
                         logger.info(f"     Status: {status}, Trade: {trade}")
                         logger.info(f"     Component: {component}, Room: {room}")
+                        logger.info(f"     Inspector Notes: {inspector_notes[:50] if inspector_notes else '(no notes)'}")
                     
-                    # ✅ Build tuple matching YOUR table structure
+                    # ✅ Build tuple matching YOUR table structure WITH inspector_notes
                     all_values.append((
                         str(uuid.uuid4()),              # id
                         inspection_id,                   # inspection_id
@@ -252,6 +259,7 @@ class InspectionDataProcessor:
                         component,                      # component
                         trade,                          # trade
                         status,                         # status_class
+                        inspector_notes,                # inspector_notes ← NEW!
                         urgency,                        # urgency
                         planned_completion,             # planned_completion
                         owner_signoff,                  # owner_signoff_timestamp
@@ -262,18 +270,19 @@ class InspectionDataProcessor:
                 logger.info(f"📊 SAVE - Status breakdown:")
                 for status, count in status_counts.items():
                     logger.info(f"     {status}: {count} items")
+                logger.info(f"📝 SAVE - Inspector notes: {notes_count}/{len(items)} items have notes ({notes_count/len(items)*100:.1f}%)")  # ← NEW
                 logger.info(f"📊 SAVE - Unit types in data: {sorted(unit_types_seen)}")
                 logger.info(f"📊 SAVE - Inserting {len(all_values)} items...")
                 
-                # ✅ Bulk insert with CORRECT column names
+                # ✅ Bulk insert with CORRECT column names INCLUDING inspector_notes
                 if self.db_type == "postgresql":
                     execute_values(cursor, """
                         INSERT INTO inspector_inspection_items
                         (id, inspection_id, unit, unit_type, inspection_date, room,
-                        component, trade, status_class, urgency, planned_completion,
+                        component, trade, status_class, inspector_notes, urgency, planned_completion,
                         owner_signoff_timestamp, original_status, created_at)
                         VALUES %s
-                    """, [(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], 'NOW()') 
+                    """, [(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], v[13], 'NOW()') 
                         for v in all_values],
                     page_size=1000)
                 
@@ -725,6 +734,14 @@ class InspectionDataProcessor:
             
             if not inspection_cols:
                 raise ValueError("No inspection columns found in CSV")
+            
+            # ✅ NEW: STEP 4B - Get notes columns
+            notes_cols = [c for c in df.columns 
+                    if c.startswith("Pre-Settlement Inspection_") 
+                    and c.endswith("_notes")]
+
+            logger.info(f"📋 Found {len(inspection_cols)} inspection columns")
+            logger.info(f"📝 Found {len(notes_cols)} notes columns")
 
             # STEP 5: Melt data
             all_chunks = []
@@ -742,6 +759,49 @@ class InspectionDataProcessor:
                 all_chunks.append(chunk_df)
 
             long_df = pd.concat(all_chunks, ignore_index=True)
+            
+            # ✅ NEW: STEP 5B - Extract and merge inspector notes
+            if len(notes_cols) > 0:
+                logger.info("📝 Extracting inspector notes...")
+                
+                # Melt notes data
+                notes_chunks = []
+                for i in range(0, len(notes_cols), chunk_size):
+                    chunk_notes_cols = notes_cols[i:i+chunk_size]
+                    
+                    notes_chunk = df.melt(
+                        id_vars=["Unit"],
+                        value_vars=chunk_notes_cols,
+                        var_name="InspectionItem",
+                        value_name="InspectorNotes"
+                    )
+                    notes_chunks.append(notes_chunk)
+                
+                notes_df = pd.concat(notes_chunks, ignore_index=True)
+                
+                # Remove "_notes" suffix to match inspection items
+                notes_df["InspectionItem"] = notes_df["InspectionItem"].str.replace("_notes", "", regex=False)
+                
+                # Merge notes with main data
+                long_df = long_df.merge(
+                    notes_df[["Unit", "InspectionItem", "InspectorNotes"]],
+                    on=["Unit", "InspectionItem"],
+                    how="left"
+                )
+                
+                # Fill empty notes with empty string (not NaN)
+                long_df["InspectorNotes"] = long_df["InspectorNotes"].fillna("")
+                
+                # Log statistics
+                notes_count = (long_df["InspectorNotes"] != "").sum()
+                total_items = len(long_df)
+                notes_pct = (notes_count / total_items * 100) if total_items > 0 else 0
+                
+                logger.info(f"✅ Inspector notes merged: {notes_count}/{total_items} items have notes ({notes_pct:.1f}%)")
+            else:
+                # No notes columns found in CSV
+                long_df["InspectorNotes"] = ""
+                logger.warning("⚠️ No inspector notes columns found in CSV")
 
             # STEP 6: Split Room and Component
             parts = long_df["InspectionItem"].str.split("_", n=2, expand=True)
@@ -825,10 +885,11 @@ class InspectionDataProcessor:
                 axis=1
             )
 
-            # STEP 11: Create final DataFrame
+            # STEP 11: Create final DataFrame WITH INSPECTOR NOTES
             final_df = merged[[
                 "Unit", "UnitType", "InspectionDate", "OwnerSignoffTimestamp",
-                "Room", "Component", "StatusClass", "Trade", "Urgency", "PlannedCompletion"
+                "Room", "Component", "StatusClass", "Trade", "Urgency", "PlannedCompletion",
+                "InspectorNotes"  # ← ADD THIS LINE!
             ]]
 
             # STEP 12: Calculate metrics

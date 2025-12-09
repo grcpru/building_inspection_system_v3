@@ -68,13 +68,13 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         'font_size': 10,
         'bg_color': '#F7F9FC'   # zebra shade
     })
-    
-    # ===== INSPECTOR NOTES FORMATS (NEW) =====
+
+    # === Inspector Notes formats (NEW - for text wrapping) ===
     notes_format = workbook.add_format({
         'align': 'left',
-        'valign': 'top',           # Top align for long text
+        'valign': 'top',           # Top align for readability
         'border': 1,
-        'text_wrap': True,          # Enable wrapping!
+        'text_wrap': True,          # Enable word wrap
         'font_size': 10
     })
 
@@ -86,6 +86,8 @@ def generate_professional_excel_report(final_df: pd.DataFrame, metrics: dict) ->
         'font_size': 10,
         'bg_color': '#F7F9FC'       # Zebra striping
     })
+
+    # === Date formats (exact from working code) ===
 
     # === Date formats (exact from working code) ===
     date_cell_format = workbook.add_format({
