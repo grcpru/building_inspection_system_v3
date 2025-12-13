@@ -8,7 +8,7 @@ while maintaining all existing functionality for image upload and report generat
 
 import pandas as pd
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from io import BytesIO, StringIO
 from typing import Dict, Any, Tuple, Optional
@@ -164,6 +164,689 @@ class InspectorInterface:
         self._button_counter += 1
         return f"{base_key}_{self._button_counter}"
     
+    def show_inspector_dashboard_with_tabs(self):
+        """Enhanced Inspector Dashboard with CSV + API/Webhook Support"""
+        
+        # Database check
+        has_database = bool(self.conn_manager or self.processor.db_manager)
+        
+        if not has_database:
+            st.error("⚠️ Database Not Available")
+            st.warning("Limited functionality - CSV processing only")
+            st.markdown("---")
+        
+        # Show database status
+        self._show_enhanced_database_status()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TABS: CSV Upload vs API/Webhook Inspections
+        # ═══════════════════════════════════════════════════════════════════
+        
+        tab1, tab2 = st.tabs([
+            "📤 CSV Upload (Quick & Simple)",
+            "📡 API Inspections (Full Features)"
+        ])
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 1: CSV UPLOAD (Existing functionality)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        with tab1:
+            st.info("📤 **CSV Upload Mode** - Quick inspection processing")
+            st.caption("⚠️ Note: CSV uploads may not include photos or inspector notes from SafetyCulture API")
+            
+            st.markdown("---")
+            
+            # Call existing sections
+            self._show_previous_inspections_section()
+            self._show_trade_mapping_section()
+            self._show_data_processing_section()
+            
+            # Results and Reports
+            if self.processed_data is not None and self.metrics is not None:
+                self._show_results_and_reports()
+                self._show_enhanced_report_generation()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 2: API/WEBHOOK INSPECTIONS (NEW - with photos & notes)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        with tab2:
+            st.success("📡 **API Mode** - Full-featured reports with photos & inspector notes")
+            st.caption("✨ Generate comprehensive reports from SafetyCulture API data")
+            
+            if not has_database:
+                st.error("❌ Database required for API inspections")
+                st.info("Please configure database connection to use this feature")
+                return
+            
+            st.markdown("---")
+            
+            # Show API inspection interface
+            self._show_api_inspection_interface()
+    
+    def _show_api_inspection_interface(self):
+        """Show interface for API/Webhook inspection reports"""
+        
+        # ───────────────────────────────────────────────────────────────
+        # SECTION 1: Report Scope Selector
+        # ───────────────────────────────────────────────────────────────
+        
+        st.subheader("📋 Select Report Scope")
+        
+        scope_type = st.radio(
+            "What would you like to report on?",
+            ["📅 Date Range", "🏢 Single Inspection", "🏗️ By Building"],
+            horizontal=True,
+            help="Choose how to select inspections for your report"
+        )
+        
+        selected_inspections = []
+        inspection_ids = []
+        
+        # ─────── Option A: Date Range ─────── 
+        if scope_type == "📅 Date Range":
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                start_date = st.date_input(
+                    "From Date",
+                    value=datetime.now() - timedelta(days=7),
+                    max_value=datetime.now(),
+                    key="api_start_date"
+                )
+            
+            with col2:
+                end_date = st.date_input(
+                    "To Date",
+                    value=datetime.now(),
+                    max_value=datetime.now(),
+                    key="api_end_date"
+                )
+            
+            with col3:
+                st.write("")  # Spacing
+                st.write("")  # Spacing
+                if st.button("🔍 Search", type="primary", key="search_date_range"):
+                    with st.spinner("Searching inspections..."):
+                        selected_inspections = self._get_inspections_by_date_range(
+                            start_date, end_date
+                        )
+                        if selected_inspections:
+                            st.session_state['selected_api_inspections'] = selected_inspections
+            
+            # Quick presets
+            st.caption("Quick select:")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                if st.button("Today", key="preset_today"):
+                    st.session_state['api_start_date'] = datetime.now().date()
+                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.rerun()
+            with col2:
+                if st.button("This Week", key="preset_week"):
+                    st.session_state['api_start_date'] = (datetime.now() - timedelta(days=7)).date()
+                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.rerun()
+            with col3:
+                if st.button("This Month", key="preset_month"):
+                    st.session_state['api_start_date'] = datetime.now().replace(day=1).date()
+                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.rerun()
+            with col4:
+                if st.button("Last 30 Days", key="preset_30days"):
+                    st.session_state['api_start_date'] = (datetime.now() - timedelta(days=30)).date()
+                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.rerun()
+            
+            # Load from session state if exists
+            if 'selected_api_inspections' in st.session_state:
+                selected_inspections = st.session_state['selected_api_inspections']
+        
+        # ─────── Option B: Single Inspection ─────── 
+        elif scope_type == "🏢 Single Inspection":
+            with st.spinner("Loading inspections..."):
+                inspections = self._get_all_api_inspections()
+            
+            if len(inspections) > 0:
+                inspection_options = {
+                    f"{insp['date']} - {insp['building']} - Unit {insp['unit']} ({insp['defects']} defects)": insp['id']
+                    for insp in inspections
+                }
+                
+                selected = st.selectbox(
+                    "Select Inspection",
+                    options=list(inspection_options.keys()),
+                    help="Choose one inspection to generate report",
+                    key="single_inspection_select"
+                )
+                
+                if selected:
+                    inspection_id = inspection_options[selected]
+                    selected_inspections = [insp for insp in inspections if insp['id'] == inspection_id]
+            else:
+                st.warning("⚠️ No API inspections found in database")
+                st.info("Complete an inspection in SafetyCulture and ensure webhook sync is working")
+        
+        # ─────── Option C: By Building ─────── 
+        else:  # By Building
+            with st.spinner("Loading buildings..."):
+                buildings = self._get_buildings_with_api_inspections()
+            
+            if len(buildings) > 0:
+                selected_building = st.selectbox(
+                    "Select Building",
+                    options=[b['name'] for b in buildings],
+                    help="All inspections for this building will be included",
+                    key="building_select"
+                )
+                
+                if selected_building:
+                    with st.spinner("Loading inspections for building..."):
+                        selected_inspections = self._get_inspections_by_building(selected_building)
+            else:
+                st.warning("⚠️ No buildings with API inspections found")
+        
+        st.markdown("---")
+        
+        # ───────────────────────────────────────────────────────────────
+        # SECTION 2: Preview Selected Inspections
+        # ───────────────────────────────────────────────────────────────
+        
+        if len(selected_inspections) > 0:
+            st.subheader(f"📊 Preview ({len(selected_inspections)} inspection{'s' if len(selected_inspections) > 1 else ''} selected)")
+            
+            # Calculate summary statistics
+            total_defects = sum(i.get('defects', 0) for i in selected_inspections)
+            total_photos = sum(i.get('photos', 0) for i in selected_inspections)
+            total_notes = sum(i.get('notes_count', 0) for i in selected_inspections)
+            
+            # Display metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📋 Inspections", len(selected_inspections))
+            with col2:
+                st.metric("🚨 Total Defects", total_defects)
+            with col3:
+                st.metric("📸 Photos", total_photos)
+            with col4:
+                st.metric("📝 Notes", total_notes)
+            
+            # Preview table
+            with st.expander("📋 View Inspection Details", expanded=False):
+                import pandas as pd
+                preview_df = pd.DataFrame(selected_inspections)
+                
+                display_columns = ['date', 'building', 'unit', 'defects', 'photos', 'notes_count']
+                display_df = preview_df[display_columns].copy()
+                display_df.columns = ['Date', 'Building', 'Unit', 'Defects', 'Photos', 'Notes']
+                
+                st.dataframe(
+                    display_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            # Photo preview option
+            if total_photos > 0:
+                if st.checkbox("📸 Preview Sample Photos", help="Load photo thumbnails from first inspection"):
+                    with st.spinner("Loading photo thumbnails..."):
+                        photos = self._get_inspection_photos_preview(selected_inspections[0]['id'])
+                        
+                        if len(photos) > 0:
+                            st.caption(f"Showing photos from first inspection (total: {len(photos)} photos)")
+                            cols = st.columns(3)
+                            for idx, photo in enumerate(photos[:9]):  # Show max 9
+                                with cols[idx % 3]:
+                                    st.caption(f"{photo.get('room', 'Unknown')} - {photo.get('component', 'Unknown')}")
+                                    st.info("📷 Photo placeholder (actual photos will be in report)")
+                        else:
+                            st.info("No photos found in this inspection")
+            
+            st.markdown("---")
+            
+            # ───────────────────────────────────────────────────────────
+            # SECTION 3: Generate Reports with Photos & Notes
+            # ───────────────────────────────────────────────────────────
+            
+            st.subheader("📊 Generate Reports")
+            
+            st.info("✨ **Full-featured reports** include photos and inspector notes from SafetyCulture API")
+            
+            col1, col2 = st.columns(2)
+            
+            # ─────── Excel Report with Photos ─────── 
+            with col1:
+                st.markdown("### 📊 Excel Report")
+                st.write("**Includes:**")
+                st.write("• Inspector notes (Column G)")
+                st.write("• Photo thumbnails (Column H)")
+                st.write("• All defect details")
+                st.write("• Settlement readiness")
+                st.write("• Status tracking")
+                
+                if st.button("📊 Generate Excel with Photos", type="primary", use_container_width=True, key="gen_excel_api"):
+                    with st.spinner("Generating Excel report with photos... This may take a moment."):
+                        try:
+                            # Get inspection IDs
+                            inspection_ids = [insp['id'] for insp in selected_inspections]
+                            
+                            # TODO: Import and call API Excel generator
+                            # from reports.excel_generator_api import generate_excel_with_photos
+                            # excel_buffer = generate_excel_with_photos(inspection_ids)
+                            
+                            # TEMPORARY: Use existing generator
+                            st.info("🚧 Excel generator with photos coming soon!")
+                            st.info("For now, this will use the standard Excel generator")
+                            
+                            # Load inspection data
+                            if len(inspection_ids) == 1:
+                                final_df, metrics = self.processor.load_inspection_from_database(inspection_ids[0])
+                                
+                                if final_df is not None and metrics is not None:
+                                    from reports.excel_generator import generate_professional_excel_report
+                                    
+                                    excel_buffer = generate_professional_excel_report(final_df, metrics)
+                                    
+                                    st.success("✅ Excel report generated!")
+                                    
+                                    # Download button
+                                    st.download_button(
+                                        label="📥 Download Excel Report",
+                                        data=excel_buffer.getvalue(),
+                                        file_name=f"Inspection_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        use_container_width=True,
+                                        key="download_excel_api"
+                                    )
+                                else:
+                                    st.error("Failed to load inspection data")
+                            else:
+                                st.warning("📊 Multi-inspection Excel reports coming soon!")
+                                st.info("Please select a single inspection for now")
+                        
+                        except Exception as e:
+                            st.error(f"Error generating Excel: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+            
+            # ─────── Word Report with Photos ─────── 
+            with col2:
+                st.markdown("### 📄 Word Report")
+                st.write("**Includes:**")
+                st.write("• Inspector notes inline")
+                st.write("• Full-size photos")
+                st.write("• Professional layout")
+                st.write("• Print-ready format")
+                st.write("• Cover page")
+                
+                if st.button("📄 Generate Word with Photos", type="primary", use_container_width=True, key="gen_word_api"):
+                    with st.spinner("Generating Word report with photos... This may take a moment."):
+                        try:
+                            # Get inspection IDs
+                            inspection_ids = [insp['id'] for insp in selected_inspections]
+                            
+                            # TODO: Import and call API Word generator
+                            # from reports.word_generator_api import generate_word_with_photos
+                            # word_buffer = generate_word_with_photos(inspection_ids)
+                            
+                            # TEMPORARY: Use existing generator
+                            st.info("🚧 Word generator with photos coming soon!")
+                            st.info("For now, this will use the standard Word generator")
+                            
+                            # Load inspection data
+                            if len(inspection_ids) == 1:
+                                final_df, metrics = self.processor.load_inspection_from_database(inspection_ids[0])
+                                
+                                if final_df is not None and metrics is not None:
+                                    from reports.word_generator import generate_professional_word_report
+                                    
+                                    word_buffer = generate_professional_word_report(
+                                        final_df, 
+                                        metrics,
+                                        images=st.session_state.get('report_images', {'logo': None, 'cover': None})
+                                    )
+                                    
+                                    st.success("✅ Word report generated!")
+                                    
+                                    # Download button
+                                    st.download_button(
+                                        label="📥 Download Word Report",
+                                        data=word_buffer.getvalue(),
+                                        file_name=f"Inspection_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        use_container_width=True,
+                                        key="download_word_api"
+                                    )
+                                else:
+                                    st.error("Failed to load inspection data")
+                            else:
+                                st.warning("📄 Multi-inspection Word reports coming soon!")
+                                st.info("Please select a single inspection for now")
+                        
+                        except Exception as e:
+                            st.error(f"Error generating Word: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+            
+            st.markdown("---")
+            
+            # ───────────────────────────────────────────────────────────
+            # SECTION 4: Future Features
+            # ───────────────────────────────────────────────────────────
+            
+            with st.expander("📧 Email Report (Coming Soon)", expanded=False):
+                st.caption("Future feature: Send reports directly via email")
+                
+                email = st.text_input("Send to email:", placeholder="developer@example.com", disabled=True)
+                include_photos = st.checkbox("Include photos in email", value=True, disabled=True)
+                
+                if st.button("📧 Send Email", disabled=True):
+                    st.info("Email feature coming in next release!")
+        
+        else:
+            st.info("👆 Select a report scope above to get started")
+            st.caption("Choose date range, single inspection, or building to view available reports")
+    
+    # ═══════════════════════════════════════════════════════════════════
+    # HELPER METHODS FOR API INSPECTIONS
+    # ═══════════════════════════════════════════════════════════════════
+    
+    def _get_inspections_by_date_range(self, start_date, end_date):
+        """Get API inspections within date range"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT 
+                        i.id,
+                        i.inspection_date::date as date,
+                        b.name as building,
+                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = i.id LIMIT 1) as unit,
+                        i.total_defects as defects,
+                        COUNT(DISTINCT CASE WHEN ii.photo_url IS NOT NULL AND ii.photo_url != '' THEN ii.id END) as photos,
+                        COUNT(DISTINCT CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != '' THEN ii.id END) as notes_count
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    LEFT JOIN inspector_inspection_items ii ON ii.inspection_id = i.id
+                    WHERE i.inspection_date::date BETWEEN %s AND %s
+                    GROUP BY i.id, i.inspection_date, b.name, i.total_defects
+                    ORDER BY i.inspection_date DESC
+                """
+                cursor.execute(query, (start_date, end_date))
+            else:
+                query = """
+                    SELECT 
+                        i.id,
+                        date(i.inspection_date) as date,
+                        b.name as building,
+                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = i.id LIMIT 1) as unit,
+                        i.total_defects as defects,
+                        COUNT(DISTINCT CASE WHEN ii.photo_url IS NOT NULL AND ii.photo_url != '' THEN ii.id END) as photos,
+                        COUNT(DISTINCT CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != '' THEN ii.id END) as notes_count
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    LEFT JOIN inspector_inspection_items ii ON ii.inspection_id = i.id
+                    WHERE date(i.inspection_date) BETWEEN ? AND ?
+                    GROUP BY i.id, date(i.inspection_date), b.name, i.total_defects
+                    ORDER BY i.inspection_date DESC
+                """
+                cursor.execute(query, (start_date, end_date))
+            
+            results = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            if results:
+                return [
+                    {
+                        'id': row[0],
+                        'date': str(row[1]),
+                        'building': row[2],
+                        'unit': row[3] or 'N/A',
+                        'defects': row[4] or 0,
+                        'photos': row[5] or 0,
+                        'notes_count': row[6] or 0
+                    }
+                    for row in results
+                ]
+            return []
+        
+        except Exception as e:
+            st.error(f"Error loading inspections: {e}")
+            return []
+    
+    def _get_all_api_inspections(self):
+        """Get all API inspections for dropdown"""
+        try:
+            # Get last 50 inspections
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT 
+                        i.id,
+                        i.inspection_date::date as date,
+                        b.name as building,
+                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = i.id LIMIT 1) as unit,
+                        i.total_defects as defects,
+                        COUNT(DISTINCT CASE WHEN ii.photo_url IS NOT NULL AND ii.photo_url != '' THEN ii.id END) as photos,
+                        COUNT(DISTINCT CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != '' THEN ii.id END) as notes_count
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    LEFT JOIN inspector_inspection_items ii ON ii.inspection_id = i.id
+                    GROUP BY i.id, i.inspection_date, b.name, i.total_defects
+                    ORDER BY i.inspection_date DESC
+                    LIMIT 50
+                """
+                cursor.execute(query)
+            else:
+                query = """
+                    SELECT 
+                        i.id,
+                        date(i.inspection_date) as date,
+                        b.name as building,
+                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = i.id LIMIT 1) as unit,
+                        i.total_defects as defects,
+                        COUNT(DISTINCT CASE WHEN ii.photo_url IS NOT NULL AND ii.photo_url != '' THEN ii.id END) as photos,
+                        COUNT(DISTINCT CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != '' THEN ii.id END) as notes_count
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    LEFT JOIN inspector_inspection_items ii ON ii.inspection_id = i.id
+                    GROUP BY i.id, date(i.inspection_date), b.name, i.total_defects
+                    ORDER BY i.inspection_date DESC
+                    LIMIT 50
+                """
+                cursor.execute(query)
+            
+            results = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            if results:
+                return [
+                    {
+                        'id': row[0],
+                        'date': str(row[1]),
+                        'building': row[2],
+                        'unit': row[3] or 'N/A',
+                        'defects': row[4] or 0,
+                        'photos': row[5] or 0,
+                        'notes_count': row[6] or 0
+                    }
+                    for row in results
+                ]
+            return []
+        
+        except Exception as e:
+            st.error(f"Error loading inspections: {e}")
+            return []
+    
+    def _get_buildings_with_api_inspections(self):
+        """Get list of buildings that have API inspections"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT DISTINCT b.id, b.name, COUNT(i.id) as inspection_count
+                    FROM inspector_buildings b
+                    JOIN inspector_inspections i ON i.building_id = b.id
+                    GROUP BY b.id, b.name
+                    ORDER BY b.name
+                """
+                cursor.execute(query)
+            else:
+                query = """
+                    SELECT DISTINCT b.id, b.name, COUNT(i.id) as inspection_count
+                    FROM inspector_buildings b
+                    JOIN inspector_inspections i ON i.building_id = b.id
+                    GROUP BY b.id, b.name
+                    ORDER BY b.name
+                """
+                cursor.execute(query)
+            
+            results = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            if results:
+                return [
+                    {'id': row[0], 'name': row[1], 'count': row[2]}
+                    for row in results
+                ]
+            return []
+        
+        except Exception as e:
+            st.error(f"Error loading buildings: {e}")
+            return []
+    
+    def _get_inspections_by_building(self, building_name):
+        """Get all inspections for a specific building"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT 
+                        i.id,
+                        i.inspection_date::date as date,
+                        b.name as building,
+                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = i.id LIMIT 1) as unit,
+                        i.total_defects as defects,
+                        COUNT(DISTINCT CASE WHEN ii.photo_url IS NOT NULL AND ii.photo_url != '' THEN ii.id END) as photos,
+                        COUNT(DISTINCT CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != '' THEN ii.id END) as notes_count
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    LEFT JOIN inspector_inspection_items ii ON ii.inspection_id = i.id
+                    WHERE b.name = %s
+                    GROUP BY i.id, i.inspection_date, b.name, i.total_defects
+                    ORDER BY i.inspection_date DESC
+                """
+                cursor.execute(query, (building_name,))
+            else:
+                query = """
+                    SELECT 
+                        i.id,
+                        date(i.inspection_date) as date,
+                        b.name as building,
+                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = i.id LIMIT 1) as unit,
+                        i.total_defects as defects,
+                        COUNT(DISTINCT CASE WHEN ii.photo_url IS NOT NULL AND ii.photo_url != '' THEN ii.id END) as photos,
+                        COUNT(DISTINCT CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != '' THEN ii.id END) as notes_count
+                    FROM inspector_inspections i
+                    JOIN inspector_buildings b ON i.building_id = b.id
+                    LEFT JOIN inspector_inspection_items ii ON ii.inspection_id = i.id
+                    WHERE b.name = ?
+                    GROUP BY i.id, date(i.inspection_date), b.name, i.total_defects
+                    ORDER BY i.inspection_date DESC
+                """
+                cursor.execute(query, (building_name,))
+            
+            results = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            if results:
+                return [
+                    {
+                        'id': row[0],
+                        'date': str(row[1]),
+                        'building': row[2],
+                        'unit': row[3] or 'N/A',
+                        'defects': row[4] or 0,
+                        'photos': row[5] or 0,
+                        'notes_count': row[6] or 0
+                    }
+                    for row in results
+                ]
+            return []
+        
+        except Exception as e:
+            st.error(f"Error loading inspections for building: {e}")
+            return []
+    
+    def _get_inspection_photos_preview(self, inspection_id):
+        """Get photo information for preview (not actual images yet)"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                query = """
+                    SELECT room, component, photo_url, photo_media_id
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = %s
+                    AND photo_url IS NOT NULL
+                    AND photo_url != ''
+                    LIMIT 10
+                """
+                cursor.execute(query, (inspection_id,))
+            else:
+                query = """
+                    SELECT room, component, photo_url, photo_media_id
+                    FROM inspector_inspection_items
+                    WHERE inspection_id = ?
+                    AND photo_url IS NOT NULL
+                    AND photo_url != ''
+                    LIMIT 10
+                """
+                cursor.execute(query, (inspection_id,))
+            
+            results = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            if results:
+                return [
+                    {
+                        'room': row[0],
+                        'component': row[1],
+                        'photo_url': row[2],
+                        'photo_media_id': row[3]
+                    }
+                    for row in results
+                ]
+            return []
+        
+        except Exception as e:
+            st.error(f"Error loading photo info: {e}")
+            return []
+    
+    def _get_connection(self):
+        """Get database connection"""
+        if self.conn_manager:
+            return self.conn_manager.get_connection()
+        elif self.db_manager:
+            return self.db_manager.connect()
+        else:
+            raise Exception("No database connection available")
+        
     def show_inspector_dashboard(self):
         """Show the main inspector dashboard with enhanced database integration"""
         
@@ -3122,7 +3805,7 @@ def render_inspector_interface(user_info=None, auth_manager=None):
     """, unsafe_allow_html=True)
     
     # Show the main dashboard
-    inspector.show_inspector_dashboard()
+    inspector.show_inspector_dashboard_with_tabs()
     
 if __name__ == "__main__":
     print("Enhanced Inspector Interface V3 with Database Integration")
