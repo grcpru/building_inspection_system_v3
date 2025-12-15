@@ -568,14 +568,23 @@ class InspectorInterface:
                             from reports.excel_generator_api import create_excel_report_from_database
                             import psycopg2
                             
-                            # Get database config
-                            db_config = {
-                                'host': os.getenv('SUPABASE_HOST'),
-                                'database': os.getenv('SUPABASE_DATABASE'),
-                                'user': os.getenv('SUPABASE_USER'),
-                                'password': os.getenv('SUPABASE_PASSWORD'),
-                                'port': os.getenv('SUPABASE_PORT', '5432')
-                            }
+                            # Get database config - Streamlit Cloud compatible
+                            try:
+                                db_config = {
+                                    'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
+                                    'database': st.secrets.get('SUPABASE_DATABASE') or os.getenv('SUPABASE_DATABASE'),
+                                    'user': st.secrets.get('SUPABASE_USER') or os.getenv('SUPABASE_USER'),
+                                    'password': st.secrets.get('SUPABASE_PASSWORD') or os.getenv('SUPABASE_PASSWORD'),
+                                    'port': st.secrets.get('SUPABASE_PORT') or os.getenv('SUPABASE_PORT', '5432')
+                                }
+                            except:
+                                db_config = {
+                                    'host': os.getenv('SUPABASE_HOST'),
+                                    'database': os.getenv('SUPABASE_DATABASE'),
+                                    'user': os.getenv('SUPABASE_USER'),
+                                    'password': os.getenv('SUPABASE_PASSWORD'),
+                                    'port': os.getenv('SUPABASE_PORT', '5432')
+                                }
                             
                             # Get SafetyCulture API key - try both sources
                             api_key = None
