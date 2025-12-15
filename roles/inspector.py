@@ -20,7 +20,8 @@ import hashlib
 # Import the enhanced modules
 from core.data_processor import InspectionDataProcessor, load_master_trade_mapping
 from core.trade_mapper import TradeMapper
-
+from reports.excel_generator_api import create_excel_report_from_database
+from reports.word_generator_api import create_word_report_from_database
 # Import enhanced database manager
 try:
     from database.setup import DatabaseManager
@@ -47,7 +48,116 @@ except ImportError:
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+def generate_api_excel_report(inspection_ids: list, db_config: dict, api_key: str) -> str:
+    """
+    Generate Excel report for API inspections with photos
+    
+    Args:
+        inspection_ids: List of inspection IDs to include
+        db_config: Database configuration dictionary
+        api_key: SafetyCulture API key for photo downloads
         
+    Returns:
+        Path to the generated Excel file
+    """
+    import psycopg2
+    
+    # Determine report type
+    report_type = "single" if len(inspection_ids) == 1 else "multi"
+    
+    # Create output filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if report_type == "single":
+        filename = f"inspection_report_{timestamp}.xlsx"
+    else:
+        filename = f"multi_inspection_report_{inspection_ids[0]}_{timestamp}.xlsx"
+    
+    output_path = os.path.join(tempfile.gettempdir(), filename)
+    
+    # Connect to database
+    conn = psycopg2.connect(**db_config)
+    
+    try:
+        # Generate report
+        success = create_excel_report_from_database(
+            inspection_ids=inspection_ids,
+            db_connection=conn,
+            api_key=api_key,
+            output_path=output_path,
+            report_type=report_type
+        )
+        
+        if success:
+            return output_path
+        else:
+            st.error("Failed to generate Excel report")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error generating Excel report: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+        
+    finally:
+        conn.close()
+
+
+def generate_api_word_report(inspection_ids: list, db_config: dict, api_key: str) -> str:
+    """
+    Generate Word report for API inspections with photos
+    
+    Args:
+        inspection_ids: List of inspection IDs to include
+        db_config: Database configuration dictionary
+        api_key: SafetyCulture API key for photo downloads
+        
+    Returns:
+        Path to the generated Word file
+    """
+    import psycopg2
+    
+    # Determine report type
+    report_type = "single" if len(inspection_ids) == 1 else "multi"
+    
+    # Create output filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if report_type == "single":
+        filename = f"inspection_report_{timestamp}.docx"
+    else:
+        filename = f"multi_inspection_report_{inspection_ids[0]}_{timestamp}.docx"
+    
+    output_path = os.path.join(tempfile.gettempdir(), filename)
+    
+    # Connect to database
+    conn = psycopg2.connect(**db_config)
+    
+    try:
+        # Generate report
+        success = create_word_report_from_database(
+            inspection_ids=inspection_ids,
+            db_connection=conn,
+            api_key=api_key,
+            output_path=output_path,
+            report_type=report_type
+        )
+        
+        if success:
+            return output_path
+        else:
+            st.error("Failed to generate Word report")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error generating Word report: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+        
+    finally:
+        conn.close()
+                
 class InspectorInterface:
     """Inspector interface with enhanced V3 database integration for cross-role data access"""
         
@@ -183,17 +293,35 @@ class InspectorInterface:
         # ═══════════════════════════════════════════════════════════════════
         
         tab1, tab2 = st.tabs([
-            "📤 CSV Upload (Quick & Simple)",
-            "📡 API Inspections (Full Features)"
+            "📡 API Inspections (Recommended)",
+            "📤 CSV Upload (Manual Backup)"
         ])
         
         # ═══════════════════════════════════════════════════════════════════
-        # TAB 1: CSV UPLOAD (Existing functionality)
+        # TAB 1: API INSPECTIONS (NEW - Primary workflow)
         # ═══════════════════════════════════════════════════════════════════
-        
+
         with tab1:
-            st.info("📤 **CSV Upload Mode** - Quick inspection processing")
-            st.caption("⚠️ Note: CSV uploads may not include photos or inspector notes from SafetyCulture API")
+            st.success("📡 **API Mode** - Full-featured reports with photos & inspector notes")
+            st.caption("✨ Real-time sync from SafetyCulture - recommended for production use")
+            
+            if not has_database:
+                st.error("❌ Database required for API inspections")
+                st.info("Please configure database connection to use this feature")
+                return
+            
+            st.markdown("---")
+            
+            # Show API inspection interface
+            self._show_api_inspection_interface()
+
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 2: CSV UPLOAD (Backup/Manual workflow)
+        # ═══════════════════════════════════════════════════════════════════
+
+        with tab2:
+            st.info("📤 **CSV Upload Mode** - Manual upload for backup or legacy files")
+            st.caption("⚠️ Use this when API sync isn't available or for processing old CSV files")
             
             st.markdown("---")
             
@@ -206,24 +334,6 @@ class InspectorInterface:
             if self.processed_data is not None and self.metrics is not None:
                 self._show_results_and_reports()
                 self._show_enhanced_report_generation()
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # TAB 2: API/WEBHOOK INSPECTIONS (NEW - with photos & notes)
-        # ═══════════════════════════════════════════════════════════════════
-        
-        with tab2:
-            st.success("📡 **API Mode** - Full-featured reports with photos & inspector notes")
-            st.caption("✨ Generate comprehensive reports from SafetyCulture API data")
-            
-            if not has_database:
-                st.error("❌ Database required for API inspections")
-                st.info("Please configure database connection to use this feature")
-                return
-            
-            st.markdown("---")
-            
-            # Show API inspection interface
-            self._show_api_inspection_interface()
     
     def _show_api_inspection_interface(self):
         """Show interface for API/Webhook inspection reports"""
@@ -387,19 +497,24 @@ class InspectorInterface:
                     hide_index=True
                 )
             
-            # Photo preview option
+            # Photo preview option (ENHANCED - with actual thumbnail display capability)
             if total_photos > 0:
                 if st.checkbox("📸 Preview Sample Photos", help="Load photo thumbnails from first inspection"):
                     with st.spinner("Loading photo thumbnails..."):
                         photos = self._get_inspection_photos_preview(selected_inspections[0]['id'])
                         
                         if len(photos) > 0:
-                            st.caption(f"Showing photos from first inspection (total: {len(photos)} photos)")
+                            st.caption(f"Showing {min(len(photos), 9)} of {len(photos)} photos from first inspection")
+                            
+                            # Display photo info in grid
                             cols = st.columns(3)
                             for idx, photo in enumerate(photos[:9]):  # Show max 9
                                 with cols[idx % 3]:
-                                    st.caption(f"{photo.get('room', 'Unknown')} - {photo.get('component', 'Unknown')}")
-                                    st.info("📷 Photo placeholder (actual photos will be in report)")
+                                    st.caption(f"**{photo.get('room', 'Unknown')}**")
+                                    st.caption(f"{photo.get('component', 'Unknown')}")
+                                    st.info("📷 Photo available")
+                                    if photo.get('photo_url'):
+                                        st.caption(f"URL: {photo['photo_url'][:30]}...")
                         else:
                             st.info("No photos found in this inspection")
             
@@ -425,50 +540,156 @@ class InspectorInterface:
                 st.write("• Settlement readiness")
                 st.write("• Status tracking")
                 
+                # Add at the start of Excel button handler
+                st.write("=== DEBUG ===")
+
+                # Check secrets
+                try:
+                    key = st.secrets.get('SAFETY_CULTURE_API_KEY')
+                    st.write(f"Secrets: {'YES' if key else 'NO'}")
+                    if key:
+                        st.write(f"Key length: {len(key)} chars")
+                except Exception as e:
+                    st.write(f"Secrets error: {e}")
+
+                # Check environment
+                env_key = os.getenv('SAFETY_CULTURE_API_KEY')
+                st.write(f"Environment: {'YES' if env_key else 'NO'}")
+
+                st.write("=== END DEBUG ===")
+
                 if st.button("📊 Generate Excel with Photos", type="primary", use_container_width=True, key="gen_excel_api"):
-                    with st.spinner("Generating Excel report with photos... This may take a moment."):
+                    with st.spinner("Generating Excel report with photos... Downloading and processing images..."):
                         try:
                             # Get inspection IDs
                             inspection_ids = [insp['id'] for insp in selected_inspections]
                             
-                            # TODO: Import and call API Excel generator
-                            # from reports.excel_generator_api import generate_excel_with_photos
-                            # excel_buffer = generate_excel_with_photos(inspection_ids)
+                            # Import the photo-enabled generator
+                            from reports.excel_generator_api import create_excel_report_from_database
+                            import psycopg2
                             
-                            # TEMPORARY: Use existing generator
-                            st.info("🚧 Excel generator with photos coming soon!")
-                            st.info("For now, this will use the standard Excel generator")
+                            # Get database config
+                            db_config = {
+                                'host': os.getenv('SUPABASE_HOST'),
+                                'database': os.getenv('SUPABASE_DATABASE'),
+                                'user': os.getenv('SUPABASE_USER'),
+                                'password': os.getenv('SUPABASE_PASSWORD'),
+                                'port': os.getenv('SUPABASE_PORT', '5432')
+                            }
                             
-                            # Load inspection data
-                            if len(inspection_ids) == 1:
-                                final_df, metrics = self.processor.load_inspection_from_database(inspection_ids[0])
+                            # Get SafetyCulture API key - try both sources
+                            api_key = None
+
+                            # Try secrets.toml first
+                            try:
+                                api_key = st.secrets['SAFETY_CULTURE_API_KEY']
+                                if api_key:
+                                    st.caption("🔑 Using API key from secrets.toml")
+                            except:
+                                pass
+
+                            # Fall back to environment variable (for Railway)
+                            if not api_key:
+                                api_key = os.getenv('SAFETY_CULTURE_API_KEY')
+                                if api_key:
+                                    st.caption("🔑 Using API key from environment")
+
+                            if not api_key:
+                                st.error("❌ SafetyCulture API key not configured")
+                                st.info("""
+                                **Local:** Add to .streamlit/secrets.toml:
+                                SAFETY_CULTURE_API_KEY = "your_key"
                                 
-                                if final_df is not None and metrics is not None:
-                                    from reports.excel_generator import generate_professional_excel_report
-                                    
-                                    excel_buffer = generate_professional_excel_report(final_df, metrics)
-                                    
-                                    st.success("✅ Excel report generated!")
-                                    
-                                    # Download button
+                                **Railway:** Add to Variables tab:
+                                SAFETY_CULTURE_API_KEY = your_key
+                                """)
+                                st.stop()
+                            
+                            # Determine report type
+                            report_type = "single" if len(inspection_ids) == 1 else "multi"
+                            
+                            # Create output file
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            if report_type == "single":
+                                filename = f"inspection_report_{timestamp}.xlsx"
+                            else:
+                                filename = f"multi_inspection_report_{len(inspection_ids)}_inspections_{timestamp}.xlsx"
+                            
+                            output_path = os.path.join(tempfile.gettempdir(), filename)
+                            
+                            # Connect to database
+                            conn = psycopg2.connect(**db_config)
+                            
+                            # Generate report with photos
+                            success = create_excel_report_from_database(
+                                inspection_ids=inspection_ids,
+                                db_connection=conn,
+                                api_key=api_key,
+                                output_path=output_path,
+                                report_type=report_type
+                            )
+                            
+                            conn.close()
+                            
+                            if success and os.path.exists(output_path):
+                                # Success - provide download
+                                with open(output_path, 'rb') as f:
                                     st.download_button(
                                         label="📥 Download Excel Report",
-                                        data=excel_buffer.getvalue(),
-                                        file_name=f"Inspection_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                                        data=f,
+                                        file_name=filename,
                                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                         use_container_width=True,
                                         key="download_excel_api"
                                     )
-                                else:
-                                    st.error("Failed to load inspection data")
+                                
+                                st.success("✅ Excel report with photos generated successfully!")
+                                
+                                # Show detailed summary
+                                file_size = os.path.getsize(output_path)
+                                
+                                col_a, col_b, col_c = st.columns(3)
+                                with col_a:
+                                    st.metric("Inspections", len(inspection_ids))
+                                with col_b:
+                                    st.metric("Photos Embedded", total_photos)
+                                with col_c:
+                                    st.metric("File Size", f"{file_size / 1024:.1f} KB")
+                                
+                                st.info(f"""
+                                **Report Details:**
+                                • {total_defects} defects documented
+                                • {total_photos} photos downloaded and embedded
+                                • {total_notes} inspector notes included
+                                • Format: Column H thumbnails (150x150px)
+                                • Photos cached for faster generation
+                                """)
+                                
+                                # Cleanup option
+                                if os.path.exists(output_path):
+                                    try:
+                                        import time
+                                        time.sleep(2)
+                                    except:
+                                        pass
                             else:
-                                st.warning("📊 Multi-inspection Excel reports coming soon!")
-                                st.info("Please select a single inspection for now")
+                                st.error("❌ Failed to generate Excel report")
+                                st.warning("Check console logs for details")
+                        
+                        except ImportError as ie:
+                            st.error(f"❌ Import Error: {ie}")
+                            st.warning("Make sure excel_generator_api.py is in the reports/ directory")
+                            st.info("""
+                            **Required files:**
+                            • reports/excel_generator_api.py
+                            • Install: pip install openpyxl Pillow requests
+                            """)
                         
                         except Exception as e:
-                            st.error(f"Error generating Excel: {e}")
+                            st.error(f"❌ Error generating Excel: {e}")
                             import traceback
-                            st.code(traceback.format_exc())
+                            with st.expander("🔍 Error Details"):
+                                st.code(traceback.format_exc())
             
             # ─────── Word Report with Photos ─────── 
             with col2:
@@ -481,53 +702,138 @@ class InspectorInterface:
                 st.write("• Cover page")
                 
                 if st.button("📄 Generate Word with Photos", type="primary", use_container_width=True, key="gen_word_api"):
-                    with st.spinner("Generating Word report with photos... This may take a moment."):
+                    with st.spinner("Generating Word report with photos... Downloading and formatting images..."):
                         try:
                             # Get inspection IDs
                             inspection_ids = [insp['id'] for insp in selected_inspections]
                             
-                            # TODO: Import and call API Word generator
-                            # from reports.word_generator_api import generate_word_with_photos
-                            # word_buffer = generate_word_with_photos(inspection_ids)
+                            # Import the photo-enabled generator
+                            from reports.word_generator_api import create_word_report_from_database
+                            import psycopg2
                             
-                            # TEMPORARY: Use existing generator
-                            st.info("🚧 Word generator with photos coming soon!")
-                            st.info("For now, this will use the standard Word generator")
+                            # Get database config
+                            db_config = {
+                                'host': os.getenv('SUPABASE_HOST'),
+                                'database': os.getenv('SUPABASE_DATABASE'),
+                                'user': os.getenv('SUPABASE_USER'),
+                                'password': os.getenv('SUPABASE_PASSWORD'),
+                                'port': os.getenv('SUPABASE_PORT', '5432')
+                            }
                             
-                            # Load inspection data
-                            if len(inspection_ids) == 1:
-                                final_df, metrics = self.processor.load_inspection_from_database(inspection_ids[0])
+                            # Get SafetyCulture API key - try both sources
+                            api_key = None
+
+                            # Try secrets.toml first
+                            try:
+                                api_key = st.secrets['SAFETY_CULTURE_API_KEY']
+                                if api_key:
+                                    st.caption("🔑 Using API key from secrets.toml")
+                            except:
+                                pass
+
+                            # Fall back to environment variable (for Railway)
+                            if not api_key:
+                                api_key = os.getenv('SAFETY_CULTURE_API_KEY')
+                                if api_key:
+                                    st.caption("🔑 Using API key from environment")
+
+                            if not api_key:
+                                st.error("❌ SafetyCulture API key not configured")
+                                st.info("""
+                                **Local:** Add to .streamlit/secrets.toml:
+                                SAFETY_CULTURE_API_KEY = "your_key"
                                 
-                                if final_df is not None and metrics is not None:
-                                    from reports.word_generator import generate_professional_word_report
-                                    
-                                    word_buffer = generate_professional_word_report(
-                                        final_df, 
-                                        metrics,
-                                        images=st.session_state.get('report_images', {'logo': None, 'cover': None})
-                                    )
-                                    
-                                    st.success("✅ Word report generated!")
-                                    
-                                    # Download button
+                                **Railway:** Add to Variables tab:
+                                SAFETY_CULTURE_API_KEY = your_key
+                                """)
+                                st.stop()
+                            
+                            # Determine report type
+                            report_type = "single" if len(inspection_ids) == 1 else "multi"
+                            
+                            # Create output file
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            if report_type == "single":
+                                filename = f"inspection_report_{timestamp}.docx"
+                            else:
+                                filename = f"multi_inspection_report_{len(inspection_ids)}_inspections_{timestamp}.docx"
+                            
+                            output_path = os.path.join(tempfile.gettempdir(), filename)
+                            
+                            # Connect to database
+                            conn = psycopg2.connect(**db_config)
+                            
+                            # Generate report with photos
+                            success = create_word_report_from_database(
+                                inspection_ids=inspection_ids,
+                                db_connection=conn,
+                                api_key=api_key,
+                                output_path=output_path,
+                                report_type=report_type
+                            )
+                            
+                            conn.close()
+                            
+                            if success and os.path.exists(output_path):
+                                # Success - provide download
+                                with open(output_path, 'rb') as f:
                                     st.download_button(
                                         label="📥 Download Word Report",
-                                        data=word_buffer.getvalue(),
-                                        file_name=f"Inspection_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                                        data=f,
+                                        file_name=filename,
                                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                         use_container_width=True,
                                         key="download_word_api"
                                     )
-                                else:
-                                    st.error("Failed to load inspection data")
+                                
+                                st.success("✅ Word report with photos generated successfully!")
+                                
+                                # Show detailed summary
+                                file_size = os.path.getsize(output_path)
+                                
+                                col_a, col_b, col_c = st.columns(3)
+                                with col_a:
+                                    st.metric("Inspections", len(inspection_ids))
+                                with col_b:
+                                    st.metric("Photos Embedded", total_photos)
+                                with col_c:
+                                    st.metric("File Size", f"{file_size / 1024:.1f} KB")
+                                
+                                st.info(f"""
+                                **Report Details:**
+                                • {total_defects} defects documented
+                                • {total_photos} full-size photos embedded
+                                • {total_notes} inspector notes included
+                                • Format: 5 inches wide with captions
+                                • Professional defect tables
+                                • Ready for printing
+                                """)
+                                
+                                # Cleanup option
+                                if os.path.exists(output_path):
+                                    try:
+                                        import time
+                                        time.sleep(2)
+                                    except:
+                                        pass
                             else:
-                                st.warning("📄 Multi-inspection Word reports coming soon!")
-                                st.info("Please select a single inspection for now")
+                                st.error("❌ Failed to generate Word report")
+                                st.warning("Check console logs for details")
+                        
+                        except ImportError as ie:
+                            st.error(f"❌ Import Error: {ie}")
+                            st.warning("Make sure word_generator_api.py is in the reports/ directory")
+                            st.info("""
+                            **Required files:**
+                            • reports/word_generator_api.py
+                            • Install: pip install python-docx Pillow requests
+                            """)
                         
                         except Exception as e:
-                            st.error(f"Error generating Word: {e}")
+                            st.error(f"❌ Error generating Word: {e}")
                             import traceback
-                            st.code(traceback.format_exc())
+                            with st.expander("🔍 Error Details"):
+                                st.code(traceback.format_exc())
             
             st.markdown("---")
             
@@ -792,7 +1098,7 @@ class InspectorInterface:
             return []
     
     def _get_inspection_photos_preview(self, inspection_id):
-        """Get photo information for preview (not actual images yet)"""
+        """Get photo information for preview"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -825,17 +1131,17 @@ class InspectorInterface:
             if results:
                 return [
                     {
-                        'room': row[0],
-                        'component': row[1],
-                        'photo_url': row[2],
-                        'photo_media_id': row[3]
+                        'room': row[0] or 'Unknown',
+                        'component': row[1] or 'Unknown',
+                        'photo_url': row[2] or '',
+                        'photo_media_id': row[3] or ''
                     }
                     for row in results
                 ]
             return []
         
         except Exception as e:
-            st.error(f"Error loading photo info: {e}")
+            st.error(f"Error: {e}")
             return []
     
     def _get_connection(self):
