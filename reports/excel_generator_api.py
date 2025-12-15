@@ -202,7 +202,7 @@ class ExcelGeneratorAPI:
                 
                 # Issue Description (C)
                 cell = ws.cell(row=current_row, column=3)
-                cell.value = defect.get('issue_description', '')
+                cell.value = defect.get('description', '')
                 cell.alignment = wrap_alignment
                 cell.border = thin_border
                 

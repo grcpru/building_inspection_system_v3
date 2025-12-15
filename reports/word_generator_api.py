@@ -161,7 +161,7 @@ class WordGeneratorAPI:
         details = [
             ('Room:', defect.get('room', 'N/A')),
             ('Component:', defect.get('component', 'N/A')),
-            ('Issue:', defect.get('issue_description', 'N/A')),
+            ('Issue:', defect.get('description', 'N/A')),
             ('Trade:', defect.get('trade', 'N/A')),
             ('Priority:', defect.get('priority', 'N/A')),
             ('Status:', defect.get('status', 'Open')),
