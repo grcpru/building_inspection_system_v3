@@ -581,8 +581,8 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     
     # Query defects
     cursor.execute("""
-        SELECT room, component, issue_description, trade, priority, status,
-               inspector_notes, photo_url, photo_media_id
+        SELECT room, component, trade, urgency, status_class,
+            photo_url, photo_media_id, inspector_notes
         FROM inspector_inspection_items
         WHERE inspection_id = %s
         ORDER BY room, component
@@ -591,15 +591,15 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     defects = []
     for row in cursor.fetchall():
         defects.append({
-            'room': row[0] or '',
-            'component': row[1] or '',
-            'issue_description': row[2] or '',
-            'trade': row[3] or '',
-            'priority': row[4] or '',
-            'status': row[5] or 'Open',
-            'inspector_notes': row[6] or '',
-            'photo_url': row[7] or '',
-            'photo_media_id': row[8] or ''
+            'room': row[0],
+            'component': row[1],
+            'description': row[2],  # notes → description
+            'trade': row[3],
+            'priority': row[4],  # urgency → priority
+            'status': row[5],  # status_class → status
+            'photo_url': row[6],
+            'photo_media_id': row[7],
+            'inspector_notes': row[8]
         })
     
     cursor.close()
