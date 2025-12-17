@@ -157,22 +157,22 @@ class WordGeneratorAPI:
         table.columns[0].width = Inches(1.5)
         table.columns[1].width = Inches(5.0)
         
-        # Fill in defect details
+        # Fill in defect details - handle None values
         details = [
-            ('Room:', defect.get('room', 'N/A')),
-            ('Component:', defect.get('component', 'N/A')),
-            ('Issue:', defect.get('description', 'N/A')),
-            ('Trade:', defect.get('trade', 'N/A')),
-            ('Priority:', defect.get('priority', 'N/A')),
-            ('Status:', defect.get('status', 'Open')),
-            ('Inspector Notes:', defect.get('inspector_notes', 'None'))
+            ('Room:', str(defect.get('room') or 'N/A')),
+            ('Component:', str(defect.get('component') or 'N/A')),
+            ('Issue:', str(defect.get('description') or 'N/A')),
+            ('Trade:', str(defect.get('trade') or 'N/A')),
+            ('Priority:', str(defect.get('priority') or 'N/A')),
+            ('Status:', str(defect.get('status') or 'Open')),
+            ('Inspector Notes:', str(defect.get('inspector_notes') or 'None'))
         ]
-        
+
         for idx, (label, value) in enumerate(details):
             row = table.rows[idx]
             row.cells[0].text = label
             row.cells[0].paragraphs[0].runs[0].font.bold = True
-            row.cells[1].text = value
+            row.cells[1].text = value  # ✅ Now value is always a string
             
             # Highlight priority
             if label == 'Priority:':
