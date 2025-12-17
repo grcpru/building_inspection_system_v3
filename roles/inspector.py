@@ -582,7 +582,7 @@ class InspectorInterface:
 
                 st.write("=== END DEBUG ===")
 
-                if st.button("📊 Generate Excel with Photos", type="primary", ...):
+                if st.button("📊 Generate Excel with Photos", type="primary", use_container_width=True, key="gen_excel_api"):
                     with st.spinner("Generating Excel report with photos..."):
                         try:
                             inspection_ids = [insp['id'] for insp in selected_inspections]
