@@ -581,7 +581,7 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     
     # Query defects
     cursor.execute("""
-        SELECT room, component, trade, urgency, status_class,
+        SELECT room, component, notes, trade, urgency, status_class,
             photo_url, photo_media_id, inspector_notes
         FROM inspector_inspection_items
         WHERE inspection_id = %s
