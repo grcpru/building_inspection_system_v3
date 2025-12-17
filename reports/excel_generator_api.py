@@ -458,7 +458,7 @@ class ExcelGeneratorAPI:
             # Add all cell data
             ws.cell(row=current_row, column=1, value=defect.get('room', '')).alignment = wrap_alignment
             ws.cell(row=current_row, column=2, value=defect.get('component', '')).alignment = wrap_alignment
-            ws.cell(row=current_row, column=3, value=defect.get('issue_description', '')).alignment = wrap_alignment
+            ws.cell(row=current_row, column=3, value=defect.get('description', '')).alignment = wrap_alignment
             ws.cell(row=current_row, column=4, value=defect.get('trade', '')).alignment = center_alignment
             
             priority_cell = ws.cell(row=current_row, column=5, value=defect.get('priority', ''))
