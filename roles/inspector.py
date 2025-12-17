@@ -711,23 +711,30 @@ class InspectorInterface:
                 st.write("• Cover page")
                 
                 if st.button("📄 Generate Word with Photos", type="primary", use_container_width=True, key="gen_word_api"):
-                    with st.spinner("Generating Word report with photos... Downloading and formatting images..."):
+                    with st.spinner("Generating Word report with photos..."):
                         try:
-                            # Get inspection IDs
                             inspection_ids = [insp['id'] for insp in selected_inspections]
                             
-                            # Import the photo-enabled generator
                             from reports.word_generator_api import create_word_report_from_database
                             import psycopg2
                             
-                            # Get database config
-                            db_config = {
-                                'host': os.getenv('SUPABASE_HOST'),
-                                'database': os.getenv('SUPABASE_DATABASE'),
-                                'user': os.getenv('SUPABASE_USER'),
-                                'password': os.getenv('SUPABASE_PASSWORD'),
-                                'port': os.getenv('SUPABASE_PORT', '5432')
-                            }
+                            # ✅ NEW - Works in Streamlit Cloud
+                            try:
+                                db_config = {
+                                    'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
+                                    'database': st.secrets.get('SUPABASE_DATABASE') or os.getenv('SUPABASE_DATABASE'),
+                                    'user': st.secrets.get('SUPABASE_USER') or os.getenv('SUPABASE_USER'),
+                                    'password': st.secrets.get('SUPABASE_PASSWORD') or os.getenv('SUPABASE_PASSWORD'),
+                                    'port': st.secrets.get('SUPABASE_PORT') or os.getenv('SUPABASE_PORT', '5432')
+                                }
+                            except:
+                                db_config = {
+                                    'host': os.getenv('SUPABASE_HOST'),
+                                    'database': os.getenv('SUPABASE_DATABASE'),
+                                    'user': os.getenv('SUPABASE_USER'),
+                                    'password': os.getenv('SUPABASE_PASSWORD'),
+                                    'port': os.getenv('SUPABASE_PORT', '5432')
+                                }
                             
                             # Get SafetyCulture API key - try both sources
                             api_key = None
