@@ -22,6 +22,8 @@ from core.data_processor import InspectionDataProcessor, load_master_trade_mappi
 from core.trade_mapper import TradeMapper
 from reports.excel_generator_api import create_excel_report_from_database
 from reports.word_generator_api import create_word_report_from_database
+from reports.excel_generator_api_professional import create_professional_excel_from_database
+
 # Import enhanced database manager
 try:
     from database.setup import DatabaseManager
@@ -580,17 +582,16 @@ class InspectorInterface:
 
                 st.write("=== END DEBUG ===")
 
-                if st.button("📊 Generate Excel with Photos", type="primary", use_container_width=True, key="gen_excel_api"):
-                    with st.spinner("Generating Excel report with photos... Downloading and processing images..."):
+                if st.button("📊 Generate Excel with Photos", type="primary", ...):
+                    with st.spinner("Generating Excel report with photos..."):
                         try:
-                            # Get inspection IDs
                             inspection_ids = [insp['id'] for insp in selected_inspections]
                             
-                            # Import the photo-enabled generator
-                            from reports.excel_generator_api import create_excel_report_from_database
+                            # NEW IMPORT
+                            from reports.excel_generator_api_professional import create_professional_excel_from_database
                             import psycopg2
                             
-                            # Get database config - Streamlit Cloud compatible
+                            # Get database config (keep your existing code)
                             try:
                                 db_config = {
                                     'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
@@ -608,10 +609,8 @@ class InspectorInterface:
                                     'port': os.getenv('SUPABASE_PORT', '5432')
                                 }
                             
-                            # Get SafetyCulture API key - try both sources
+                            # Get API key (keep your existing code)
                             api_key = None
-
-                            # Try secrets.toml first
                             try:
                                 api_key = st.secrets['SAFETY_CULTURE_API_KEY']
                                 if api_key:
@@ -619,7 +618,6 @@ class InspectorInterface:
                             except:
                                 pass
 
-                            # Fall back to environment variable (for Railway)
                             if not api_key:
                                 api_key = os.getenv('SAFETY_CULTURE_API_KEY')
                                 if api_key:
@@ -627,13 +625,6 @@ class InspectorInterface:
 
                             if not api_key:
                                 st.error("❌ SafetyCulture API key not configured")
-                                st.info("""
-                                **Local:** Add to .streamlit/secrets.toml:
-                                SAFETY_CULTURE_API_KEY = "your_key"
-                                
-                                **Railway:** Add to Variables tab:
-                                SAFETY_CULTURE_API_KEY = your_key
-                                """)
                                 st.stop()
                             
                             # Determine report type
@@ -642,17 +633,17 @@ class InspectorInterface:
                             # Create output file
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             if report_type == "single":
-                                filename = f"inspection_report_{timestamp}.xlsx"
+                                filename = f"professional_inspection_report_{timestamp}.xlsx"
                             else:
-                                filename = f"multi_inspection_report_{len(inspection_ids)}_inspections_{timestamp}.xlsx"
+                                filename = f"professional_multi_report_{len(inspection_ids)}_inspections_{timestamp}.xlsx"
                             
                             output_path = os.path.join(tempfile.gettempdir(), filename)
                             
                             # Connect to database
                             conn = psycopg2.connect(**db_config)
                             
-                            # Generate report with photos
-                            success = create_excel_report_from_database(
+                            # ===== NEW: Use professional generator =====
+                            success = create_professional_excel_from_database(
                                 inspection_ids=inspection_ids,
                                 db_connection=conn,
                                 api_key=api_key,
@@ -666,55 +657,43 @@ class InspectorInterface:
                                 # Success - provide download
                                 with open(output_path, 'rb') as f:
                                     st.download_button(
-                                        label="📥 Download Excel Report",
+                                        label="📥 Download Professional Excel Report",
                                         data=f,
                                         file_name=filename,
                                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                         use_container_width=True,
-                                        key="download_excel_api"
+                                        key="download_excel_professional"
                                     )
                                 
-                                st.success("✅ Excel report with photos generated successfully!")
+                                st.success("✅ Professional Excel report generated!")
                                 
-                                # Show detailed summary
+                                # Show summary
                                 file_size = os.path.getsize(output_path)
                                 
-                                col_a, col_b, col_c = st.columns(3)
+                                col_a, col_b, col_c, col_d = st.columns(4)
                                 with col_a:
                                     st.metric("Inspections", len(inspection_ids))
                                 with col_b:
-                                    st.metric("Photos Embedded", total_photos)
+                                    st.metric("Total Defects", total_defects)
                                 with col_c:
+                                    st.metric("Photos", total_photos)
+                                with col_d:
                                     st.metric("File Size", f"{file_size / 1024:.1f} KB")
                                 
-                                st.info(f"""
-                                **Report Details:**
-                                • {total_defects} defects documented
-                                • {total_photos} photos downloaded and embedded
-                                • {total_notes} inspector notes included
-                                • Format: Column H thumbnails (150x150px)
-                                • Photos cached for faster generation
-                                """)
+                                st.info(f'''
+                                **Report Features:**
+                                • 📊 Executive Dashboard with Quality Score
+                                • 🏠 Settlement Readiness Analysis
+                                • 📸 {total_photos} photos embedded as thumbnails
+                                • 📝 {total_notes} inspector notes included
+                                • 🔧 Trade/Room/Component/Unit summaries
+                                • 📅 Inspection Timeline tracking
+                                • 📄 Complete metadata
+                                ''')
                                 
-                                # Cleanup option
-                                if os.path.exists(output_path):
-                                    try:
-                                        import time
-                                        time.sleep(2)
-                                    except:
-                                        pass
                             else:
                                 st.error("❌ Failed to generate Excel report")
                                 st.warning("Check console logs for details")
-                        
-                        except ImportError as ie:
-                            st.error(f"❌ Import Error: {ie}")
-                            st.warning("Make sure excel_generator_api.py is in the reports/ directory")
-                            st.info("""
-                            **Required files:**
-                            • reports/excel_generator_api.py
-                            • Install: pip install openpyxl Pillow requests
-                            """)
                         
                         except Exception as e:
                             st.error(f"❌ Error generating Excel: {e}")

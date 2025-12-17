@@ -1,0 +1,926 @@
+"""
+Professional Excel Report Generator for API Inspections with Photos
+Building Inspection System V3 - Essential Community Management (ECM)
+
+Combines:
+- Professional template from excel_report_generator.py (dashboards, metrics, analysis)
+- Photo support from excel_generator_api.py (SafetyCulture API integration)
+- Database integration for PostgreSQL/Supabase
+
+Features:
+- Executive Dashboard with Quality Score
+- Settlement Readiness Analysis
+- Multiple summary sheets (Trade, Room, Component, Unit)
+- Inspection Timeline with sign-off tracking
+- Photos embedded as thumbnails in data sheets
+- Professional formatting and color coding
+"""
+
+import os
+import io
+import requests
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+from io import BytesIO
+from PIL import Image
+import pandas as pd
+import pytz
+import xlsxwriter
+import logging
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+
+class ProfessionalExcelGeneratorAPI:
+    """Generate professional Excel reports for API inspections with photos"""
+    
+    def __init__(self, api_key: str):
+        """
+        Initialize the professional Excel generator
+        
+        Args:
+            api_key: SafetyCulture API key for downloading photos
+        """
+        self.api_key = api_key
+        self.photo_cache = {}  # Cache downloaded photos
+    
+    def download_photo(self, photo_url: str) -> Optional[Image.Image]:
+        """
+        Download a photo from SafetyCulture API
+        
+        Args:
+            photo_url: URL to the photo
+            
+        Returns:
+            PIL Image object or None if download fails
+        """
+        # Check cache first
+        if photo_url in self.photo_cache:
+            return self.photo_cache[photo_url]
+        
+        try:
+            headers = {'Authorization': f'Bearer {self.api_key}'}
+            response = requests.get(photo_url, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                img = Image.open(BytesIO(response.content))
+                self.photo_cache[photo_url] = img
+                return img
+            else:
+                logger.warning(f"Failed to download photo: {photo_url} (Status: {response.status_code})")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error downloading photo from {photo_url}: {str(e)}")
+            return None
+    
+    def resize_to_thumbnail(self, img: Image.Image, size: tuple = (150, 150)) -> BytesIO:
+        """
+        Resize image to thumbnail maintaining aspect ratio
+        
+        Args:
+            img: PIL Image object
+            size: Target thumbnail size (width, height)
+            
+        Returns:
+            BytesIO object containing the resized image
+        """
+        # Create a copy to avoid modifying the cached image
+        img_copy = img.copy()
+        
+        # Calculate aspect ratio preserving resize
+        img_copy.thumbnail(size, Image.Resampling.LANCZOS)
+        
+        # Save to BytesIO
+        output = BytesIO()
+        img_copy.save(output, format='PNG')
+        output.seek(0)
+        
+        return output
+    
+    def transform_api_data(self, inspection_data: Dict[str, Any], defects: List[Dict[str, Any]]) -> tuple:
+        """
+        Transform API data to DataFrame format expected by professional template
+        
+        Args:
+            inspection_data: Inspection metadata dict
+            defects: List of defect dicts from database
+            
+        Returns:
+            tuple: (processed_data DataFrame, metrics dict)
+        """
+        # Convert defects to DataFrame
+        if len(defects) == 0:
+            processed_data = pd.DataFrame(columns=[
+                'Unit', 'UnitType', 'Room', 'Component', 'Trade', 'StatusClass',
+                'Urgency', 'InspectionDate', 'InspectorNotes', 'IssueDescription',
+                'photo_url', 'photo_media_id'
+            ])
+        else:
+            processed_data = pd.DataFrame(defects)
+            
+            # Add Unit and UnitType if missing
+            if 'Unit' not in processed_data.columns:
+                # Extract from inspection_data or use default
+                unit_name = inspection_data.get('unit', 'Unit')
+                processed_data['Unit'] = unit_name
+            
+            if 'UnitType' not in processed_data.columns:
+                unit_type = inspection_data.get('unit_type', 'Apartment')
+                processed_data['UnitType'] = unit_type
+            
+            # Rename columns to match template
+            column_mapping = {
+                'room': 'Room',
+                'component': 'Component',
+                'trade': 'Trade',
+                'priority': 'Urgency',
+                'status': 'StatusClass',
+                'inspector_notes': 'InspectorNotes',
+                'description': 'IssueDescription'
+            }
+            
+            for old_col, new_col in column_mapping.items():
+                if old_col in processed_data.columns:
+                    processed_data[new_col] = processed_data[old_col]
+            
+            # Add InspectionDate
+            if 'InspectionDate' not in processed_data.columns:
+                insp_date = inspection_data.get('inspection_date', datetime.now())
+                if isinstance(insp_date, str):
+                    insp_date = pd.to_datetime(insp_date)
+                processed_data['InspectionDate'] = insp_date
+            
+            # Ensure StatusClass is set (all items in defects list should be "Not OK")
+            if 'StatusClass' not in processed_data.columns:
+                processed_data['StatusClass'] = 'Not OK'
+        
+        # Calculate metrics
+        metrics = self.calculate_metrics(inspection_data, processed_data)
+        
+        return processed_data, metrics
+    
+    def calculate_metrics(self, inspection_data: Dict[str, Any], processed_data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Calculate all metrics needed for professional dashboard
+        
+        Args:
+            inspection_data: Inspection metadata
+            processed_data: DataFrame with defect data
+            
+        Returns:
+            Dict with all calculated metrics
+        """
+        # Basic counts
+        total_defects = len(processed_data[processed_data['StatusClass'] == 'Not OK'])
+        total_inspections = inspection_data.get('total_items', len(processed_data))
+        
+        # Defect rate
+        defect_rate = (total_defects / total_inspections * 100) if total_inspections > 0 else 0
+        
+        # Settlement readiness (per unit analysis)
+        if 'Unit' in processed_data.columns and len(processed_data) > 0:
+            unit_defect_counts = processed_data[processed_data['StatusClass'] == 'Not OK'].groupby('Unit').size()
+            
+            ready_units = len(unit_defect_counts[unit_defect_counts <= 2])
+            minor_work_units = len(unit_defect_counts[(unit_defect_counts >= 3) & (unit_defect_counts <= 7)])
+            major_work_units = len(unit_defect_counts[(unit_defect_counts >= 8) & (unit_defect_counts <= 15)])
+            extensive_work_units = len(unit_defect_counts[unit_defect_counts > 15])
+            
+            total_units = max(len(unit_defect_counts), 1)
+        else:
+            # Single unit inspection
+            ready_units = 1 if total_defects <= 2 else 0
+            minor_work_units = 1 if 3 <= total_defects <= 7 else 0
+            major_work_units = 1 if 8 <= total_defects <= 15 else 0
+            extensive_work_units = 1 if total_defects > 15 else 0
+            total_units = 1
+        
+        # Calculate percentages
+        ready_pct = (ready_units / total_units * 100) if total_units > 0 else 0
+        minor_pct = (minor_work_units / total_units * 100) if total_units > 0 else 0
+        major_pct = (major_work_units / total_units * 100) if total_units > 0 else 0
+        extensive_pct = (extensive_work_units / total_units * 100) if total_units > 0 else 0
+        
+        # Trade summary
+        if len(processed_data[processed_data['StatusClass'] == 'Not OK']) > 0:
+            summary_trade = processed_data[processed_data['StatusClass'] == 'Not OK'].groupby('Trade').size().reset_index(name='DefectCount')
+            summary_trade = summary_trade.sort_values('DefectCount', ascending=False)
+        else:
+            summary_trade = pd.DataFrame(columns=['Trade', 'DefectCount'])
+        
+        # Room summary
+        if 'Room' in processed_data.columns and len(processed_data[processed_data['StatusClass'] == 'Not OK']) > 0:
+            summary_room = processed_data[processed_data['StatusClass'] == 'Not OK'].groupby('Room').size().reset_index(name='DefectCount')
+            summary_room = summary_room.sort_values('DefectCount', ascending=False)
+        else:
+            summary_room = pd.DataFrame(columns=['Room', 'DefectCount'])
+        
+        # Component summary
+        if 'Component' in processed_data.columns and len(processed_data[processed_data['StatusClass'] == 'Not OK']) > 0:
+            summary_component = processed_data[processed_data['StatusClass'] == 'Not OK'].groupby('Component').size().reset_index(name='DefectCount')
+            summary_component = summary_component.sort_values('DefectCount', ascending=False)
+        else:
+            summary_component = pd.DataFrame(columns=['Component', 'DefectCount'])
+        
+        # Unit summary
+        if 'Unit' in processed_data.columns and len(processed_data[processed_data['StatusClass'] == 'Not OK']) > 0:
+            summary_unit = processed_data[processed_data['StatusClass'] == 'Not OK'].groupby('Unit').size().reset_index(name='DefectCount')
+            summary_unit = summary_unit.sort_values('DefectCount', ascending=False)
+        else:
+            summary_unit = pd.DataFrame(columns=['Unit', 'DefectCount'])
+        
+        # Photo and notes counts
+        photo_count = processed_data['photo_url'].notna().sum() if 'photo_url' in processed_data.columns else 0
+        notes_count = processed_data['InspectorNotes'].notna().sum() if 'InspectorNotes' in processed_data.columns else 0
+        
+        # Build metrics dictionary
+        metrics = {
+            'building_name': inspection_data.get('building_name', 'Building'),
+            'address': inspection_data.get('address', 'Address'),
+            'inspection_date': inspection_data.get('inspection_date', datetime.now().strftime('%Y-%m-%d')),
+            'unit_types_str': inspection_data.get('unit_type', 'Apartment'),
+            'total_units': total_units,
+            'total_inspections': total_inspections,
+            'total_defects': total_defects,
+            'defect_rate': defect_rate,
+            'avg_defects_per_unit': total_defects / total_units if total_units > 0 else 0,
+            'ready_units': ready_units,
+            'minor_work_units': minor_work_units,
+            'major_work_units': major_work_units,
+            'extensive_work_units': extensive_work_units,
+            'ready_pct': ready_pct,
+            'minor_pct': minor_pct,
+            'major_pct': major_pct,
+            'extensive_pct': extensive_pct,
+            'summary_trade': summary_trade,
+            'summary_room': summary_room,
+            'summary_component': summary_component,
+            'summary_unit': summary_unit,
+            'photo_count': photo_count,
+            'notes_count': notes_count,
+            'is_multi_day_inspection': False
+        }
+        
+        return metrics
+    
+    def generate_professional_report(
+        self,
+        inspection_data: Dict[str, Any],
+        defects: List[Dict[str, Any]],
+        output_path: str
+    ) -> bool:
+        """
+        Generate professional Excel report with photos
+        
+        Args:
+            inspection_data: Inspection metadata dict
+            defects: List of defect dicts with photo URLs
+            output_path: Path to save Excel file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            logger.info("Starting professional Excel report generation")
+            
+            # Transform data
+            processed_data, metrics = self.transform_api_data(inspection_data, defects)
+            
+            logger.info(f"Transformed data: {len(processed_data)} rows, {len(metrics['summary_trade'])} trades")
+            
+            # Generate Excel using two-pass process
+            success = self._generate_excel_with_photos(processed_data, metrics, output_path)
+            
+            if success:
+                logger.info(f"Professional Excel report saved to: {output_path}")
+                return True
+            else:
+                logger.error("Failed to generate professional Excel report")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Error generating professional Excel report: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _generate_excel_with_photos(self, final_df: pd.DataFrame, metrics: dict, temp_path: str) -> bool:
+        """
+        Two-pass Excel generation with professional template + photos
+        
+        Pass 1: xlsxwriter creates professional dashboard and formatting
+        Pass 2: openpyxl adds photo thumbnails
+        
+        Args:
+            final_df: DataFrame with defect data
+            metrics: Calculated metrics dict
+            temp_path: Temporary file path for intermediate Excel
+            
+        Returns:
+            True if successful
+        """
+        logger.info("Starting two-pass Excel generation (xlsxwriter + openpyxl)")
+        
+        try:
+            # ===== PASS 1: xlsxwriter - Professional Template =====
+            logger.info("Pass 1: Creating professional template with xlsxwriter")
+            
+            # Create workbook with xlsxwriter
+            workbook = xlsxwriter.Workbook(temp_path, {
+                'nan_inf_to_errors': True,
+                'remove_timezone': True
+            })
+            
+            # Define all formats
+            formats = self._create_formats(workbook)
+            
+            # 1. Executive Dashboard
+            self._create_executive_dashboard(workbook, metrics, formats)
+            
+            # 2. All Defects (placeholder for photos)
+            defects_sheet_idx = self._create_data_sheet_with_photos(workbook, final_df, "📋 All Defects", formats)
+            
+            # 3. Settlement Readiness
+            self._create_settlement_sheet(workbook, metrics, formats)
+            
+            # 4. Trade Summary
+            if len(metrics.get('summary_trade', pd.DataFrame())) > 0:
+                self._create_summary_sheet(workbook, metrics['summary_trade'], "🔧 Trade Summary", formats)
+            
+            # 5. Room Summary
+            if len(metrics.get('summary_room', pd.DataFrame())) > 0:
+                self._create_summary_sheet(workbook, metrics['summary_room'], "🚪 Room Summary", formats)
+            
+            # 6. Component Summary
+            if len(metrics.get('summary_component', pd.DataFrame())) > 0:
+                self._create_summary_sheet(workbook, metrics['summary_component'], "🔧 Component Summary", formats)
+            
+            # 7. Unit Summary
+            if len(metrics.get('summary_unit', pd.DataFrame())) > 0:
+                self._create_summary_sheet(workbook, metrics['summary_unit'], "🏠 Unit Summary", formats)
+            
+            # 8. Inspection Timeline
+            self._create_timeline_sheet(workbook, final_df, metrics, formats)
+            
+            # 9. Metadata
+            self._create_metadata_sheet(workbook, metrics, formats)
+            
+            # Close xlsxwriter workbook
+            workbook.close()
+            logger.info("Pass 1 complete: Professional template created")
+            
+            # ===== PASS 2: openpyxl - Add Photos =====
+            logger.info("Pass 2: Adding photos with openpyxl")
+            self._add_photos_with_openpyxl(temp_path, final_df)
+            logger.info("Pass 2 complete: Photos embedded")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in two-pass Excel generation: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _create_formats(self, workbook):
+        """Create all formats needed for professional template"""
+        return {
+            'title': workbook.add_format({
+                'bold': True,
+                'font_size': 18,
+                'bg_color': '#4CAF50',
+                'font_color': 'white',
+                'align': 'center',
+                'valign': 'vcenter',
+                'border': 2
+            }),
+            'header': workbook.add_format({
+                'bold': True,
+                'align': 'center',
+                'valign': 'vcenter',
+                'bg_color': '#1F4E78',
+                'font_color': 'white',
+                'border': 1
+            }),
+            'cell': workbook.add_format({
+                'align': 'left',
+                'valign': 'vcenter',
+                'border': 1,
+                'font_size': 10
+            }),
+            'cell_alt': workbook.add_format({
+                'align': 'left',
+                'valign': 'vcenter',
+                'border': 1,
+                'font_size': 10,
+                'bg_color': '#F7F9FC'
+            }),
+            'notes': workbook.add_format({
+                'align': 'left',
+                'valign': 'top',
+                'border': 1,
+                'text_wrap': True,
+                'font_size': 10
+            }),
+            'notes_alt': workbook.add_format({
+                'align': 'left',
+                'valign': 'top',
+                'border': 1,
+                'text_wrap': True,
+                'font_size': 10,
+                'bg_color': '#F7F9FC'
+            }),
+            'label': workbook.add_format({
+                'bold': True,
+                'font_size': 11,
+                'bg_color': '#F5F5F5',
+                'border': 1
+            }),
+            'data': workbook.add_format({
+                'font_size': 11,
+                'border': 1,
+                'align': 'right'
+            }),
+            'ready': workbook.add_format({
+                'font_size': 11,
+                'border': 1,
+                'align': 'right',
+                'bg_color': '#C8E6C9',
+                'font_color': '#2E7D32'
+            }),
+            'minor': workbook.add_format({
+                'font_size': 11,
+                'border': 1,
+                'align': 'right',
+                'bg_color': '#FFF3C4',
+                'font_color': '#F57F17'
+            }),
+            'major': workbook.add_format({
+                'font_size': 11,
+                'border': 1,
+                'align': 'right',
+                'bg_color': '#FFCDD2',
+                'font_color': '#C62828'
+            }),
+            'extensive': workbook.add_format({
+                'font_size': 11,
+                'border': 1,
+                'align': 'right',
+                'bg_color': '#F8BBD9',
+                'font_color': '#AD1457'
+            }),
+            'quality_score': workbook.add_format({
+                'font_size': 11,
+                'border': 1,
+                'align': 'right',
+                'bg_color': '#C8E6C9',
+                'font_color': '#2E7D32',
+                'bold': True
+            })
+        }
+    
+    def _create_executive_dashboard(self, workbook, metrics, formats):
+        """Create executive dashboard sheet (simplified from template)"""
+        ws = workbook.add_worksheet("📊 Executive Dashboard")
+        ws.set_column('A:A', 35)
+        ws.set_column('B:B', 45)
+        
+        row = 0
+        
+        # Title
+        ws.merge_range(f'A{row+1}:B{row+1}', 
+                       f'🏢 {metrics["building_name"].upper()} - INSPECTION REPORT',
+                       formats['title'])
+        ws.set_row(row, 30)
+        row += 2
+        
+        # Building Info
+        building_data = [
+            ('Building Name', metrics['building_name']),
+            ('Address', metrics['address']),
+            ('Inspection Date', metrics['inspection_date']),
+            ('Total Units Inspected', f"{metrics['total_units']:,}"),
+            ('Unit Types', metrics['unit_types_str'])
+        ]
+        
+        for label, value in building_data:
+            ws.write(row, 0, label, formats['label'])
+            ws.write(row, 1, value, formats['data'])
+            row += 1
+        
+        row += 1
+        
+        # Inspection Summary with Quality Score
+        quality_score = max(0, 100 - metrics.get('defect_rate', 0))
+        
+        inspection_data = [
+            ('Total Inspection Points', f"{metrics['total_inspections']:,}", formats['data']),
+            ('Total Defects Found', f"{metrics['total_defects']:,}", formats['data']),
+            ('Overall Defect Rate', f"{metrics['defect_rate']:.2f}%", formats['data']),
+            ('Average Defects per Unit', f"{metrics['avg_defects_per_unit']:.1f}", formats['data']),
+            ('Development Quality Score', f"{quality_score:.1f}/100", formats['quality_score']),
+            ('Photos Included', f"{metrics.get('photo_count', 0)}", formats['data']),
+            ('Inspector Notes', f"{metrics.get('notes_count', 0)}", formats['data'])
+        ]
+        
+        for label, value, fmt in inspection_data:
+            ws.write(row, 0, label, formats['label'])
+            ws.write(row, 1, value, fmt)
+            row += 1
+        
+        row += 1
+        
+        # Settlement Readiness
+        readiness_data = [
+            ('✅ Minor Work Required (0-2 defects)',
+             f"{metrics['ready_units']} units ({metrics['ready_pct']:.1f}%)", formats['ready']),
+            ('⚠️ Intermediate Remediation (3-7 defects)',
+             f"{metrics['minor_work_units']} units ({metrics['minor_pct']:.1f}%)", formats['minor']),
+            ('🔧 Major Work Required (8-15 defects)',
+             f"{metrics['major_work_units']} units ({metrics['major_pct']:.1f}%)", formats['major']),
+            ('🚧 Extensive Work Required (15+ defects)',
+             f"{metrics['extensive_work_units']} units ({metrics['extensive_pct']:.1f}%)", formats['extensive'])
+        ]
+        
+        for label, value, fmt in readiness_data:
+            ws.write(row, 0, label, formats['label'])
+            ws.write(row, 1, value, fmt)
+            row += 1
+        
+        row += 1
+        
+        # Top Problem Trades
+        if len(metrics.get('summary_trade', pd.DataFrame())) > 0:
+            top_trades = metrics['summary_trade'].head(10)
+            for idx, (_, trade_row) in enumerate(top_trades.iterrows(), 1):
+                trade_label = f"{idx}. {trade_row['Trade']}"
+                defect_count = f"{trade_row['DefectCount']} defects"
+                ws.write(row, 0, trade_label, formats['label'])
+                ws.write(row, 1, defect_count, formats['data'])
+                row += 1
+        
+        # Footer
+        row += 2
+        melbourne_tz = pytz.timezone('Australia/Melbourne')
+        melbourne_time = datetime.now(melbourne_tz)
+        report_time = melbourne_time.strftime('%d/%m/%Y at %I:%M %p AEDT')
+        
+        ws.merge_range(f'A{row+1}:B{row+1}',
+                       f'Report generated on {report_time} | Professional Inspection Report with Photos',
+                       workbook.add_format({'font_size': 9, 'italic': True, 'align': 'center'}))
+    
+    def _create_data_sheet_with_photos(self, workbook, data_df, sheet_name, formats):
+        """
+        Create data sheet with placeholders for photos (Pass 1)
+        Photos will be added in Pass 2 with openpyxl
+        
+        Returns:
+            Sheet name for photo embedding in Pass 2
+        """
+        ws = workbook.add_worksheet(sheet_name)
+        
+        # Column widths
+        ws.set_column('A:A', 20)  # Room
+        ws.set_column('B:B', 25)  # Component
+        ws.set_column('C:C', 30)  # Issue Description
+        ws.set_column('D:D', 15)  # Trade
+        ws.set_column('E:E', 12)  # Priority
+        ws.set_column('F:F', 12)  # Status
+        ws.set_column('G:G', 50)  # Inspector Notes
+        ws.set_column('H:H', 20)  # Photo (will be populated in Pass 2)
+        
+        # Headers
+        headers = ['Room', 'Component', 'Issue Description', 'Trade', 'Priority', 'Status', 'Inspector Notes', 'Photo']
+        for col_idx, header in enumerate(headers):
+            ws.write(0, col_idx, header, formats['header'])
+        
+        # Data rows
+        for row_idx, (_, row) in enumerate(data_df.iterrows(), start=1):
+            is_alt = (row_idx % 2 == 0)
+            base_fmt = formats['cell_alt'] if is_alt else formats['cell']
+            notes_fmt = formats['notes_alt'] if is_alt else formats['notes']
+            
+            # Write data (columns A-G)
+            ws.write(row_idx, 0, str(row.get('Room', '')), base_fmt)
+            ws.write(row_idx, 1, str(row.get('Component', '')), base_fmt)
+            ws.write(row_idx, 2, str(row.get('IssueDescription', row.get('description', ''))), base_fmt)
+            ws.write(row_idx, 3, str(row.get('Trade', '')), base_fmt)
+            ws.write(row_idx, 4, str(row.get('Urgency', '')), base_fmt)
+            ws.write(row_idx, 5, str(row.get('StatusClass', '')), base_fmt)
+            ws.write(row_idx, 6, str(row.get('InspectorNotes', '')), notes_fmt)
+            
+            # Photo column (H) - placeholder text, images added in Pass 2
+            has_photo = pd.notna(row.get('photo_url'))
+            if has_photo:
+                ws.write(row_idx, 7, 'Photo loading...', base_fmt)
+            else:
+                ws.write(row_idx, 7, '', base_fmt)
+        
+        return sheet_name
+    
+    def _create_settlement_sheet(self, workbook, metrics, formats):
+        """Create settlement readiness sheet"""
+        ws = workbook.add_worksheet("🏠 Settlement Readiness")
+        ws.set_column('A:A', 40)
+        ws.set_column('B:B', 15)
+        ws.set_column('C:C', 15)
+        ws.set_column('D:D', 20)
+        
+        # Headers
+        headers = ['Category', 'Units', 'Percentage', 'Criteria']
+        for col_idx, header in enumerate(headers):
+            ws.write(0, col_idx, header, formats['header'])
+        
+        # Data
+        settlement_data = [
+            ('✅ Minor Work Required', metrics['ready_units'], f"{metrics['ready_pct']:.1f}%", '0-2 defects', formats['ready']),
+            ('⚠️ Intermediate Remediation', metrics['minor_work_units'], f"{metrics['minor_pct']:.1f}%", '3-7 defects', formats['minor']),
+            ('🔧 Major Work Required', metrics['major_work_units'], f"{metrics['major_pct']:.1f}%", '8-15 defects', formats['major']),
+            ('🚧 Extensive Work Required', metrics['extensive_work_units'], f"{metrics['extensive_pct']:.1f}%", '15+ defects', formats['extensive'])
+        ]
+        
+        for row_idx, (category, units, percentage, criteria, fmt) in enumerate(settlement_data, 1):
+            ws.write(row_idx, 0, category, fmt)
+            ws.write(row_idx, 1, units, fmt)
+            ws.write(row_idx, 2, percentage, fmt)
+            ws.write(row_idx, 3, criteria, fmt)
+    
+    def _create_summary_sheet(self, workbook, summary_df, sheet_name, formats):
+        """Create summary sheet (Trade/Room/Component/Unit)"""
+        ws = workbook.add_worksheet(sheet_name)
+        ws.set_column('A:A', 40)
+        ws.set_column('B:B', 15)
+        
+        # Headers
+        headers = list(summary_df.columns)
+        for col_idx, header in enumerate(headers):
+            ws.write(0, col_idx, header, formats['header'])
+        
+        # Data
+        for row_idx, (_, row) in enumerate(summary_df.iterrows(), start=1):
+            is_alt = (row_idx % 2 == 0)
+            fmt = formats['cell_alt'] if is_alt else formats['cell']
+            
+            for col_idx, value in enumerate(row):
+                ws.write(row_idx, col_idx, value, fmt)
+    
+    def _create_timeline_sheet(self, workbook, data_df, metrics, formats):
+        """Create inspection timeline sheet"""
+        ws = workbook.add_worksheet("📅 Inspection Timeline")
+        
+        # Simplified timeline - just show inspection date and defect counts
+        ws.set_column('A:A', 20)
+        ws.set_column('B:B', 15)
+        ws.set_column('C:C', 40)
+        
+        headers = ['Inspection Date', 'Total Defects', 'Notes']
+        for col_idx, header in enumerate(headers):
+            ws.write(0, col_idx, header, formats['header'])
+        
+        ws.write(1, 0, metrics.get('inspection_date', ''), formats['cell'])
+        ws.write(1, 1, metrics.get('total_defects', 0), formats['cell'])
+        ws.write(1, 2, f"Photos: {metrics.get('photo_count', 0)}, Notes: {metrics.get('notes_count', 0)}", formats['cell'])
+    
+    def _create_metadata_sheet(self, workbook, metrics, formats):
+        """Create metadata sheet"""
+        ws = workbook.add_worksheet("📄 Report Metadata")
+        ws.set_column('A:A', 30)
+        ws.set_column('B:B', 40)
+        
+        quality_score = max(0, 100 - metrics.get('defect_rate', 0))
+        
+        melbourne_tz = pytz.timezone('Australia/Melbourne')
+        melbourne_time = datetime.now(melbourne_tz)
+        
+        metadata = [
+            ('Report Generated', melbourne_time.strftime('%Y-%m-%d %H:%M:%S AEDT')),
+            ('Report Version', '3.0 Professional with Photos'),
+            ('Building Name', metrics['building_name']),
+            ('Total Units', str(metrics['total_units'])),
+            ('Total Defects', str(metrics['total_defects'])),
+            ('Quality Score', f"{quality_score:.1f}/100"),
+            ('Photos Included', str(metrics.get('photo_count', 0))),
+            ('Inspector Notes', str(metrics.get('notes_count', 0))),
+            ('Data Source', 'SafetyCulture API via PostgreSQL'),
+            ('Processing Engine', 'Professional Report Generator with Photo Support')
+        ]
+        
+        # Headers
+        ws.write(0, 0, 'Property', formats['header'])
+        ws.write(0, 1, 'Value', formats['header'])
+        
+        # Data
+        for row_idx, (prop, value) in enumerate(metadata, 1):
+            ws.write(row_idx, 0, prop, formats['label'])
+            ws.write(row_idx, 1, value, formats['cell'])
+    
+    def _add_photos_with_openpyxl(self, excel_path: str, data_df: pd.DataFrame):
+        """
+        Pass 2: Add photos to Excel using openpyxl
+        
+        Args:
+            excel_path: Path to Excel file created by xlsxwriter
+            data_df: DataFrame with photo URLs
+        """
+        try:
+            import openpyxl
+            from openpyxl.drawing.image import Image as XLImage
+            from openpyxl.utils import get_column_letter
+            
+            logger.info(f"Opening Excel file with openpyxl: {excel_path}")
+            
+            # Load workbook
+            wb = openpyxl.load_workbook(excel_path)
+            
+            # Find the "All Defects" sheet
+            sheet_name = "📋 All Defects"
+            if sheet_name not in wb.sheetnames:
+                logger.warning(f"Sheet '{sheet_name}' not found in workbook")
+                wb.save(excel_path)
+                return
+            
+            ws = wb[sheet_name]
+            logger.info(f"Found sheet: {sheet_name}")
+            
+            # Column H is for photos (column 8, 1-indexed)
+            photo_col = 8
+            photo_col_letter = get_column_letter(photo_col)
+            
+            # Set column width for photos
+            ws.column_dimensions[photo_col_letter].width = 20
+            
+            # Iterate through data rows (skip header row 0)
+            photos_added = 0
+            photos_failed = 0
+            
+            for row_idx, (_, row) in enumerate(data_df.iterrows(), start=2):  # Excel rows start at 1, +1 for header
+                try:
+                    photo_url = row.get('photo_url')
+                    
+                    if pd.notna(photo_url) and photo_url:
+                        # Download photo
+                        img = self.download_photo(photo_url)
+                        
+                        if img:
+                            # Resize to thumbnail
+                            img_bytes = self.resize_to_thumbnail(img, size=(150, 150))
+                            
+                            # Create openpyxl image object
+                            xl_img = XLImage(img_bytes)
+                            
+                            # Set image size (in pixels)
+                            xl_img.width = 150
+                            xl_img.height = 150
+                            
+                            # Position image in cell (column H, current row)
+                            cell_ref = f'{photo_col_letter}{row_idx}'
+                            xl_img.anchor = cell_ref
+                            
+                            # Add image to worksheet
+                            ws.add_image(xl_img)
+                            
+                            # Set row height (in points, 120 points ≈ 160 pixels)
+                            ws.row_dimensions[row_idx].height = 120
+                            
+                            photos_added += 1
+                            
+                            if photos_added % 10 == 0:
+                                logger.info(f"Added {photos_added} photos...")
+                        else:
+                            photos_failed += 1
+                            # Write fallback text
+                            ws.cell(row=row_idx, column=photo_col, value="Photo unavailable")
+                    else:
+                        # No photo for this row
+                        ws.row_dimensions[row_idx].height = 30
+                        
+                except Exception as e:
+                    logger.error(f"Error adding photo for row {row_idx}: {str(e)}")
+                    photos_failed += 1
+                    continue
+            
+            # Save workbook
+            wb.save(excel_path)
+            logger.info(f"Photos added: {photos_added}, Failed: {photos_failed}")
+            logger.info(f"Excel file with photos saved: {excel_path}")
+            
+        except Exception as e:
+            logger.error(f"Error in openpyxl photo pass: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Don't raise - file should still have all the data without photos
+
+
+def create_professional_excel_from_database(
+    inspection_ids: List[int],
+    db_connection,
+    api_key: str,
+    output_path: str,
+    report_type: str = "single"
+) -> bool:
+    """
+    Main function to create professional Excel report from database
+    
+    Args:
+        inspection_ids: List of inspection IDs
+        db_connection: Database connection
+        api_key: SafetyCulture API key
+        output_path: Output file path
+        report_type: "single" or "multi"
+        
+    Returns:
+        True if successful
+    """
+    try:
+        generator = ProfessionalExcelGeneratorAPI(api_key)
+        
+        if report_type == "single" and len(inspection_ids) == 1:
+            # Query single inspection
+            inspection_data, defects = _query_inspection_data(db_connection, inspection_ids[0])
+            return generator.generate_professional_report(inspection_data, defects, output_path)
+        
+        elif report_type == "multi":
+            # TODO: Implement multi-inspection support
+            logger.warning("Multi-inspection reports not yet implemented for professional template")
+            return False
+        
+        else:
+            logger.error(f"Invalid report type: {report_type}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error creating professional Excel report: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
+    """
+    Query inspection data from database
+    
+    Args:
+        db_connection: Database connection
+        inspection_id: Inspection ID
+        
+    Returns:
+        tuple: (inspection_data dict, defects list)
+    """
+    cursor = db_connection.cursor()
+    
+    # Query inspection metadata
+    cursor.execute("""
+        SELECT i.id, i.inspection_date, i.inspector_name, i.total_defects,
+               b.name as building_name, b.address, i.unit, i.unit_type
+        FROM inspector_inspections i
+        JOIN inspector_buildings b ON i.building_id = b.id
+        WHERE i.id = %s
+    """, (inspection_id,))
+    
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"Inspection {inspection_id} not found")
+    
+    inspection_data = {
+        'id': row[0],
+        'inspection_date': row[1].strftime('%Y-%m-%d') if row[1] else 'N/A',
+        'inspector_name': row[2] or 'N/A',
+        'total_defects': row[3],
+        'building_name': row[4],
+        'address': row[5] or 'Address',
+        'unit': row[6] or 'Unit',
+        'unit_type': row[7] or 'Apartment'
+    }
+    
+    # Query defects with photos
+    cursor.execute("""
+        SELECT room, component, notes, trade, urgency, status_class,
+            photo_url, photo_media_id, inspector_notes
+        FROM inspector_inspection_items
+        WHERE inspection_id = %s
+        ORDER BY room, component
+    """, (inspection_id,))
+    
+    defects = []
+    for row in cursor.fetchall():
+        defects.append({
+            'room': row[0],
+            'component': row[1],
+            'description': row[2],
+            'trade': row[3],
+            'priority': row[4],
+            'status': row[5],
+            'photo_url': row[6],
+            'photo_media_id': row[7],
+            'inspector_notes': row[8]
+        })
+    
+    cursor.close()
+    return inspection_data, defects
+
+
+if __name__ == "__main__":
+    print("Professional Excel Generator API - Ready!")
+    print("Combines template dashboard with API photo support")
