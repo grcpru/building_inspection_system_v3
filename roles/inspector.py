@@ -565,22 +565,22 @@ class InspectorInterface:
                 st.write("• Status tracking")
                 
                 # Add at the start of Excel button handler
-                st.write("=== DEBUG ===")
+                # st.write("=== DEBUG ===")
 
-                # Check secrets
-                try:
-                    key = st.secrets.get('SAFETY_CULTURE_API_KEY')
-                    st.write(f"Secrets: {'YES' if key else 'NO'}")
-                    if key:
-                        st.write(f"Key length: {len(key)} chars")
-                except Exception as e:
-                    st.write(f"Secrets error: {e}")
+                # # Check secrets
+                # try:
+                #     key = st.secrets.get('SAFETY_CULTURE_API_KEY')
+                #     st.write(f"Secrets: {'YES' if key else 'NO'}")
+                #     if key:
+                #         st.write(f"Key length: {len(key)} chars")
+                # except Exception as e:
+                #     st.write(f"Secrets error: {e}")
 
-                # Check environment
-                env_key = os.getenv('SAFETY_CULTURE_API_KEY')
-                st.write(f"Environment: {'YES' if env_key else 'NO'}")
+                # # Check environment
+                # env_key = os.getenv('SAFETY_CULTURE_API_KEY')
+                # st.write(f"Environment: {'YES' if env_key else 'NO'}")
 
-                st.write("=== END DEBUG ===")
+                # st.write("=== END DEBUG ===")
 
                 if st.button("📊 Generate Excel with Photos", type="primary", use_container_width=True, key="gen_excel_api"):
                     with st.spinner("Generating Excel report with photos..."):
