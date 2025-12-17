@@ -145,12 +145,20 @@ class ProfessionalExcelGeneratorAPI:
                 if old_col in processed_data.columns:
                     processed_data[new_col] = processed_data[old_col]
             
-            # Add InspectionDate
+            # Preserve date columns for workflow tracker (keep original names)
+            # These are already in the DataFrame from the query
+            # inspection_date, created_at, planned_completion, owner_signoff_timestamp
+            # unit, building_name - also preserved
+            
+            # Add InspectionDate column if not present
             if 'InspectionDate' not in processed_data.columns:
-                insp_date = inspection_data.get('inspection_date', datetime.now())
-                if isinstance(insp_date, str):
-                    insp_date = pd.to_datetime(insp_date)
-                processed_data['InspectionDate'] = insp_date
+                if 'inspection_date' in processed_data.columns:
+                    processed_data['InspectionDate'] = processed_data['inspection_date']
+                else:
+                    insp_date = inspection_data.get('inspection_date', datetime.now())
+                    if isinstance(insp_date, str):
+                        insp_date = pd.to_datetime(insp_date)
+                    processed_data['InspectionDate'] = insp_date
             
             # Ensure StatusClass is set (all items in defects list should be "Not OK")
             if 'StatusClass' not in processed_data.columns:
@@ -366,6 +374,9 @@ class ProfessionalExcelGeneratorAPI:
             
             # 9. Metadata
             self._create_metadata_sheet(workbook, metrics, formats)
+            
+            # 10. Workflow Tracker (NEW - Your enhanced format!)
+            self._create_workflow_tracker_sheet(workbook, final_df, metrics, formats)
             
             # Close xlsxwriter workbook
             workbook.close()
@@ -716,6 +727,170 @@ class ProfessionalExcelGeneratorAPI:
             ws.write(row_idx, 0, prop, formats['label'])
             ws.write(row_idx, 1, value, formats['cell'])
     
+    def _create_workflow_tracker_sheet(self, workbook, data_df, metrics, formats):
+        """
+        Create Workflow Tracker sheet with status dates and color coding
+        This is the enhanced format requested by the user!
+        """
+        ws = workbook.add_worksheet("🔄 Workflow Tracker")
+        
+        # Column widths
+        ws.set_column('A:A', 12)  # Date
+        ws.set_column('B:B', 15)  # Inspection ID
+        ws.set_column('C:C', 12)  # Apartment #
+        ws.set_column('D:D', 18)  # Building
+        ws.set_column('E:E', 20)  # Room
+        ws.set_column('F:F', 35)  # Defect Description
+        ws.set_column('G:G', 18)  # Trade
+        ws.set_column('H:H', 15)  # Photo Link
+        ws.set_column('I:I', 15)  # Sent to Builder
+        ws.set_column('J:J', 15)  # Builder Done
+        ws.set_column('K:K', 15)  # Owner Confirmed
+        
+        # Headers
+        headers = [
+            'Date', 'Inspection', 'Apt #', 'Building', 'Room', 
+            'Defect', 'Trade', 'Photo', '📤 Sent to Builder', 
+            '✅ Builder Done', '👍 Owner Confirmed'
+        ]
+        for col_idx, header in enumerate(headers):
+            ws.write(0, col_idx, header, formats['header'])
+        
+        # Add color formats for status
+        yellow_fmt = workbook.add_format({
+            'bg_color': '#FFF3C4',
+            'border': 1,
+            'align': 'left',
+            'valign': 'vcenter'
+        })
+        blue_fmt = workbook.add_format({
+            'bg_color': '#DAEEF3',
+            'border': 1,
+            'align': 'left',
+            'valign': 'vcenter'
+        })
+        green_fmt = workbook.add_format({
+            'bg_color': '#C8E6C9',
+            'border': 1,
+            'align': 'left',
+            'valign': 'vcenter'
+        })
+        date_fmt = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter',
+            'num_format': 'dd/mm/yyyy'
+        })
+        
+        # Data rows
+        for row_idx, (_, row) in enumerate(data_df.iterrows(), start=1):
+            # Determine row color based on workflow status
+            # Only check for owner confirmation - that's the only real completion marker
+            has_owner = pd.notna(row.get('owner_signoff_timestamp'))
+            
+            # Choose background color
+            if has_owner:
+                row_fmt = green_fmt  # 🟢 Complete (owner confirmed)
+            else:
+                row_fmt = yellow_fmt # 🟡 Pending (everything else - sent to builder but not done)
+            
+            # Write data with color coding
+            # Date
+            insp_date = row.get('inspection_date') or row.get('InspectionDate')
+            if pd.notna(insp_date):
+                if isinstance(insp_date, str):
+                    ws.write(row_idx, 0, insp_date, row_fmt)
+                else:
+                    ws.write(row_idx, 0, insp_date, date_fmt)
+            else:
+                ws.write(row_idx, 0, '', row_fmt)
+            
+            # Inspection ID (first 8 chars)
+            inspection_id = str(row.get('inspection_id', ''))[:8]
+            ws.write(row_idx, 1, inspection_id, row_fmt)
+            
+            # Apartment # (Unit)
+            ws.write(row_idx, 2, str(row.get('unit') or row.get('Unit', '')), row_fmt)
+            
+            # Building
+            ws.write(row_idx, 3, str(row.get('building_name') or row.get('Building', '')), row_fmt)
+            
+            # Room
+            ws.write(row_idx, 4, str(row.get('Room') or row.get('room', '')), row_fmt)
+            
+            # Defect Description
+            defect_desc = row.get('IssueDescription') or row.get('description') or row.get('Component', '')
+            ws.write(row_idx, 5, str(defect_desc), row_fmt)
+            
+            # Trade
+            ws.write(row_idx, 6, str(row.get('Trade') or row.get('trade', '')), row_fmt)
+            
+            # Photo Link (clickable)
+            photo_url = row.get('photo_url')
+            if pd.notna(photo_url) and photo_url:
+                # Create hyperlink formula
+                ws.write_url(row_idx, 7, photo_url, string='[View Photo]')
+            else:
+                ws.write(row_idx, 7, '', row_fmt)
+            
+            # Sent to Builder date (when defect was created)
+            sent_date = row.get('created_at')
+            if pd.notna(sent_date):
+                if isinstance(sent_date, str):
+                    ws.write(row_idx, 8, sent_date, row_fmt)
+                else:
+                    ws.write(row_idx, 8, sent_date, date_fmt)
+            else:
+                ws.write(row_idx, 8, '', row_fmt)
+            
+            # Builder Done date - BLANK (to be filled manually when work complete)
+            # Note: planned_completion is just a plan, not actual completion!
+            ws.write(row_idx, 9, '', row_fmt)
+            
+            # Owner Confirmed date - Use owner_signoff_timestamp if exists
+            # This is the only one that's actually populated when confirmed
+            owner_date = row.get('owner_signoff_timestamp')
+            if pd.notna(owner_date):
+                if isinstance(owner_date, str):
+                    ws.write(row_idx, 10, owner_date, row_fmt)
+                else:
+                    ws.write(row_idx, 10, owner_date, date_fmt)
+            else:
+                ws.write(row_idx, 10, '', row_fmt)
+        
+        # Add legend at the bottom
+        legend_row = len(data_df) + 3
+        ws.write(legend_row, 0, 'Legend:', formats['label'])
+        ws.write(legend_row + 1, 0, '🟡 Yellow = Sent to Builder (Pending - default)', yellow_fmt)
+        ws.write(legend_row + 2, 0, '🔵 Blue = Builder Complete (Fill date when work done)', blue_fmt)
+        ws.write(legend_row + 3, 0, '🟢 Green = Owner Confirmed (Automatically from signoff)', green_fmt)
+        
+        # Add note about manual updates
+        ws.write(legend_row + 5, 0, 'NOTE: Fill "Builder Done" date manually when builder completes work', formats['label'])
+        ws.write(legend_row + 6, 0, '      Row will turn blue automatically when date is entered!', formats['label'])
+        
+        # Add conditional formatting: Turn rows blue when Builder Done (column J) has value
+        # This makes the row turn blue automatically when someone fills in the date
+        if len(data_df) > 0:
+            # Apply to all data rows (row 2 onwards, since row 1 is header)
+            data_rows = f'A2:K{len(data_df) + 1}'
+            
+            # Rule 1: Green if Owner Confirmed has value (column K)
+            ws.conditional_format(data_rows, {
+                'type': 'formula',
+                'criteria': '=$K2<>""',
+                'format': green_fmt
+            })
+            
+            # Rule 2: Blue if Builder Done has value but Owner Confirmed doesn't (column J has value, K blank)
+            ws.conditional_format(data_rows, {
+                'type': 'formula', 
+                'criteria': '=AND($J2<>"",$K2="")',
+                'format': blue_fmt
+            })
+            
+            # Yellow is the default background color already applied
+    
     def _add_photos_with_openpyxl(self, excel_path: str, data_df: pd.DataFrame):
         """
         Pass 2: Add photos to Excel using openpyxl
@@ -870,10 +1045,10 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     """
     cursor = db_connection.cursor()
     
-    # Query inspection metadata (no unit columns in inspections table)
+    # Query inspection metadata
     cursor.execute("""
         SELECT i.id, i.inspection_date, i.inspector_name, i.total_defects,
-               b.name as building_name, b.address
+               b.name as building_name, b.address, i.unit, i.unit_type
         FROM inspector_inspections i
         JOIN inspector_buildings b ON i.building_id = b.id
         WHERE i.id = %s
@@ -890,31 +1065,22 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
         'total_defects': row[3],
         'building_name': row[4],
         'address': row[5] or 'Address',
-        'unit': 'Multiple Units',
-        'unit_type': 'Mixed'
+        'unit': row[6] or 'Unit',
+        'unit_type': row[7] or 'Apartment'
     }
     
-    # Get unit info from first inspection item
+    # Query defects with photos, dates, and building info (case-insensitive status filter)
     cursor.execute("""
-        SELECT unit, unit_type
-        FROM inspector_inspection_items
-        WHERE inspection_id = %s
-        LIMIT 1
-    """, (inspection_id,))
-    
-    unit_row = cursor.fetchone()
-    if unit_row:
-        inspection_data['unit'] = unit_row[0] or 'Unit'
-        inspection_data['unit_type'] = unit_row[1] or 'Apartment'
-    
-    # Query defects with photos
-    cursor.execute("""
-        SELECT room, component, notes, trade, urgency, status_class,
-            photo_url, photo_media_id, inspector_notes
-        FROM inspector_inspection_items
-        WHERE inspection_id = %s
-        AND status_class = 'Not OK'
-        ORDER BY room, component
+        SELECT ii.room, ii.component, ii.notes, ii.trade, ii.urgency, ii.status_class,
+            ii.photo_url, ii.photo_media_id, ii.inspector_notes,
+            ii.inspection_date, ii.created_at, ii.planned_completion, ii.owner_signoff_timestamp,
+            ii.unit, b.name as building_name
+        FROM inspector_inspection_items ii
+        JOIN inspector_inspections i ON ii.inspection_id = i.id
+        JOIN inspector_buildings b ON i.building_id = b.id
+        WHERE ii.inspection_id = %s
+        AND LOWER(ii.status_class) = 'not ok'
+        ORDER BY ii.room, ii.component
     """, (inspection_id,))
     
     defects = []
@@ -928,7 +1094,13 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
             'status': row[5],
             'photo_url': row[6],
             'photo_media_id': row[7],
-            'inspector_notes': row[8]
+            'inspector_notes': row[8],
+            'inspection_date': row[9],
+            'created_at': row[10],
+            'planned_completion': row[11],
+            'owner_signoff_timestamp': row[12],
+            'unit': row[13],
+            'building_name': row[14]
         })
     
     cursor.close()
