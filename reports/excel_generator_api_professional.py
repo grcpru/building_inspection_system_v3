@@ -870,10 +870,10 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     """
     cursor = db_connection.cursor()
     
-    # Query inspection metadata
+    # Query inspection metadata (no unit columns in inspections table)
     cursor.execute("""
         SELECT i.id, i.inspection_date, i.inspector_name, i.total_defects,
-               b.name as building_name, b.address, i.unit, i.unit_type
+               b.name as building_name, b.address
         FROM inspector_inspections i
         JOIN inspector_buildings b ON i.building_id = b.id
         WHERE i.id = %s
@@ -890,9 +890,22 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
         'total_defects': row[3],
         'building_name': row[4],
         'address': row[5] or 'Address',
-        'unit': row[6] or 'Unit',
-        'unit_type': row[7] or 'Apartment'
+        'unit': 'Multiple Units',
+        'unit_type': 'Mixed'
     }
+    
+    # Get unit info from first inspection item
+    cursor.execute("""
+        SELECT unit, unit_type
+        FROM inspector_inspection_items
+        WHERE inspection_id = %s
+        LIMIT 1
+    """, (inspection_id,))
+    
+    unit_row = cursor.fetchone()
+    if unit_row:
+        inspection_data['unit'] = unit_row[0] or 'Unit'
+        inspection_data['unit_type'] = unit_row[1] or 'Apartment'
     
     # Query defects with photos
     cursor.execute("""
@@ -900,6 +913,7 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
             photo_url, photo_media_id, inspector_notes
         FROM inspector_inspection_items
         WHERE inspection_id = %s
+        AND status_class = 'Not OK'
         ORDER BY room, component
     """, (inspection_id,))
     
