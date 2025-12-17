@@ -82,7 +82,7 @@ def generate_api_excel_report(inspection_ids: list, db_config: dict, api_key: st
     
     try:
         # Generate report
-        success = create_excel_report_from_database(
+        success = create_professional_excel_from_database(
             inspection_ids=inspection_ids,
             db_connection=conn,
             api_key=api_key,
