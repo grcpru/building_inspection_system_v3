@@ -20,7 +20,7 @@ import hashlib
 # Import the enhanced modules
 from core.data_processor import InspectionDataProcessor, load_master_trade_mapping
 from core.trade_mapper import TradeMapper
-from reports.excel_generator_api import create_excel_report_from_database
+#from reports.excel_generator_api import create_excel_report_from_database
 from reports.word_generator_api import create_word_report_from_database
 from reports.excel_generator_api_professional import create_professional_excel_from_database
 
