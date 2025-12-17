@@ -356,12 +356,22 @@ class InspectorInterface:
         
         # ─────── Option A: Date Range ─────── 
         if scope_type == "📅 Date Range":
+            
+            # ✅ CHECK FOR PRESET VALUES FIRST (before creating widgets)
+            if 'preset_dates' in st.session_state:
+                preset_start = st.session_state['preset_dates']['start']
+                preset_end = st.session_state['preset_dates']['end']
+                del st.session_state['preset_dates']  # Clear after using
+            else:
+                preset_start = datetime.now() - timedelta(days=7)
+                preset_end = datetime.now()
+            
             col1, col2, col3 = st.columns([2, 2, 1])
             
             with col1:
                 start_date = st.date_input(
                     "From Date",
-                    value=datetime.now() - timedelta(days=7),
+                    value=preset_start,
                     max_value=datetime.now(),
                     key="api_start_date"
                 )
@@ -369,7 +379,7 @@ class InspectorInterface:
             with col2:
                 end_date = st.date_input(
                     "To Date",
-                    value=datetime.now(),
+                    value=preset_end,
                     max_value=datetime.now(),
                     key="api_end_date"
                 )
@@ -385,28 +395,40 @@ class InspectorInterface:
                         if selected_inspections:
                             st.session_state['selected_api_inspections'] = selected_inspections
             
-            # Quick presets
+            # Quick presets - FIX: Set preset values before rerun
             st.caption("Quick select:")
             col1, col2, col3, col4 = st.columns(4)
+            
             with col1:
                 if st.button("Today", key="preset_today"):
-                    st.session_state['api_start_date'] = datetime.now().date()
-                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.session_state['preset_dates'] = {
+                        'start': datetime.now().date(),
+                        'end': datetime.now().date()
+                    }
                     st.rerun()
+            
             with col2:
                 if st.button("This Week", key="preset_week"):
-                    st.session_state['api_start_date'] = (datetime.now() - timedelta(days=7)).date()
-                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.session_state['preset_dates'] = {
+                        'start': (datetime.now() - timedelta(days=7)).date(),
+                        'end': datetime.now().date()
+                    }
                     st.rerun()
+            
             with col3:
                 if st.button("This Month", key="preset_month"):
-                    st.session_state['api_start_date'] = datetime.now().replace(day=1).date()
-                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.session_state['preset_dates'] = {
+                        'start': datetime.now().replace(day=1).date(),
+                        'end': datetime.now().date()
+                    }
                     st.rerun()
+            
             with col4:
                 if st.button("Last 30 Days", key="preset_30days"):
-                    st.session_state['api_start_date'] = (datetime.now() - timedelta(days=30)).date()
-                    st.session_state['api_end_date'] = datetime.now().date()
+                    st.session_state['preset_dates'] = {
+                        'start': (datetime.now() - timedelta(days=30)).date(),
+                        'end': datetime.now().date()
+                    }
                     st.rerun()
             
             # Load from session state if exists
