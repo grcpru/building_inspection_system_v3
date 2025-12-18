@@ -1223,9 +1223,56 @@ def create_professional_excel_from_database(
             return generator.generate_professional_report(inspection_data, defects, output_path)
         
         elif report_type == "multi":
-            # TODO: Implement multi-inspection support
-            logger.warning("Multi-inspection reports not yet implemented for professional template")
-            return False
+            # Multi-inspection support (e.g., building report with multiple units)
+            logger.info(f"Creating multi-inspection report for {len(inspection_ids)} inspections")
+            
+            # Query all inspections and combine defects
+            all_defects = []
+            building_name = None
+            address = None
+            inspection_dates = []
+            
+            for inspection_id in inspection_ids:
+                try:
+                    inspection_data, defects = _query_inspection_data(db_connection, inspection_id)
+                    
+                    # Collect building info from first inspection
+                    if building_name is None:
+                        building_name = inspection_data.get('building_name', 'Building')
+                        address = inspection_data.get('address', 'Address')
+                    
+                    # Collect inspection dates
+                    if inspection_data.get('inspection_date'):
+                        inspection_dates.append(inspection_data['inspection_date'])
+                    
+                    # Add all defects
+                    all_defects.extend(defects)
+                    
+                except Exception as e:
+                    logger.error(f"Error querying inspection {inspection_id}: {str(e)}")
+                    continue
+            
+            if len(all_defects) == 0:
+                logger.warning("No defects found across all inspections")
+                return False
+            
+            # Create combined inspection data
+            combined_inspection_data = {
+                'id': 'multi',
+                'inspection_date': max(inspection_dates) if inspection_dates else 'N/A',
+                'inspector_name': 'Multiple Inspectors',
+                'total_defects': len(all_defects),
+                'building_name': building_name,
+                'address': address,
+                'unit': 'Multiple Units',
+                'unit_type': 'Mixed',
+                'total_items': sum(1 for _ in all_defects)  # Approximate
+            }
+            
+            logger.info(f"Combined {len(all_defects)} defects from {len(inspection_ids)} inspections")
+            
+            # Generate report with combined data
+            return generator.generate_professional_report(combined_inspection_data, all_defects, output_path)
         
         else:
             logger.error(f"Invalid report type: {report_type}")
