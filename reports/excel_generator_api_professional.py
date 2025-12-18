@@ -376,12 +376,6 @@ class ProfessionalExcelGeneratorAPI:
             # 4. Component Details (analysis by component)
             self._create_component_details_sheet(workbook, final_df, formats)
             
-            # 3. All Inspections (all items, no photos)
-            self._create_all_inspections_sheet(workbook, final_df, metrics, formats)
-            
-            # 4. Component Details (analysis by component)
-            self._create_component_details_sheet(workbook, final_df, formats)
-            
             # Debug: Log what columns exist and summary DataFrame info
             logger.info(f"DataFrame columns after transform: {list(final_df.columns)}")
             logger.info(f"Trade summary shape: {metrics.get('summary_trade', pd.DataFrame()).shape}")
