@@ -1048,8 +1048,14 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     # Query inspection metadata
     cursor.execute("""
         SELECT i.id, i.inspection_date, i.inspector_name, i.total_defects,
-               b.name as building_name, b.address, i.unit, i.unit_type
+       b.name as building_name, b.address
         FROM inspector_inspections i
+
+        -- Second query: Get unit info from items table
+        SELECT unit, unit_type
+        FROM inspector_inspection_items
+        WHERE inspection_id = %s
+        LIMIT 1
         JOIN inspector_buildings b ON i.building_id = b.id
         WHERE i.id = %s
     """, (inspection_id,))
