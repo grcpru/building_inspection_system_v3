@@ -137,18 +137,29 @@ class ProfessionalExcelGeneratorAPI:
                 'trade': 'Trade',
                 'priority': 'Urgency',
                 'status': 'StatusClass',
-                'inspector_notes': 'InspectorNotes',
-                'description': 'IssueDescription'
+                'inspector_notes': 'InspectorNotes'
             }
             
             for old_col, new_col in column_mapping.items():
                 if old_col in processed_data.columns:
                     processed_data[new_col] = processed_data[old_col]
             
+            # CRITICAL FIX: Use 'notes' field for IssueDescription (this has the actual defect description!)
+            if 'description' in processed_data.columns:
+                processed_data['IssueDescription'] = processed_data['description']
+            elif 'notes' in processed_data.columns:
+                processed_data['IssueDescription'] = processed_data['notes']
+            else:
+                processed_data['IssueDescription'] = 'No description'
+            
             # Preserve date columns for workflow tracker (keep original names)
             # These are already in the DataFrame from the query
             # inspection_date, created_at, planned_completion, owner_signoff_timestamp
-            # unit, building_name - also preserved
+            # unit, building_name, inspection_id - also preserved
+            
+            # Add inspection_id if not present (use from inspection_data)
+            if 'inspection_id' not in processed_data.columns:
+                processed_data['inspection_id'] = inspection_data.get('id', '')
             
             # Add InspectionDate column if not present
             if 'InspectionDate' not in processed_data.columns:
@@ -160,9 +171,18 @@ class ProfessionalExcelGeneratorAPI:
                         insp_date = pd.to_datetime(insp_date)
                     processed_data['InspectionDate'] = insp_date
             
-            # Ensure StatusClass is set (all items in defects list should be "Not OK")
+            # Ensure StatusClass is set correctly (normalize to "Not OK")
             if 'StatusClass' not in processed_data.columns:
-                processed_data['StatusClass'] = 'Not OK'
+                if 'status' in processed_data.columns:
+                    processed_data['StatusClass'] = processed_data['status']
+                else:
+                    processed_data['StatusClass'] = 'Not OK'
+            
+            # Normalize StatusClass values to "Not OK" (handle case variations)
+            if 'StatusClass' in processed_data.columns:
+                processed_data['StatusClass'] = processed_data['StatusClass'].str.strip()
+                # Ensure all defects have "Not OK" status (they came from status_class = 'not ok' filter)
+                processed_data.loc[processed_data['StatusClass'].notna(), 'StatusClass'] = 'Not OK'
         
         # Calculate metrics
         metrics = self.calculate_metrics(inspection_data, processed_data)
@@ -350,32 +370,48 @@ class ProfessionalExcelGeneratorAPI:
             # 2. All Defects (placeholder for photos)
             defects_sheet_idx = self._create_data_sheet_with_photos(workbook, final_df, "📋 All Defects", formats)
             
-            # 3. Settlement Readiness
-            self._create_settlement_sheet(workbook, metrics, formats)
+            # Debug: Log what columns exist and summary DataFrame info
+            logger.info(f"DataFrame columns after transform: {list(final_df.columns)}")
+            logger.info(f"Trade summary shape: {metrics.get('summary_trade', pd.DataFrame()).shape}")
+            logger.info(f"Room summary shape: {metrics.get('summary_room', pd.DataFrame()).shape}")
+            logger.info(f"Component summary shape: {metrics.get('summary_component', pd.DataFrame()).shape}")
+            logger.info(f"Unit summary shape: {metrics.get('summary_unit', pd.DataFrame()).shape}")
             
-            # 4. Trade Summary
+            # 3. Trade Summary (REMOVED Settlement Readiness - not needed)
             if len(metrics.get('summary_trade', pd.DataFrame())) > 0:
+                logger.info("Creating Trade Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_trade'], "🔧 Trade Summary", formats)
+            else:
+                logger.warning("Skipping Trade Summary - empty DataFrame")
             
-            # 5. Room Summary
+            # 4. Room Summary
             if len(metrics.get('summary_room', pd.DataFrame())) > 0:
+                logger.info("Creating Room Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_room'], "🚪 Room Summary", formats)
+            else:
+                logger.warning("Skipping Room Summary - empty DataFrame")
             
-            # 6. Component Summary
+            # 5. Component Summary
             if len(metrics.get('summary_component', pd.DataFrame())) > 0:
+                logger.info("Creating Component Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_component'], "🔧 Component Summary", formats)
+            else:
+                logger.warning("Skipping Component Summary - empty DataFrame")
             
-            # 7. Unit Summary
+            # 6. Unit Summary
             if len(metrics.get('summary_unit', pd.DataFrame())) > 0:
+                logger.info("Creating Unit Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_unit'], "🏠 Unit Summary", formats)
+            else:
+                logger.warning("Skipping Unit Summary - empty DataFrame")
             
-            # 8. Inspection Timeline
+            # 7. Inspection Timeline
             self._create_timeline_sheet(workbook, final_df, metrics, formats)
             
-            # 9. Metadata
+            # 8. Metadata
             self._create_metadata_sheet(workbook, metrics, formats)
             
-            # 10. Workflow Tracker (NEW - Your enhanced format!)
+            # 9. Workflow Tracker (Your enhanced format!)
             self._create_workflow_tracker_sheet(workbook, final_df, metrics, formats)
             
             # Close xlsxwriter workbook
@@ -622,12 +658,9 @@ class ProfessionalExcelGeneratorAPI:
             ws.write(row_idx, 5, str(row.get('StatusClass', '')), base_fmt)
             ws.write(row_idx, 6, str(row.get('InspectorNotes', '')), notes_fmt)
             
-            # Photo column (H) - placeholder text, images added in Pass 2
-            has_photo = pd.notna(row.get('photo_url'))
-            if has_photo:
-                ws.write(row_idx, 7, 'Photo loading...', base_fmt)
-            else:
-                ws.write(row_idx, 7, '', base_fmt)
+            # Photo column (H) - Leave blank, images will be embedded in Pass 2
+            # Don't write placeholder text - it's confusing since photos are embedded
+            ws.write(row_idx, 7, '', base_fmt)
         
         return sheet_name
     
@@ -810,10 +843,24 @@ class ProfessionalExcelGeneratorAPI:
             ws.write(row_idx, 1, inspection_id, row_fmt)
             
             # Apartment # (Unit)
-            ws.write(row_idx, 2, str(row.get('unit') or row.get('Unit', '')), row_fmt)
+            unit = str(row.get('unit') or row.get('Unit', ''))
+            ws.write(row_idx, 2, unit, row_fmt)
             
-            # Building
-            ws.write(row_idx, 3, str(row.get('building_name') or row.get('Building', '')), row_fmt)
+            # Building - Simplified based on unit prefix
+            # If unit starts with G → "Building G", if starts with J → "Building J"
+            if unit and len(unit) > 0:
+                first_char = unit[0].upper()
+                if first_char == 'G':
+                    building_display = 'Building G'
+                elif first_char == 'J':
+                    building_display = 'Building J'
+                else:
+                    # Fallback to full building name if not G or J
+                    building_display = str(row.get('building_name') or row.get('Building', ''))
+            else:
+                building_display = str(row.get('building_name') or row.get('Building', ''))
+            
+            ws.write(row_idx, 3, building_display, row_fmt)
             
             # Room
             ws.write(row_idx, 4, str(row.get('Room') or row.get('room', '')), row_fmt)
