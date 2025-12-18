@@ -406,7 +406,7 @@ class ProfessionalExcelGeneratorAPI:
             # 7. Component Summary
             if len(metrics.get('summary_component', pd.DataFrame())) > 0:
                 logger.info("Creating Component Summary sheet")
-                self._create_summary_sheet(workbook, metrics['summary_component'], "🔧 Component Summary", formats)
+                self._create_summary_sheet(workbook, metrics['summary_component'], "🔩 Component Summary", formats)
             else:
                 logger.warning("Skipping Component Summary - empty DataFrame")
             
@@ -742,10 +742,12 @@ class ProfessionalExcelGeneratorAPI:
     
     def _create_all_inspections_sheet(self, workbook, data_df, metrics, formats):
         """
-        Create All Inspections sheet - shows ALL inspection items (OK, Not OK, N/A)
-        No photos - just data
+        Create All Inspections sheet - shows defect items without photos
+        Note: Currently shows same data as Defects Only (defects only) but without photos
+        for easier viewing and printing. To show ALL items (OK, Not OK, N/A), would need
+        separate database query.
         """
-        ws = workbook.add_worksheet("📋 All Inspections")
+        ws = workbook.add_worksheet("📝 All Inspections")
         
         # Column widths
         ws.set_column('A:A', 15)  # Building
@@ -815,53 +817,61 @@ class ProfessionalExcelGeneratorAPI:
             ws.write(0, col_idx, header, formats['header'])
         
         # Calculate component stats
-        if 'Component' in data_df.columns and len(data_df) > 0:
-            component_stats = []
-            
-            for component in data_df['Component'].unique():
-                component_items = data_df[data_df['Component'] == component]
-                total = len(component_items)
+        try:
+            if 'Component' in data_df.columns and len(data_df) > 0:
+                component_stats = []
                 
-                ok_count = len(component_items[component_items['StatusClass'] == 'OK']) if 'StatusClass' in data_df.columns else 0
-                not_ok_count = len(component_items[component_items['StatusClass'] == 'Not OK']) if 'StatusClass' in data_df.columns else 0
-                na_count = len(component_items[component_items['StatusClass'] == 'N/A']) if 'StatusClass' in data_df.columns else 0
+                for component in data_df['Component'].dropna().unique():
+                    if not component:  # Skip empty components
+                        continue
+                        
+                    component_items = data_df[data_df['Component'] == component]
+                    total = len(component_items)
+                    
+                    # Count by status - all items in this dataset are defects
+                    not_ok_count = len(component_items[component_items['StatusClass'] == 'Not OK']) if 'StatusClass' in data_df.columns else total
+                    ok_count = 0  # No OK items in defect dataset
+                    na_count = 0  # No N/A items in defect dataset
+                    
+                    defect_rate = (not_ok_count / total * 100) if total > 0 else 0
+                    
+                    component_stats.append({
+                        'Component': component,
+                        'Total': total,
+                        'OK': ok_count,
+                        'Not OK': not_ok_count,
+                        'N/A': na_count,
+                        'Defect Rate': defect_rate
+                    })
                 
-                defect_rate = (not_ok_count / total * 100) if total > 0 else 0
+                # Sort by total defects descending (since all are defects, this is most useful)
+                component_stats.sort(key=lambda x: x['Total'], reverse=True)
                 
-                component_stats.append({
-                    'Component': component,
-                    'Total': total,
-                    'OK': ok_count,
-                    'Not OK': not_ok_count,
-                    'N/A': na_count,
-                    'Defect Rate': defect_rate
-                })
-            
-            # Sort by defect rate descending
-            component_stats.sort(key=lambda x: x['Defect Rate'], reverse=True)
-            
-            # Write data
-            for row_idx, stat in enumerate(component_stats, start=1):
-                is_alt = (row_idx % 2 == 0)
-                base_fmt = formats['cell_alt'] if is_alt else formats['cell']
-                
-                # Color code based on defect rate
-                if stat['Defect Rate'] > 50:
-                    rate_fmt = formats['major']
-                elif stat['Defect Rate'] > 25:
-                    rate_fmt = formats['minor']
-                else:
-                    rate_fmt = base_fmt
-                
-                ws.write(row_idx, 0, stat['Component'], base_fmt)
-                ws.write(row_idx, 1, stat['Total'], base_fmt)
-                ws.write(row_idx, 2, stat['OK'], base_fmt)
-                ws.write(row_idx, 3, stat['Not OK'], base_fmt)
-                ws.write(row_idx, 4, stat['N/A'], base_fmt)
-                ws.write(row_idx, 5, f"{stat['Defect Rate']:.1f}%", rate_fmt)
-        else:
-            # No data
-            ws.write(1, 0, 'No component data available', formats['cell'])
+                # Write data
+                for row_idx, stat in enumerate(component_stats, start=1):
+                    is_alt = (row_idx % 2 == 0)
+                    base_fmt = formats['cell_alt'] if is_alt else formats['cell']
+                    
+                    # Color code based on number of defects
+                    if stat['Total'] > 5:
+                        rate_fmt = formats['major']
+                    elif stat['Total'] > 2:
+                        rate_fmt = formats['minor']
+                    else:
+                        rate_fmt = base_fmt
+                    
+                    ws.write(row_idx, 0, str(stat['Component']), base_fmt)
+                    ws.write(row_idx, 1, stat['Total'], base_fmt)
+                    ws.write(row_idx, 2, stat['OK'], base_fmt)
+                    ws.write(row_idx, 3, stat['Not OK'], base_fmt)
+                    ws.write(row_idx, 4, stat['N/A'], base_fmt)
+                    ws.write(row_idx, 5, f"{stat['Defect Rate']:.0f}%", rate_fmt)
+            else:
+                # No data
+                ws.write(1, 0, 'No component data available', formats['cell'])
+        except Exception as e:
+            logger.error(f"Error creating component details: {str(e)}")
+            ws.write(1, 0, f'Error generating component details: {str(e)}', formats['cell'])
     
     def _create_timeline_sheet(self, workbook, data_df, metrics, formats):
         """Create inspection timeline sheet"""
@@ -1025,13 +1035,15 @@ class ProfessionalExcelGeneratorAPI:
             # Trade
             ws.write(row_idx, 6, str(row.get('Trade') or row.get('trade', '')), row_fmt)
             
-            # Photo Link (clickable)
+            # Photo Link - Don't use API URL (requires authentication)
+            # Instead, refer to Defects Only sheet where photos are embedded
             photo_url = row.get('photo_url')
             if pd.notna(photo_url) and photo_url:
-                # Create hyperlink formula
-                ws.write_url(row_idx, 7, photo_url, string='[View Photo]')
+                # Don't write URL - it won't work without API key
+                # Just indicate photo is available in other sheet
+                ws.write(row_idx, 7, 'See Defects Only', row_fmt)
             else:
-                ws.write(row_idx, 7, '', row_fmt)
+                ws.write(row_idx, 7, 'No photo', row_fmt)
             
             # Sent to Builder date (when defect was created)
             sent_date = row.get('created_at')
