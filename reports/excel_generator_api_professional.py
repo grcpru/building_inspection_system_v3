@@ -367,8 +367,20 @@ class ProfessionalExcelGeneratorAPI:
             # 1. Executive Dashboard
             self._create_executive_dashboard(workbook, metrics, formats)
             
-            # 2. All Defects (placeholder for photos)
-            defects_sheet_idx = self._create_data_sheet_with_photos(workbook, final_df, "📋 All Defects", formats)
+            # 2. Defects Only (with photos - renamed from All Defects)
+            defects_sheet_idx = self._create_data_sheet_with_photos(workbook, final_df, "⚠️ Defects Only", formats)
+            
+            # 3. All Inspections (all items, no photos)
+            self._create_all_inspections_sheet(workbook, final_df, metrics, formats)
+            
+            # 4. Component Details (analysis by component)
+            self._create_component_details_sheet(workbook, final_df, formats)
+            
+            # 3. All Inspections (all items, no photos)
+            self._create_all_inspections_sheet(workbook, final_df, metrics, formats)
+            
+            # 4. Component Details (analysis by component)
+            self._create_component_details_sheet(workbook, final_df, formats)
             
             # Debug: Log what columns exist and summary DataFrame info
             logger.info(f"DataFrame columns after transform: {list(final_df.columns)}")
@@ -377,41 +389,41 @@ class ProfessionalExcelGeneratorAPI:
             logger.info(f"Component summary shape: {metrics.get('summary_component', pd.DataFrame()).shape}")
             logger.info(f"Unit summary shape: {metrics.get('summary_unit', pd.DataFrame()).shape}")
             
-            # 3. Trade Summary (REMOVED Settlement Readiness - not needed)
+            # 5. Trade Summary
             if len(metrics.get('summary_trade', pd.DataFrame())) > 0:
                 logger.info("Creating Trade Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_trade'], "🔧 Trade Summary", formats)
             else:
                 logger.warning("Skipping Trade Summary - empty DataFrame")
             
-            # 4. Room Summary
+            # 6. Room Summary
             if len(metrics.get('summary_room', pd.DataFrame())) > 0:
                 logger.info("Creating Room Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_room'], "🚪 Room Summary", formats)
             else:
                 logger.warning("Skipping Room Summary - empty DataFrame")
             
-            # 5. Component Summary
+            # 7. Component Summary
             if len(metrics.get('summary_component', pd.DataFrame())) > 0:
                 logger.info("Creating Component Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_component'], "🔧 Component Summary", formats)
             else:
                 logger.warning("Skipping Component Summary - empty DataFrame")
             
-            # 6. Unit Summary
+            # 8. Unit Summary
             if len(metrics.get('summary_unit', pd.DataFrame())) > 0:
                 logger.info("Creating Unit Summary sheet")
                 self._create_summary_sheet(workbook, metrics['summary_unit'], "🏠 Unit Summary", formats)
             else:
                 logger.warning("Skipping Unit Summary - empty DataFrame")
             
-            # 7. Inspection Timeline
+            # 9. Inspection Timeline
             self._create_timeline_sheet(workbook, final_df, metrics, formats)
             
-            # 8. Metadata
+            # 10. Metadata
             self._create_metadata_sheet(workbook, metrics, formats)
             
-            # 9. Workflow Tracker (Your enhanced format!)
+            # 11. Workflow Tracker
             self._create_workflow_tracker_sheet(workbook, final_df, metrics, formats)
             
             # Close xlsxwriter workbook
@@ -620,7 +632,7 @@ class ProfessionalExcelGeneratorAPI:
     
     def _create_data_sheet_with_photos(self, workbook, data_df, sheet_name, formats):
         """
-        Create data sheet with placeholders for photos (Pass 1)
+        Create defects-only sheet with photos (Pass 1)
         Photos will be added in Pass 2 with openpyxl
         
         Returns:
@@ -628,18 +640,20 @@ class ProfessionalExcelGeneratorAPI:
         """
         ws = workbook.add_worksheet(sheet_name)
         
-        # Column widths
-        ws.set_column('A:A', 20)  # Room
-        ws.set_column('B:B', 25)  # Component
-        ws.set_column('C:C', 30)  # Issue Description
-        ws.set_column('D:D', 15)  # Trade
-        ws.set_column('E:E', 12)  # Priority
-        ws.set_column('F:F', 12)  # Status
-        ws.set_column('G:G', 50)  # Inspector Notes
-        ws.set_column('H:H', 20)  # Photo (will be populated in Pass 2)
+        # Column widths - NOW WITH BUILDING AND UNIT FIRST!
+        ws.set_column('A:A', 15)  # Building
+        ws.set_column('B:B', 12)  # Unit
+        ws.set_column('C:C', 20)  # Room
+        ws.set_column('D:D', 25)  # Component
+        ws.set_column('E:E', 30)  # Issue Description
+        ws.set_column('F:F', 15)  # Trade
+        ws.set_column('G:G', 12)  # Priority
+        ws.set_column('H:H', 12)  # Status
+        ws.set_column('I:I', 50)  # Inspector Notes
+        ws.set_column('J:J', 20)  # Photo (will be populated in Pass 2)
         
-        # Headers
-        headers = ['Room', 'Component', 'Issue Description', 'Trade', 'Priority', 'Status', 'Inspector Notes', 'Photo']
+        # Headers - Building and Unit FIRST!
+        headers = ['Building', 'Unit', 'Room', 'Component', 'Issue Description', 'Trade', 'Priority', 'Status', 'Inspector Notes', 'Photo']
         for col_idx, header in enumerate(headers):
             ws.write(0, col_idx, header, formats['header'])
         
@@ -649,18 +663,34 @@ class ProfessionalExcelGeneratorAPI:
             base_fmt = formats['cell_alt'] if is_alt else formats['cell']
             notes_fmt = formats['notes_alt'] if is_alt else formats['notes']
             
-            # Write data (columns A-G)
-            ws.write(row_idx, 0, str(row.get('Room', '')), base_fmt)
-            ws.write(row_idx, 1, str(row.get('Component', '')), base_fmt)
-            ws.write(row_idx, 2, str(row.get('IssueDescription', row.get('description', ''))), base_fmt)
-            ws.write(row_idx, 3, str(row.get('Trade', '')), base_fmt)
-            ws.write(row_idx, 4, str(row.get('Urgency', '')), base_fmt)
-            ws.write(row_idx, 5, str(row.get('StatusClass', '')), base_fmt)
-            ws.write(row_idx, 6, str(row.get('InspectorNotes', '')), notes_fmt)
+            # Get unit for building determination
+            unit = str(row.get('unit') or row.get('Unit', ''))
             
-            # Photo column (H) - Leave blank, images will be embedded in Pass 2
-            # Don't write placeholder text - it's confusing since photos are embedded
-            ws.write(row_idx, 7, '', base_fmt)
+            # Building - Simplified based on unit prefix
+            if unit and len(unit) > 0:
+                first_char = unit[0].upper()
+                if first_char == 'G':
+                    building_display = 'Building G'
+                elif first_char == 'J':
+                    building_display = 'Building J'
+                else:
+                    building_display = str(row.get('building_name') or row.get('Building', ''))
+            else:
+                building_display = str(row.get('building_name') or row.get('Building', ''))
+            
+            # Write data (columns A-I)
+            ws.write(row_idx, 0, building_display, base_fmt)  # Building
+            ws.write(row_idx, 1, unit, base_fmt)  # Unit
+            ws.write(row_idx, 2, str(row.get('Room', '')), base_fmt)
+            ws.write(row_idx, 3, str(row.get('Component', '')), base_fmt)
+            ws.write(row_idx, 4, str(row.get('IssueDescription', row.get('description', ''))), base_fmt)
+            ws.write(row_idx, 5, str(row.get('Trade', '')), base_fmt)
+            ws.write(row_idx, 6, str(row.get('Urgency', '')), base_fmt)
+            ws.write(row_idx, 7, str(row.get('StatusClass', '')), base_fmt)
+            ws.write(row_idx, 8, str(row.get('InspectorNotes', '')), notes_fmt)
+            
+            # Photo column (J) - Leave blank, images will be embedded in Pass 2
+            ws.write(row_idx, 9, '', base_fmt)
         
         return sheet_name
     
@@ -709,6 +739,129 @@ class ProfessionalExcelGeneratorAPI:
             
             for col_idx, value in enumerate(row):
                 ws.write(row_idx, col_idx, value, fmt)
+    
+    def _create_all_inspections_sheet(self, workbook, data_df, metrics, formats):
+        """
+        Create All Inspections sheet - shows ALL inspection items (OK, Not OK, N/A)
+        No photos - just data
+        """
+        ws = workbook.add_worksheet("📋 All Inspections")
+        
+        # Column widths
+        ws.set_column('A:A', 15)  # Building
+        ws.set_column('B:B', 12)  # Unit
+        ws.set_column('C:C', 20)  # Room
+        ws.set_column('D:D', 25)  # Component
+        ws.set_column('E:E', 12)  # Status
+        ws.set_column('F:F', 15)  # Trade
+        ws.set_column('G:G', 12)  # Priority
+        ws.set_column('H:H', 30)  # Description
+        ws.set_column('I:I', 40)  # Inspector Notes
+        
+        # Headers
+        headers = ['Building', 'Unit', 'Room', 'Component', 'Status', 'Trade', 'Priority', 'Description', 'Inspector Notes']
+        for col_idx, header in enumerate(headers):
+            ws.write(0, col_idx, header, formats['header'])
+        
+        # Data rows - show ALL items including OK and N/A
+        for row_idx, (_, row) in enumerate(data_df.iterrows(), start=1):
+            is_alt = (row_idx % 2 == 0)
+            base_fmt = formats['cell_alt'] if is_alt else formats['cell']
+            notes_fmt = formats['notes_alt'] if is_alt else formats['notes']
+            
+            # Get unit for building determination
+            unit = str(row.get('unit') or row.get('Unit', ''))
+            
+            # Building - Simplified based on unit prefix
+            if unit and len(unit) > 0:
+                first_char = unit[0].upper()
+                if first_char == 'G':
+                    building_display = 'Building G'
+                elif first_char == 'J':
+                    building_display = 'Building J'
+                else:
+                    building_display = str(row.get('building_name') or row.get('Building', ''))
+            else:
+                building_display = str(row.get('building_name') or row.get('Building', ''))
+            
+            # Write data
+            ws.write(row_idx, 0, building_display, base_fmt)
+            ws.write(row_idx, 1, unit, base_fmt)
+            ws.write(row_idx, 2, str(row.get('Room', '')), base_fmt)
+            ws.write(row_idx, 3, str(row.get('Component', '')), base_fmt)
+            ws.write(row_idx, 4, str(row.get('StatusClass', '')), base_fmt)
+            ws.write(row_idx, 5, str(row.get('Trade', '')), base_fmt)
+            ws.write(row_idx, 6, str(row.get('Urgency', '')), base_fmt)
+            ws.write(row_idx, 7, str(row.get('IssueDescription', '')), base_fmt)
+            ws.write(row_idx, 8, str(row.get('InspectorNotes', '')), notes_fmt)
+    
+    def _create_component_details_sheet(self, workbook, data_df, formats):
+        """
+        Create Component Details sheet - analysis by component showing OK vs Not OK counts
+        """
+        ws = workbook.add_worksheet("🔍 Component Details")
+        
+        # Column widths
+        ws.set_column('A:A', 30)  # Component
+        ws.set_column('B:B', 15)  # Total Inspected
+        ws.set_column('C:C', 12)  # OK Count
+        ws.set_column('D:D', 12)  # Not OK Count
+        ws.set_column('E:E', 12)  # N/A Count
+        ws.set_column('F:F', 15)  # Defect Rate %
+        
+        # Headers
+        headers = ['Component', 'Total Inspected', 'OK', 'Not OK', 'N/A', 'Defect Rate %']
+        for col_idx, header in enumerate(headers):
+            ws.write(0, col_idx, header, formats['header'])
+        
+        # Calculate component stats
+        if 'Component' in data_df.columns and len(data_df) > 0:
+            component_stats = []
+            
+            for component in data_df['Component'].unique():
+                component_items = data_df[data_df['Component'] == component]
+                total = len(component_items)
+                
+                ok_count = len(component_items[component_items['StatusClass'] == 'OK']) if 'StatusClass' in data_df.columns else 0
+                not_ok_count = len(component_items[component_items['StatusClass'] == 'Not OK']) if 'StatusClass' in data_df.columns else 0
+                na_count = len(component_items[component_items['StatusClass'] == 'N/A']) if 'StatusClass' in data_df.columns else 0
+                
+                defect_rate = (not_ok_count / total * 100) if total > 0 else 0
+                
+                component_stats.append({
+                    'Component': component,
+                    'Total': total,
+                    'OK': ok_count,
+                    'Not OK': not_ok_count,
+                    'N/A': na_count,
+                    'Defect Rate': defect_rate
+                })
+            
+            # Sort by defect rate descending
+            component_stats.sort(key=lambda x: x['Defect Rate'], reverse=True)
+            
+            # Write data
+            for row_idx, stat in enumerate(component_stats, start=1):
+                is_alt = (row_idx % 2 == 0)
+                base_fmt = formats['cell_alt'] if is_alt else formats['cell']
+                
+                # Color code based on defect rate
+                if stat['Defect Rate'] > 50:
+                    rate_fmt = formats['major']
+                elif stat['Defect Rate'] > 25:
+                    rate_fmt = formats['minor']
+                else:
+                    rate_fmt = base_fmt
+                
+                ws.write(row_idx, 0, stat['Component'], base_fmt)
+                ws.write(row_idx, 1, stat['Total'], base_fmt)
+                ws.write(row_idx, 2, stat['OK'], base_fmt)
+                ws.write(row_idx, 3, stat['Not OK'], base_fmt)
+                ws.write(row_idx, 4, stat['N/A'], base_fmt)
+                ws.write(row_idx, 5, f"{stat['Defect Rate']:.1f}%", rate_fmt)
+        else:
+            # No data
+            ws.write(1, 0, 'No component data available', formats['cell'])
     
     def _create_timeline_sheet(self, workbook, data_df, metrics, formats):
         """Create inspection timeline sheet"""
@@ -956,8 +1109,8 @@ class ProfessionalExcelGeneratorAPI:
             # Load workbook
             wb = openpyxl.load_workbook(excel_path)
             
-            # Find the "All Defects" sheet
-            sheet_name = "📋 All Defects"
+            # Find the "Defects Only" sheet (renamed from All Defects)
+            sheet_name = "⚠️ Defects Only"
             if sheet_name not in wb.sheetnames:
                 logger.warning(f"Sheet '{sheet_name}' not found in workbook")
                 wb.save(excel_path)
@@ -966,8 +1119,8 @@ class ProfessionalExcelGeneratorAPI:
             ws = wb[sheet_name]
             logger.info(f"Found sheet: {sheet_name}")
             
-            # Column H is for photos (column 8, 1-indexed)
-            photo_col = 8
+            # Column J is for photos (column 10, 1-indexed) - NOW THAT WE ADDED BUILDING & UNIT
+            photo_col = 10
             photo_col_letter = get_column_letter(photo_col)
             
             # Set column width for photos
