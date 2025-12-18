@@ -1043,37 +1043,55 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     Returns:
         tuple: (inspection_data dict, defects list)
     """
+    logger.info(f"Querying inspection data for ID: {inspection_id} (type: {type(inspection_id)})")
+    
     cursor = db_connection.cursor()
     
-    # Query inspection metadata
-    cursor.execute("""
-        SELECT i.id, i.inspection_date, i.inspector_name, i.total_defects,
-       b.name as building_name, b.address
-        FROM inspector_inspections i
-
-        -- Second query: Get unit info from items table
-        SELECT unit, unit_type
-        FROM inspector_inspection_items
-        WHERE inspection_id = %s
-        LIMIT 1
-        JOIN inspector_buildings b ON i.building_id = b.id
-        WHERE i.id = %s
-    """, (inspection_id,))
+    try:
+        # Query inspection metadata (no unit columns in inspections table)
+        cursor.execute("""
+            SELECT i.id, i.inspection_date, i.inspector_name, i.total_defects,
+                   b.name as building_name, b.address
+            FROM inspector_inspections i
+            JOIN inspector_buildings b ON i.building_id = b.id
+            WHERE i.id = %s
+        """, (inspection_id,))
+        
+        row = cursor.fetchone()
+        if not row:
+            logger.error(f"Inspection {inspection_id} not found in database")
+            raise ValueError(f"Inspection {inspection_id} not found")
+        
+        inspection_data = {
+            'id': row[0],
+            'inspection_date': row[1].strftime('%Y-%m-%d') if row[1] else 'N/A',
+            'inspector_name': row[2] or 'N/A',
+            'total_defects': row[3] or 0,
+            'building_name': row[4] or 'Building',
+            'address': row[5] or 'Address',
+            'unit': 'Multiple Units',
+            'unit_type': 'Mixed'
+        }
+        
+        # Get unit info from first inspection item
+        cursor.execute("""
+            SELECT unit, unit_type
+            FROM inspector_inspection_items
+            WHERE inspection_id = %s
+            LIMIT 1
+        """, (inspection_id,))
+        
+        unit_row = cursor.fetchone()
+        if unit_row and len(unit_row) >= 2:
+            inspection_data['unit'] = unit_row[0] or 'Unit'
+            inspection_data['unit_type'] = unit_row[1] or 'Apartment'
+        else:
+            logger.warning(f"No inspection items found for inspection {inspection_id}")
     
-    row = cursor.fetchone()
-    if not row:
-        raise ValueError(f"Inspection {inspection_id} not found")
-    
-    inspection_data = {
-        'id': row[0],
-        'inspection_date': row[1].strftime('%Y-%m-%d') if row[1] else 'N/A',
-        'inspector_name': row[2] or 'N/A',
-        'total_defects': row[3],
-        'building_name': row[4],
-        'address': row[5] or 'Address',
-        'unit': row[6] or 'Unit',
-        'unit_type': row[7] or 'Apartment'
-    }
+    except Exception as e:
+        logger.error(f"Error querying inspection metadata: {e}")
+        cursor.close()
+        raise
     
     # Query defects with photos, dates, and building info (case-insensitive status filter)
     cursor.execute("""
@@ -1108,6 +1126,11 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
             'unit': row[13],
             'building_name': row[14]
         })
+    
+    logger.info(f"Found {len(defects)} defects for inspection {inspection_id}")
+    
+    if len(defects) == 0:
+        logger.warning(f"No defects found for inspection {inspection_id} - check status_class values")
     
     cursor.close()
     return inspection_data, defects
