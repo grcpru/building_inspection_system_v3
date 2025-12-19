@@ -535,21 +535,33 @@ class ProfessionalExcelGeneratorAPI:
         }
     
     def _create_executive_dashboard(self, workbook, metrics, formats):
-        """Create executive dashboard sheet (simplified from template)"""
+        """Create executive dashboard sheet matching template format"""
         ws = workbook.add_worksheet("📊 Executive Dashboard")
         ws.set_column('A:A', 35)
         ws.set_column('B:B', 45)
         
         row = 0
         
-        # Title
+        # Title with building name
         ws.merge_range(f'A{row+1}:B{row+1}', 
                        f'🏢 {metrics["building_name"].upper()} - INSPECTION REPORT',
                        formats['title'])
         ws.set_row(row, 30)
         row += 2
         
-        # Building Info
+        # ===== BUILDING INFORMATION SECTION =====
+        info_header = workbook.add_format({
+            'bold': True,
+            'font_size': 12,
+            'bg_color': '#4472C4',
+            'font_color': 'white',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        ws.merge_range(f'A{row+1}:B{row+1}', '🏢 BUILDING INFORMATION', info_header)
+        row += 1
+        
         building_data = [
             ('Building Name', metrics['building_name']),
             ('Address', metrics['address']),
@@ -565,7 +577,19 @@ class ProfessionalExcelGeneratorAPI:
         
         row += 1
         
-        # Inspection Summary with Quality Score
+        # ===== INSPECTION SUMMARY SECTION =====
+        summary_header = workbook.add_format({
+            'bold': True,
+            'font_size': 12,
+            'bg_color': '#F4B084',
+            'font_color': 'white',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        ws.merge_range(f'A{row+1}:B{row+1}', '📊 INSPECTION SUMMARY', summary_header)
+        row += 1
+        
         quality_score = max(0, 100 - metrics.get('defect_rate', 0))
         
         inspection_data = [
@@ -573,9 +597,7 @@ class ProfessionalExcelGeneratorAPI:
             ('Total Defects Found', f"{metrics['total_defects']:,}", formats['data']),
             ('Overall Defect Rate', f"{metrics['defect_rate']:.2f}%", formats['data']),
             ('Average Defects per Unit', f"{metrics['avg_defects_per_unit']:.1f}", formats['data']),
-            ('Development Quality Score', f"{quality_score:.1f}/100", formats['quality_score']),
-            ('Photos Included', f"{metrics.get('photo_count', 0)}", formats['data']),
-            ('Inspector Notes', f"{metrics.get('notes_count', 0)}", formats['data'])
+            ('Development Quality Score', f"{quality_score:.1f}/100", formats['quality_score'])
         ]
         
         for label, value, fmt in inspection_data:
@@ -585,13 +607,25 @@ class ProfessionalExcelGeneratorAPI:
         
         row += 1
         
-        # Settlement Readiness
+        # ===== SETTLEMENT READINESS ANALYSIS SECTION =====
+        readiness_header = workbook.add_format({
+            'bold': True,
+            'font_size': 12,
+            'bg_color': '#70AD47',
+            'font_color': 'white',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        ws.merge_range(f'A{row+1}:B{row+1}', '🏠 SETTLEMENT READINESS ANALYSIS', readiness_header)
+        row += 1
+        
         readiness_data = [
-            ('✅ Minor Work Required (0-2 defects)',
+            ('☑ Minor Work Required (0-2 defects)',
              f"{metrics['ready_units']} units ({metrics['ready_pct']:.1f}%)", formats['ready']),
-            ('⚠️ Intermediate Remediation (3-7 defects)',
+            ('⚠ Intermediate Remediation Required (3-7 defects)',
              f"{metrics['minor_work_units']} units ({metrics['minor_pct']:.1f}%)", formats['minor']),
-            ('🔧 Major Work Required (8-15 defects)',
+            ('🔨 Major Work Required (8-15 defects)',
              f"{metrics['major_work_units']} units ({metrics['major_pct']:.1f}%)", formats['major']),
             ('🚧 Extensive Work Required (15+ defects)',
              f"{metrics['extensive_work_units']} units ({metrics['extensive_pct']:.1f}%)", formats['extensive'])
@@ -604,7 +638,79 @@ class ProfessionalExcelGeneratorAPI:
         
         row += 1
         
-        # Top Problem Trades
+        # ===== QUALITY SCORE ANALYSIS =====
+        quality_header = workbook.add_format({
+            'bold': True,
+            'font_size': 12,
+            'bg_color': '#FFC000',
+            'font_color': 'white',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        ws.merge_range(f'A{row+1}:B{row+1}', '⚙ QUALITY SCORE ANALYSIS', quality_header)
+        row += 1
+        
+        # Component pass rate calculation
+        component_pass_rate = 100 - metrics.get('defect_rate', 0)
+        
+        # Quality grade based on score
+        if quality_score >= 98:
+            quality_grade = 'Excellent (A+)'
+        elif quality_score >= 95:
+            quality_grade = 'Very Good (A)'
+        elif quality_score >= 90:
+            quality_grade = 'Good (B+)'
+        elif quality_score >= 85:
+            quality_grade = 'Satisfactory (B)'
+        else:
+            quality_grade = 'Needs Improvement (C)'
+        
+        # Industry benchmark
+        if quality_score >= 98:
+            benchmark = 'Above Industry Standard'
+        elif quality_score >= 95:
+            benchmark = 'Meets Industry Standard'
+        else:
+            benchmark = 'Below Industry Standard'
+        
+        # Recommended action
+        if metrics['total_defects'] == 0:
+            action = 'Ready for settlement'
+        elif metrics['avg_defects_per_unit'] <= 3:
+            action = 'Minor remediation required'
+        elif metrics['avg_defects_per_unit'] <= 8:
+            action = 'Moderate remediation required'
+        else:
+            action = 'Significant remediation required'
+        
+        quality_data = [
+            ('Component Pass Rate', f"{component_pass_rate:.1f}%", formats['quality_score']),
+            ('Quality Grade', quality_grade, formats['data']),
+            ('Industry Benchmark', benchmark, formats['data']),
+            ('Recommended Action', action, formats['data'])
+        ]
+        
+        for label, value, fmt in quality_data:
+            ws.write(row, 0, label, formats['label'])
+            ws.write(row, 1, value, fmt)
+            row += 1
+        
+        row += 1
+        
+        # ===== TOP PROBLEM TRADES =====
+        trades_header = workbook.add_format({
+            'bold': True,
+            'font_size': 12,
+            'bg_color': '#C55A11',
+            'font_color': 'white',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        ws.merge_range(f'A{row+1}:B{row+1}', '⚠ TOP PROBLEM TRADES', trades_header)
+        row += 1
+        
         if len(metrics.get('summary_trade', pd.DataFrame())) > 0:
             top_trades = metrics['summary_trade'].head(10)
             for idx, (_, trade_row) in enumerate(top_trades.iterrows(), 1):
@@ -627,6 +733,7 @@ class ProfessionalExcelGeneratorAPI:
     def _create_data_sheet_with_photos(self, workbook, data_df, sheet_name, formats):
         """
         Create defects-only sheet with photos (Pass 1)
+        Format: Inspection Date | Building | Unit | Room | Component | Trade | Priority | Status | Inspector Notes | Photo
         Photos will be added in Pass 2 with openpyxl
         
         Returns:
@@ -634,28 +741,44 @@ class ProfessionalExcelGeneratorAPI:
         """
         ws = workbook.add_worksheet(sheet_name)
         
-        # Column widths - NOW WITH BUILDING AND UNIT FIRST!
-        ws.set_column('A:A', 15)  # Building
-        ws.set_column('B:B', 12)  # Unit
-        ws.set_column('C:C', 20)  # Room
-        ws.set_column('D:D', 25)  # Component
-        ws.set_column('E:E', 30)  # Issue Description
+        # Column widths - Inspection Date FIRST, NO Issue Description
+        ws.set_column('A:A', 15)  # Inspection Date
+        ws.set_column('B:B', 15)  # Building
+        ws.set_column('C:C', 12)  # Unit
+        ws.set_column('D:D', 20)  # Room
+        ws.set_column('E:E', 25)  # Component
         ws.set_column('F:F', 15)  # Trade
         ws.set_column('G:G', 12)  # Priority
         ws.set_column('H:H', 12)  # Status
         ws.set_column('I:I', 50)  # Inspector Notes
         ws.set_column('J:J', 20)  # Photo (will be populated in Pass 2)
         
-        # Headers - Building and Unit FIRST!
-        headers = ['Building', 'Unit', 'Room', 'Component', 'Issue Description', 'Trade', 'Priority', 'Status', 'Inspector Notes', 'Photo']
+        # Headers - Inspection Date FIRST, no Issue Description
+        headers = ['Inspection Date', 'Building', 'Unit', 'Room', 'Component', 'Trade', 'Priority', 'Status', 'Inspector Notes', 'Photo']
         for col_idx, header in enumerate(headers):
             ws.write(0, col_idx, header, formats['header'])
+        
+        # Date format
+        date_fmt = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter',
+            'num_format': 'dd/mm/yyyy'
+        })
+        date_fmt_alt = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter',
+            'num_format': 'dd/mm/yyyy',
+            'bg_color': '#F7F9FC'
+        })
         
         # Data rows
         for row_idx, (_, row) in enumerate(data_df.iterrows(), start=1):
             is_alt = (row_idx % 2 == 0)
             base_fmt = formats['cell_alt'] if is_alt else formats['cell']
             notes_fmt = formats['notes_alt'] if is_alt else formats['notes']
+            date_row_fmt = date_fmt_alt if is_alt else date_fmt
             
             # Get unit for building determination
             unit = str(row.get('unit') or row.get('Unit', ''))
@@ -672,12 +795,21 @@ class ProfessionalExcelGeneratorAPI:
             else:
                 building_display = str(row.get('building_name') or row.get('Building', ''))
             
-            # Write data (columns A-I)
-            ws.write(row_idx, 0, building_display, base_fmt)  # Building
-            ws.write(row_idx, 1, unit, base_fmt)  # Unit
-            ws.write(row_idx, 2, str(row.get('Room', '')), base_fmt)
-            ws.write(row_idx, 3, str(row.get('Component', '')), base_fmt)
-            ws.write(row_idx, 4, str(row.get('IssueDescription', row.get('description', ''))), base_fmt)
+            # Inspection Date - FIRST COLUMN
+            insp_date = row.get('inspection_date') or row.get('InspectionDate')
+            if pd.notna(insp_date):
+                if isinstance(insp_date, str):
+                    ws.write(row_idx, 0, insp_date, base_fmt)
+                else:
+                    ws.write(row_idx, 0, insp_date, date_row_fmt)
+            else:
+                ws.write(row_idx, 0, '', base_fmt)
+            
+            # Write data (NO Issue Description column!)
+            ws.write(row_idx, 1, building_display, base_fmt)  # Building
+            ws.write(row_idx, 2, unit, base_fmt)  # Unit
+            ws.write(row_idx, 3, str(row.get('Room', '')), base_fmt)
+            ws.write(row_idx, 4, str(row.get('Component', '')), base_fmt)
             ws.write(row_idx, 5, str(row.get('Trade', '')), base_fmt)
             ws.write(row_idx, 6, str(row.get('Urgency', '')), base_fmt)
             ws.write(row_idx, 7, str(row.get('StatusClass', '')), base_fmt)
@@ -737,33 +869,47 @@ class ProfessionalExcelGeneratorAPI:
     def _create_all_inspections_sheet(self, workbook, data_df, metrics, formats):
         """
         Create All Inspections sheet - shows defect items without photos
-        Note: Currently shows same data as Defects Only (defects only) but without photos
-        for easier viewing and printing. To show ALL items (OK, Not OK, N/A), would need
-        separate database query.
+        Format: Inspection Date | Building | Unit | Room | Component | Status | Trade | Priority | Inspector Notes
         """
         ws = workbook.add_worksheet("📝 All Inspections")
         
         # Column widths
-        ws.set_column('A:A', 15)  # Building
-        ws.set_column('B:B', 12)  # Unit
-        ws.set_column('C:C', 20)  # Room
-        ws.set_column('D:D', 25)  # Component
-        ws.set_column('E:E', 12)  # Status
-        ws.set_column('F:F', 15)  # Trade
-        ws.set_column('G:G', 12)  # Priority
-        ws.set_column('H:H', 30)  # Description
+        ws.set_column('A:A', 15)  # Inspection Date
+        ws.set_column('B:B', 15)  # Building
+        ws.set_column('C:C', 12)  # Unit
+        ws.set_column('D:D', 20)  # Room
+        ws.set_column('E:E', 25)  # Component
+        ws.set_column('F:F', 12)  # Status
+        ws.set_column('G:G', 15)  # Trade
+        ws.set_column('H:H', 12)  # Priority
         ws.set_column('I:I', 40)  # Inspector Notes
         
-        # Headers
-        headers = ['Building', 'Unit', 'Room', 'Component', 'Status', 'Trade', 'Priority', 'Description', 'Inspector Notes']
+        # Headers - Inspection Date FIRST, no Description
+        headers = ['Inspection Date', 'Building', 'Unit', 'Room', 'Component', 'Status', 'Trade', 'Priority', 'Inspector Notes']
         for col_idx, header in enumerate(headers):
             ws.write(0, col_idx, header, formats['header'])
         
-        # Data rows - show ALL items including OK and N/A
+        # Date format
+        date_fmt = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter',
+            'num_format': 'dd/mm/yyyy'
+        })
+        date_fmt_alt = workbook.add_format({
+            'border': 1,
+            'align': 'center',
+            'valign': 'vcenter',
+            'num_format': 'dd/mm/yyyy',
+            'bg_color': '#F7F9FC'
+        })
+        
+        # Data rows
         for row_idx, (_, row) in enumerate(data_df.iterrows(), start=1):
             is_alt = (row_idx % 2 == 0)
             base_fmt = formats['cell_alt'] if is_alt else formats['cell']
             notes_fmt = formats['notes_alt'] if is_alt else formats['notes']
+            date_row_fmt = date_fmt_alt if is_alt else date_fmt
             
             # Get unit for building determination
             unit = str(row.get('unit') or row.get('Unit', ''))
@@ -780,86 +926,92 @@ class ProfessionalExcelGeneratorAPI:
             else:
                 building_display = str(row.get('building_name') or row.get('Building', ''))
             
-            # Write data
-            ws.write(row_idx, 0, building_display, base_fmt)
-            ws.write(row_idx, 1, unit, base_fmt)
-            ws.write(row_idx, 2, str(row.get('Room', '')), base_fmt)
-            ws.write(row_idx, 3, str(row.get('Component', '')), base_fmt)
-            ws.write(row_idx, 4, str(row.get('StatusClass', '')), base_fmt)
-            ws.write(row_idx, 5, str(row.get('Trade', '')), base_fmt)
-            ws.write(row_idx, 6, str(row.get('Urgency', '')), base_fmt)
-            ws.write(row_idx, 7, str(row.get('IssueDescription', '')), base_fmt)
+            # Inspection Date - FIRST COLUMN
+            insp_date = row.get('inspection_date') or row.get('InspectionDate')
+            if pd.notna(insp_date):
+                if isinstance(insp_date, str):
+                    ws.write(row_idx, 0, insp_date, base_fmt)
+                else:
+                    ws.write(row_idx, 0, insp_date, date_row_fmt)
+            else:
+                ws.write(row_idx, 0, '', base_fmt)
+            
+            # Write remaining data (no Description column!)
+            ws.write(row_idx, 1, building_display, base_fmt)
+            ws.write(row_idx, 2, unit, base_fmt)
+            ws.write(row_idx, 3, str(row.get('Room', '')), base_fmt)
+            ws.write(row_idx, 4, str(row.get('Component', '')), base_fmt)
+            ws.write(row_idx, 5, str(row.get('StatusClass', '')), base_fmt)
+            ws.write(row_idx, 6, str(row.get('Trade', '')), base_fmt)
+            ws.write(row_idx, 7, str(row.get('Urgency', '')), base_fmt)
             ws.write(row_idx, 8, str(row.get('InspectorNotes', '')), notes_fmt)
     
     def _create_component_details_sheet(self, workbook, data_df, formats):
         """
-        Create Component Details sheet - analysis by component showing OK vs Not OK counts
+        Create Component Details sheet - shows Trade, Room, Component, and Units with Defects
+        Format matches template: Trade | Room | Component | Units with Defects
         """
         ws = workbook.add_worksheet("🔍 Component Details")
         
         # Column widths
-        ws.set_column('A:A', 30)  # Component
-        ws.set_column('B:B', 15)  # Total Inspected
-        ws.set_column('C:C', 12)  # OK Count
-        ws.set_column('D:D', 12)  # Not OK Count
-        ws.set_column('E:E', 12)  # N/A Count
-        ws.set_column('F:F', 15)  # Defect Rate %
+        ws.set_column('A:A', 25)  # Trade
+        ws.set_column('B:B', 30)  # Room
+        ws.set_column('C:C', 30)  # Component
+        ws.set_column('D:D', 100)  # Units with Defects (wide for unit list)
         
         # Headers
-        headers = ['Component', 'Total Inspected', 'OK', 'Not OK', 'N/A', 'Defect Rate %']
+        headers = ['Trade', 'Room', 'Component', 'Units with Defects']
         for col_idx, header in enumerate(headers):
             ws.write(0, col_idx, header, formats['header'])
         
-        # Calculate component stats
+        # Calculate component stats with units
         try:
-            if 'Component' in data_df.columns and len(data_df) > 0:
+            if 'Component' in data_df.columns and 'Trade' in data_df.columns and len(data_df) > 0:
                 component_stats = []
                 
-                for component in data_df['Component'].dropna().unique():
-                    if not component:  # Skip empty components
-                        continue
+                # Group by Trade, Room, Component
+                for trade in data_df['Trade'].dropna().unique():
+                    trade_items = data_df[data_df['Trade'] == trade]
+                    
+                    for room in trade_items['Room'].dropna().unique():
+                        room_items = trade_items[trade_items['Room'] == room]
                         
-                    component_items = data_df[data_df['Component'] == component]
-                    total = len(component_items)
-                    
-                    # Count by status - all items in this dataset are defects
-                    not_ok_count = len(component_items[component_items['StatusClass'] == 'Not OK']) if 'StatusClass' in data_df.columns else total
-                    ok_count = 0  # No OK items in defect dataset
-                    na_count = 0  # No N/A items in defect dataset
-                    
-                    defect_rate = (not_ok_count / total * 100) if total > 0 else 0
-                    
-                    component_stats.append({
-                        'Component': component,
-                        'Total': total,
-                        'OK': ok_count,
-                        'Not OK': not_ok_count,
-                        'N/A': na_count,
-                        'Defect Rate': defect_rate
-                    })
+                        for component in room_items['Component'].dropna().unique():
+                            if not component:  # Skip empty components
+                                continue
+                            
+                            component_items = room_items[room_items['Component'] == component]
+                            
+                            # Get list of units with this defect
+                            units_with_defects = []
+                            for _, item in component_items.iterrows():
+                                unit = str(item.get('unit') or item.get('Unit', '')).strip()
+                                if unit and unit not in units_with_defects:
+                                    units_with_defects.append(unit)
+                            
+                            # Sort units
+                            units_with_defects.sort()
+                            
+                            component_stats.append({
+                                'Trade': str(trade),
+                                'Room': str(room),
+                                'Component': str(component),
+                                'Units': ', '.join(units_with_defects),
+                                'DefectCount': len(component_items)
+                            })
                 
-                # Sort by total defects descending (since all are defects, this is most useful)
-                component_stats.sort(key=lambda x: x['Total'], reverse=True)
+                # Sort by trade, then by defect count descending
+                component_stats.sort(key=lambda x: (x['Trade'], -x['DefectCount']))
                 
                 # Write data
                 for row_idx, stat in enumerate(component_stats, start=1):
                     is_alt = (row_idx % 2 == 0)
                     base_fmt = formats['cell_alt'] if is_alt else formats['cell']
                     
-                    # Color code based on number of defects
-                    if stat['Total'] > 5:
-                        rate_fmt = formats['major']
-                    elif stat['Total'] > 2:
-                        rate_fmt = formats['minor']
-                    else:
-                        rate_fmt = base_fmt
-                    
-                    ws.write(row_idx, 0, str(stat['Component']), base_fmt)
-                    ws.write(row_idx, 1, stat['Total'], base_fmt)
-                    ws.write(row_idx, 2, stat['OK'], base_fmt)
-                    ws.write(row_idx, 3, stat['Not OK'], base_fmt)
-                    ws.write(row_idx, 4, stat['N/A'], base_fmt)
-                    ws.write(row_idx, 5, f"{stat['Defect Rate']:.0f}%", rate_fmt)
+                    ws.write(row_idx, 0, stat['Trade'], base_fmt)
+                    ws.write(row_idx, 1, stat['Room'], base_fmt)
+                    ws.write(row_idx, 2, stat['Component'], base_fmt)
+                    ws.write(row_idx, 3, stat['Units'], base_fmt)
             else:
                 # No data
                 ws.write(1, 0, 'No component data available', formats['cell'])
