@@ -120,16 +120,6 @@ class ProfessionalExcelGeneratorAPI:
         else:
             processed_data = pd.DataFrame(defects)
             
-            # Add Unit and UnitType if missing
-            if 'Unit' not in processed_data.columns:
-                # Extract from inspection_data or use default
-                unit_name = inspection_data.get('unit', 'Unit')
-                processed_data['Unit'] = unit_name
-            
-            if 'UnitType' not in processed_data.columns:
-                unit_type = inspection_data.get('unit_type', 'Apartment')
-                processed_data['UnitType'] = unit_type
-            
             # Rename columns to match template
             column_mapping = {
                 'room': 'Room',
@@ -137,12 +127,24 @@ class ProfessionalExcelGeneratorAPI:
                 'trade': 'Trade',
                 'priority': 'Urgency',
                 'status': 'StatusClass',
-                'inspector_notes': 'InspectorNotes'
+                'inspector_notes': 'InspectorNotes',
+                'unit': 'Unit',  # Map lowercase unit to uppercase Unit
+                'unit_type': 'UnitType'  # Map unit_type as well
             }
             
             for old_col, new_col in column_mapping.items():
                 if old_col in processed_data.columns:
                     processed_data[new_col] = processed_data[old_col]
+            
+            # Only set default Unit/UnitType if not already set
+            if 'Unit' not in processed_data.columns:
+                # Extract from inspection_data as fallback
+                unit_name = inspection_data.get('unit', 'Unit')
+                processed_data['Unit'] = unit_name
+            
+            if 'UnitType' not in processed_data.columns:
+                unit_type = inspection_data.get('unit_type', 'Apartment')
+                processed_data['UnitType'] = unit_type
             
             # CRITICAL FIX: Use 'notes' field for IssueDescription (this has the actual defect description!)
             if 'description' in processed_data.columns:
@@ -209,14 +211,17 @@ class ProfessionalExcelGeneratorAPI:
         
         # Settlement readiness (per unit analysis)
         if 'Unit' in processed_data.columns and len(processed_data) > 0:
+            # Count units with defects
             unit_defect_counts = processed_data[processed_data['StatusClass'] == 'Not OK'].groupby('Unit').size()
             
+            # Calculate readiness categories
             ready_units = len(unit_defect_counts[unit_defect_counts <= 2])
             minor_work_units = len(unit_defect_counts[(unit_defect_counts >= 3) & (unit_defect_counts <= 7)])
             major_work_units = len(unit_defect_counts[(unit_defect_counts >= 8) & (unit_defect_counts <= 15)])
             extensive_work_units = len(unit_defect_counts[unit_defect_counts > 15])
             
-            total_units = max(len(unit_defect_counts), 1)
+            # Total units = unique units in the data (for multi-inspection, this counts all inspected units)
+            total_units = processed_data['Unit'].nunique()
         else:
             # Single unit inspection
             ready_units = 1 if total_defects <= 2 else 0
