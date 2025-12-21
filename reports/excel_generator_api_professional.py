@@ -11,9 +11,10 @@ Features:
 - Executive Dashboard with Quality Score
 - Settlement Readiness Analysis
 - Multiple summary sheets (Trade, Room, Component, Unit)
-- Inspection Timeline with sign-off tracking
+- Component Details with units affected
 - Photos embedded as thumbnails in data sheets
 - Professional formatting and color coding
+- Workflow Tracker with status monitoring
 """
 
 import os
@@ -416,13 +417,10 @@ class ProfessionalExcelGeneratorAPI:
             else:
                 logger.warning("Skipping Unit Summary - empty DataFrame")
             
-            # 9. Inspection Timeline
-            self._create_timeline_sheet(workbook, final_df, metrics, formats)
-            
-            # 10. Metadata
+            # 9. Metadata
             self._create_metadata_sheet(workbook, metrics, formats)
             
-            # 11. Workflow Tracker
+            # 10. Workflow Tracker
             self._create_workflow_tracker_sheet(workbook, final_df, metrics, formats)
             
             # Close xlsxwriter workbook
@@ -1023,23 +1021,6 @@ class ProfessionalExcelGeneratorAPI:
         except Exception as e:
             logger.error(f"Error creating component details: {str(e)}")
             ws.write(1, 0, f'Error generating component details: {str(e)}', formats['cell'])
-    
-    def _create_timeline_sheet(self, workbook, data_df, metrics, formats):
-        """Create inspection timeline sheet"""
-        ws = workbook.add_worksheet("📅 Inspection Timeline")
-        
-        # Simplified timeline - just show inspection date and defect counts
-        ws.set_column('A:A', 20)
-        ws.set_column('B:B', 15)
-        ws.set_column('C:C', 40)
-        
-        headers = ['Inspection Date', 'Total Defects', 'Notes']
-        for col_idx, header in enumerate(headers):
-            ws.write(0, col_idx, header, formats['header'])
-        
-        ws.write(1, 0, metrics.get('inspection_date', ''), formats['cell'])
-        ws.write(1, 1, metrics.get('total_defects', 0), formats['cell'])
-        ws.write(1, 2, f"Photos: {metrics.get('photo_count', 0)}, Notes: {metrics.get('notes_count', 0)}", formats['cell'])
     
     def _create_metadata_sheet(self, workbook, metrics, formats):
         """Create metadata sheet"""
