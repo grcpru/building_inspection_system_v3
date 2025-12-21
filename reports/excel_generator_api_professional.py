@@ -269,12 +269,58 @@ class ProfessionalExcelGeneratorAPI:
         photo_count = processed_data['photo_url'].notna().sum() if 'photo_url' in processed_data.columns else 0
         notes_count = processed_data['InspectorNotes'].notna().sum() if 'InspectorNotes' in processed_data.columns else 0
         
+        # Extract unique unit types from actual data
+        if 'UnitType' in processed_data.columns and len(processed_data) > 0:
+            unique_unit_types = processed_data['UnitType'].dropna().unique()
+            if len(unique_unit_types) > 0:
+                unit_types_str = ', '.join(sorted(set(str(ut) for ut in unique_unit_types)))
+            else:
+                unit_types_str = inspection_data.get('unit_type', 'Apartment')
+        else:
+            unit_types_str = inspection_data.get('unit_type', 'Apartment')
+        
+        # Extract address from API metadata if available
+        # SafetyCulture stores address in fields like "Title Page_Site conducted_Area", "Title Page_Site conducted_Region"
+        address = inspection_data.get('address', '')
+        
+        # If address is empty, try multiple sources
+        if not address or address == '':
+            # Try 1: Check inspection_data metadata
+            metadata = inspection_data.get('metadata', {})
+            if metadata:
+                area = metadata.get('Title Page_Site conducted_Area') or metadata.get('site_area') or ''
+                region = metadata.get('Title Page_Site conducted_Region') or metadata.get('site_region') or ''
+                
+                if area and region:
+                    address = f"{area}, {region}"
+                elif area:
+                    address = area
+                elif region:
+                    address = region
+            
+            # Try 2: Check if defects have address fields
+            if (not address or address == '') and len(processed_data) > 0:
+                # Check for address-like columns in the data
+                if 'site_area' in processed_data.columns:
+                    area = processed_data['site_area'].dropna().iloc[0] if len(processed_data['site_area'].dropna()) > 0 else ''
+                    if area:
+                        address = str(area)
+                
+                if 'site_region' in processed_data.columns and address:
+                    region = processed_data['site_region'].dropna().iloc[0] if len(processed_data['site_region'].dropna()) > 0 else ''
+                    if region:
+                        address = f"{address}, {region}"
+            
+            # Fallback
+            if not address or address == '':
+                address = 'Address not specified'
+        
         # Build metrics dictionary
         metrics = {
             'building_name': inspection_data.get('building_name', 'Building'),
-            'address': inspection_data.get('address', 'Address'),
+            'address': address,  # Use extracted/calculated address
             'inspection_date': inspection_data.get('inspection_date', datetime.now().strftime('%Y-%m-%d')),
-            'unit_types_str': inspection_data.get('unit_type', 'Apartment'),
+            'unit_types_str': unit_types_str,  # Use calculated unit types from data
             'total_units': total_units,
             'total_inspections': total_inspections,
             'total_defects': total_defects,
