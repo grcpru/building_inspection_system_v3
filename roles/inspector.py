@@ -22,7 +22,10 @@ from core.data_processor import InspectionDataProcessor, load_master_trade_mappi
 from core.trade_mapper import TradeMapper
 #from reports.excel_generator_api import create_excel_report_from_database
 from reports.word_generator_api import create_word_report_from_database
-from reports.excel_generator_api_professional import create_professional_excel_from_database
+from reports.excel_generator_api_professional import (
+    create_professional_excel_from_database,
+    generate_report_filename  # ← ADD THIS
+)
 
 # Import enhanced database manager
 try:
@@ -67,14 +70,47 @@ def generate_api_excel_report(inspection_ids: list, db_config: dict, api_key: st
     
     # Determine report type
     report_type = "single" if len(inspection_ids) == 1 else "multi"
-    
-    # Create output filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 🆕 GET BUILDING INFO FOR SMART FILENAME
+    cursor_temp = conn.cursor()
     if report_type == "single":
-        filename = f"inspection_report_{timestamp}.xlsx"
+        cursor_temp.execute("""
+            SELECT 
+                b.name as building_name,
+                i.inspection_date,
+                (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
+            FROM inspector_inspections i
+            JOIN inspector_buildings b ON i.building_id = b.id
+            WHERE i.id = %s
+        """, (inspection_ids[0], inspection_ids[0]))
+        row = cursor_temp.fetchone()
+        building_name = row[0] if row else "Building"
+        inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+        unit_number = row[2] if row else None
     else:
-        filename = f"multi_inspection_report_{inspection_ids[0]}_{timestamp}.xlsx"
-    
+        cursor_temp.execute("""
+            SELECT 
+                b.name as building_name,
+                MAX(i.inspection_date) as latest_date
+            FROM inspector_inspections i
+            JOIN inspector_buildings b ON i.building_id = b.id
+            WHERE i.id = ANY(%s)
+            GROUP BY b.name
+        """, (inspection_ids,))
+        row = cursor_temp.fetchone()
+        building_name = row[0] if row else "Building"
+        inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+        unit_number = None
+    cursor_temp.close()
+
+    # 🆕 GENERATE SMART FILENAME
+    filename = generate_report_filename(
+        building_name=building_name,
+        inspection_date=inspection_date,
+        unit=unit_number,
+        report_type=report_type
+    ) + ".xlsx"
+
     output_path = os.path.join(tempfile.gettempdir(), filename)
     
     # Connect to database
@@ -122,14 +158,47 @@ def generate_api_word_report(inspection_ids: list, db_config: dict, api_key: str
     
     # Determine report type
     report_type = "single" if len(inspection_ids) == 1 else "multi"
-    
-    # Create output filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 🆕 GET BUILDING INFO FOR SMART FILENAME
+    cursor_temp = conn.cursor()
     if report_type == "single":
-        filename = f"inspection_report_{timestamp}.docx"
+        cursor_temp.execute("""
+            SELECT 
+                b.name as building_name,
+                i.inspection_date,
+                (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
+            FROM inspector_inspections i
+            JOIN inspector_buildings b ON i.building_id = b.id
+            WHERE i.id = %s
+        """, (inspection_ids[0], inspection_ids[0]))
+        row = cursor_temp.fetchone()
+        building_name = row[0] if row else "Building"
+        inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+        unit_number = row[2] if row else None
     else:
-        filename = f"multi_inspection_report_{inspection_ids[0]}_{timestamp}.docx"
-    
+        cursor_temp.execute("""
+            SELECT 
+                b.name as building_name,
+                MAX(i.inspection_date) as latest_date
+            FROM inspector_inspections i
+            JOIN inspector_buildings b ON i.building_id = b.id
+            WHERE i.id = ANY(%s)
+            GROUP BY b.name
+        """, (inspection_ids,))
+        row = cursor_temp.fetchone()
+        building_name = row[0] if row else "Building"
+        inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+        unit_number = None
+    cursor_temp.close()
+
+    # 🆕 GENERATE SMART FILENAME
+    filename = generate_report_filename(
+        building_name=building_name,
+        inspection_date=inspection_date,
+        unit=unit_number,
+        report_type=report_type
+    ) + ".docx"
+
     output_path = os.path.join(tempfile.gettempdir(), filename)
     
     # Connect to database
