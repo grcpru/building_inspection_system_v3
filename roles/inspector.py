@@ -698,18 +698,52 @@ class InspectorInterface:
                             
                             # Determine report type
                             report_type = "single" if len(inspection_ids) == 1 else "multi"
-                            
-                            # Create output file
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            if report_type == "single":
-                                filename = f"professional_inspection_report_{timestamp}.xlsx"
-                            else:
-                                filename = f"professional_multi_report_{len(inspection_ids)}_inspections_{timestamp}.xlsx"
-                            
-                            output_path = os.path.join(tempfile.gettempdir(), filename)
-                            
-                            # Connect to database
+
+                            # 🆕 GET BUILDING INFO FOR SMART FILENAME
                             conn = psycopg2.connect(**db_config)
+                            cursor_temp = conn.cursor()
+
+                            if report_type == "single":
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        i.inspection_date,
+                                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
+                                    FROM inspector_inspections i
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = %s
+                                """, (inspection_ids[0], inspection_ids[0]))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = row[2] if row else None
+                            else:
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        MAX(i.inspection_date) as latest_date
+                                    FROM inspector_inspections i
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = ANY(%s)
+                                    GROUP BY b.name
+                                """, (inspection_ids,))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = None
+                            cursor_temp.close()
+
+                            # 🆕 GENERATE SMART FILENAME
+                            filename = generate_report_filename(
+                                building_name=building_name,
+                                inspection_date=inspection_date,
+                                unit=unit_number,
+                                report_type=report_type
+                            ) + ".xlsx"
+
+                            output_path = os.path.join(tempfile.gettempdir(), filename)
+
+                            # conn already created above, continue with existing code...
                             
                             # ===== NEW: Use professional generator =====
                             success = create_professional_excel_from_database(
@@ -836,18 +870,52 @@ class InspectorInterface:
                             
                             # Determine report type
                             report_type = "single" if len(inspection_ids) == 1 else "multi"
-                            
-                            # Create output file
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            if report_type == "single":
-                                filename = f"inspection_report_{timestamp}.docx"
-                            else:
-                                filename = f"multi_inspection_report_{len(inspection_ids)}_inspections_{timestamp}.docx"
-                            
-                            output_path = os.path.join(tempfile.gettempdir(), filename)
-                            
-                            # Connect to database
+
+                            # 🆕 GET BUILDING INFO FOR SMART FILENAME
                             conn = psycopg2.connect(**db_config)
+                            cursor_temp = conn.cursor()
+
+                            if report_type == "single":
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        i.inspection_date,
+                                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
+                                    FROM inspector_inspections i
+                                JOIN inspector_buildings b ON i.building_id = b.id
+                                WHERE i.id = %s
+                            """, (inspection_ids[0], inspection_ids[0]))
+                            row = cursor_temp.fetchone()
+                            building_name = row[0] if row else "Building"
+                            inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                            unit_number = row[2] if row else None
+                        else:
+                            cursor_temp.execute("""
+                                SELECT 
+                                    b.name as building_name,
+                                    MAX(i.inspection_date) as latest_date
+                                FROM inspector_inspections i
+                                JOIN inspector_buildings b ON i.building_id = b.id
+                                WHERE i.id = ANY(%s)
+                                GROUP BY b.name
+                            """, (inspection_ids,))
+                            row = cursor_temp.fetchone()
+                            building_name = row[0] if row else "Building"
+                            inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                            unit_number = None
+                        cursor_temp.close()
+
+                        # 🆕 GENERATE SMART FILENAME
+                        filename = generate_report_filename(
+                            building_name=building_name,
+                            inspection_date=inspection_date,
+                            unit=unit_number,
+                            report_type=report_type
+                        ) + ".docx"
+
+                        output_path = os.path.join(tempfile.gettempdir(), filename)
+
+                        # conn already created above, continue with existing code...
                             
                             # Generate report with photos
                             success = create_word_report_from_database(
