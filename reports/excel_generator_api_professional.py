@@ -1523,18 +1523,39 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
             'unit_type': 'Mixed'
         }
         
-        # Get unit info from first inspection item
+        # Get unit info from inspection items (get ALL unique unit types)
         cursor.execute("""
-            SELECT unit, unit_type
+            SELECT DISTINCT unit, unit_type
             FROM inspector_inspection_items
             WHERE inspection_id = %s
-            LIMIT 1
+            AND unit_type IS NOT NULL
+            ORDER BY unit
         """, (inspection_id,))
         
-        unit_row = cursor.fetchone()
-        if unit_row and len(unit_row) >= 2:
-            inspection_data['unit'] = unit_row[0] or 'Unit'
-            inspection_data['unit_type'] = unit_row[1] or 'Apartment'
+        unit_rows = cursor.fetchall()
+        if unit_rows and len(unit_rows) > 0:
+            # Get unique unit types
+            unit_types = set()
+            units = set()
+            for row in unit_rows:
+                if row[0]:  # unit
+                    units.add(row[0])
+                if row[1]:  # unit_type
+                    unit_types.add(row[1])
+            
+            # Set unit (multiple units or single)
+            if len(units) == 1:
+                inspection_data['unit'] = list(units)[0]
+            else:
+                inspection_data['unit'] = 'Multiple Units'
+            
+            # Set unit_type (comma-separated if multiple)
+            if len(unit_types) > 0:
+                inspection_data['unit_type'] = ', '.join(sorted(unit_types))
+                logger.info(f"Found unit types: {inspection_data['unit_type']}")
+            else:
+                inspection_data['unit_type'] = 'Apartment'
+                logger.warning(f"No unit_type found for inspection {inspection_id}, using default 'Apartment'")
         else:
             logger.warning(f"No inspection items found for inspection {inspection_id}")
     
@@ -1548,7 +1569,7 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
         SELECT ii.room, ii.component, ii.notes, ii.trade, ii.urgency, ii.status_class,
             ii.photo_url, ii.photo_media_id, ii.inspector_notes,
             ii.inspection_date, ii.created_at, ii.planned_completion, ii.owner_signoff_timestamp,
-            ii.unit, b.name as building_name
+            ii.unit, b.name as building_name, ii.unit_type
         FROM inspector_inspection_items ii
         JOIN inspector_inspections i ON ii.inspection_id = i.id
         JOIN inspector_buildings b ON i.building_id = b.id
@@ -1574,7 +1595,8 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
             'planned_completion': row[11],
             'owner_signoff_timestamp': row[12],
             'unit': row[13],
-            'building_name': row[14]
+            'building_name': row[14],
+            'unit_type': row[15]  # 🆕 ADD unit_type!
         })
     
     logger.info(f"Found {len(defects)} defects for inspection {inspection_id}")
