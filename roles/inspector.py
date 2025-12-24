@@ -822,7 +822,7 @@ class InspectorInterface:
                             from reports.word_generator_api import create_word_report_from_database
                             import psycopg2
                             
-                            # ✅ NEW - Works in Streamlit Cloud
+                            # ✅ Database config
                             try:
                                 db_config = {
                                     'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
@@ -840,10 +840,8 @@ class InspectorInterface:
                                     'port': os.getenv('SUPABASE_PORT', '5432')
                                 }
                             
-                            # Get SafetyCulture API key - try both sources
+                            # Get SafetyCulture API key
                             api_key = None
-
-                            # Try secrets.toml first
                             try:
                                 api_key = st.secrets['SAFETY_CULTURE_API_KEY']
                                 if api_key:
@@ -851,7 +849,6 @@ class InspectorInterface:
                             except:
                                 pass
 
-                            # Fall back to environment variable (for Railway)
                             if not api_key:
                                 api_key = os.getenv('SAFETY_CULTURE_API_KEY')
                                 if api_key:
@@ -882,40 +879,38 @@ class InspectorInterface:
                                         i.inspection_date,
                                         (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
                                     FROM inspector_inspections i
-                                JOIN inspector_buildings b ON i.building_id = b.id
-                                WHERE i.id = %s
-                            """, (inspection_ids[0], inspection_ids[0]))
-                            row = cursor_temp.fetchone()
-                            building_name = row[0] if row else "Building"
-                            inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
-                            unit_number = row[2] if row else None
-                        else:
-                            cursor_temp.execute("""
-                                SELECT 
-                                    b.name as building_name,
-                                    MAX(i.inspection_date) as latest_date
-                                FROM inspector_inspections i
-                                JOIN inspector_buildings b ON i.building_id = b.id
-                                WHERE i.id = ANY(%s)
-                                GROUP BY b.name
-                            """, (inspection_ids,))
-                            row = cursor_temp.fetchone()
-                            building_name = row[0] if row else "Building"
-                            inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
-                            unit_number = None
-                        cursor_temp.close()
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = %s
+                                """, (inspection_ids[0], inspection_ids[0]))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = row[2] if row else None
+                            else:
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        MAX(i.inspection_date) as latest_date
+                                    FROM inspector_inspections i
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = ANY(%s)
+                                    GROUP BY b.name
+                                """, (inspection_ids,))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = None
+                            cursor_temp.close()
 
-                        # 🆕 GENERATE SMART FILENAME
-                        filename = generate_report_filename(
-                            building_name=building_name,
-                            inspection_date=inspection_date,
-                            unit=unit_number,
-                            report_type=report_type
-                        ) + ".docx"
+                            # 🆕 GENERATE SMART FILENAME
+                            filename = generate_report_filename(
+                                building_name=building_name,
+                                inspection_date=inspection_date,
+                                unit=unit_number,
+                                report_type=report_type
+                            ) + ".docx"
 
-                        output_path = os.path.join(tempfile.gettempdir(), filename)
-
-                        # conn already created above, continue with existing code...
+                            output_path = os.path.join(tempfile.gettempdir(), filename)
                             
                             # Generate report with photos
                             success = create_word_report_from_database(
