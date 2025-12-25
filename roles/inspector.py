@@ -613,9 +613,80 @@ class InspectorInterface:
             
             st.markdown("---")
             
-            # ───────────────────────────────────────────────────────────
+            # ───────────────────────────────────────────────────────────────
+            # 🆕 SECTION 2.5: Report Enhancement Images
+            # ───────────────────────────────────────────────────────────────
+            
+            with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=False):
+                st.info("✨ Add your company logo and building photo to create professional Word reports")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Company Logo:**")
+                    st.caption("Appears in document header (2.0\" width)")
+                    
+                    logo_upload = st.file_uploader(
+                        "Upload company logo",
+                        type=['png', 'jpg', 'jpeg'],
+                        key="api_logo_upload",
+                        help="Recommended: 200x100px PNG with transparent background"
+                    )
+                    
+                    if logo_upload:
+                        st.image(logo_upload, caption="✅ Logo Preview", width=150)
+                        st.success("Logo ready for upload")
+                
+                with col2:
+                    st.markdown("**Building Cover Photo:**")
+                    st.caption("Appears on cover page (4.7\" width)")
+                    
+                    cover_upload = st.file_uploader(
+                        "Upload building photo",
+                        type=['png', 'jpg', 'jpeg'],
+                        key="api_cover_upload",
+                        help="Recommended: 800x600px landscape format"
+                    )
+                    
+                    if cover_upload:
+                        st.image(cover_upload, caption="✅ Cover Preview", width=150)
+                        st.success("Cover photo ready for upload")
+                
+                # Save images button
+                col_save, col_clear = st.columns([2, 1])
+                
+                with col_save:
+                    if st.button("💾 Save Images for Reports", key="save_api_images", use_container_width=True, type="primary"):
+                        images_saved = self._save_report_images(logo_upload, cover_upload)
+                        if images_saved > 0:
+                            st.success(f"✅ {images_saved} image(s) saved successfully!")
+                            st.balloons()
+                        else:
+                            st.info("No new images to save - upload files above first")
+                
+                with col_clear:
+                    if st.button("🗑️ Clear All", key="clear_api_images", use_container_width=True):
+                        self._clear_report_images()
+                        st.success("Images cleared!")
+                        st.rerun()
+                
+                # Show current status
+                if 'report_images' in st.session_state:
+                    current_images = [k for k, v in st.session_state.report_images.items() if v is not None]
+                    if current_images:
+                        st.markdown("---")
+                        st.success(f"✅ **Images ready for reports:** {', '.join(current_images)}")
+                        
+                        # Show file paths for verification
+                        for img_type, img_path in st.session_state.report_images.items():
+                            if img_path:
+                                st.caption(f"• {img_type.capitalize()}: {os.path.basename(img_path)}")
+            
+            st.markdown("---")
+            
+            # ───────────────────────────────────────────────────────────────
             # SECTION 3: Generate Reports with Photos & Notes
-            # ───────────────────────────────────────────────────────────
+            # ───────────────────────────────────────────────────────────────
             
             st.subheader("📊 Generate Reports")
             
@@ -633,34 +704,15 @@ class InspectorInterface:
                 st.write("• Settlement readiness")
                 st.write("• Status tracking")
                 
-                # Add at the start of Excel button handler
-                # st.write("=== DEBUG ===")
-
-                # # Check secrets
-                # try:
-                #     key = st.secrets.get('SAFETY_CULTURE_API_KEY')
-                #     st.write(f"Secrets: {'YES' if key else 'NO'}")
-                #     if key:
-                #         st.write(f"Key length: {len(key)} chars")
-                # except Exception as e:
-                #     st.write(f"Secrets error: {e}")
-
-                # # Check environment
-                # env_key = os.getenv('SAFETY_CULTURE_API_KEY')
-                # st.write(f"Environment: {'YES' if env_key else 'NO'}")
-
-                # st.write("=== END DEBUG ===")
-
                 if st.button("📊 Generate Excel with Photos", type="primary", use_container_width=True, key="gen_excel_api"):
                     with st.spinner("Generating Excel report with photos..."):
                         try:
                             inspection_ids = [insp['id'] for insp in selected_inspections]
                             
-                            # NEW IMPORT
                             from reports.excel_generator_api_professional import create_professional_excel_from_database
                             import psycopg2
                             
-                            # Get database config (keep your existing code)
+                            # Get database config
                             try:
                                 db_config = {
                                     'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
@@ -678,7 +730,7 @@ class InspectorInterface:
                                     'port': os.getenv('SUPABASE_PORT', '5432')
                                 }
                             
-                            # Get API key (keep your existing code)
+                            # Get API key
                             api_key = None
                             try:
                                 api_key = st.secrets['SAFETY_CULTURE_API_KEY']
@@ -699,7 +751,7 @@ class InspectorInterface:
                             # Determine report type
                             report_type = "single" if len(inspection_ids) == 1 else "multi"
 
-                            # 🆕 GET BUILDING INFO FOR SMART FILENAME
+                            # GET BUILDING INFO FOR SMART FILENAME
                             conn = psycopg2.connect(**db_config)
                             cursor_temp = conn.cursor()
 
@@ -733,7 +785,8 @@ class InspectorInterface:
                                 unit_number = None
                             cursor_temp.close()
 
-                            # 🆕 GENERATE SMART FILENAME
+                            # GENERATE SMART FILENAME
+                            from reports.excel_generator_api_professional import generate_report_filename
                             filename = generate_report_filename(
                                 building_name=building_name,
                                 inspection_date=inspection_date,
@@ -742,10 +795,8 @@ class InspectorInterface:
                             ) + ".xlsx"
 
                             output_path = os.path.join(tempfile.gettempdir(), filename)
-
-                            # conn already created above, continue with existing code...
                             
-                            # ===== NEW: Use professional generator =====
+                            # Use professional generator
                             success = create_professional_excel_from_database(
                                 inspection_ids=inspection_ids,
                                 db_connection=conn,
@@ -757,7 +808,6 @@ class InspectorInterface:
                             conn.close()
                             
                             if success and os.path.exists(output_path):
-                                # Success - provide download
                                 with open(output_path, 'rb') as f:
                                     st.download_button(
                                         label="📥 Download Professional Excel Report",
@@ -770,7 +820,6 @@ class InspectorInterface:
                                 
                                 st.success("✅ Professional Excel report generated!")
                                 
-                                # Show summary
                                 file_size = os.path.getsize(output_path)
                                 
                                 col_a, col_b, col_c, col_d = st.columns(4)
@@ -812,17 +861,17 @@ class InspectorInterface:
                 st.write("• Full-size photos")
                 st.write("• Professional layout")
                 st.write("• Print-ready format")
-                st.write("• Cover page")
+                st.write("• Cover page with logo")
                 
                 if st.button("📄 Generate Word with Photos", type="primary", use_container_width=True, key="gen_word_api"):
-                    with st.spinner("Generating Word report with photos..."):
+                    with st.spinner("Generating professional Word report with photos..."):
                         try:
                             inspection_ids = [insp['id'] for insp in selected_inspections]
                             
                             from reports.word_generator_api import create_word_report_from_database
                             import psycopg2
                             
-                            # ✅ Database config
+                            # Database config
                             try:
                                 db_config = {
                                     'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
@@ -856,19 +905,12 @@ class InspectorInterface:
 
                             if not api_key:
                                 st.error("❌ SafetyCulture API key not configured")
-                                st.info("""
-                                **Local:** Add to .streamlit/secrets.toml:
-                                SAFETY_CULTURE_API_KEY = "your_key"
-                                
-                                **Railway:** Add to Variables tab:
-                                SAFETY_CULTURE_API_KEY = your_key
-                                """)
                                 st.stop()
                             
                             # Determine report type
                             report_type = "single" if len(inspection_ids) == 1 else "multi"
 
-                            # 🆕 GET BUILDING INFO FOR SMART FILENAME
+                            # GET BUILDING INFO FOR SMART FILENAME
                             conn = psycopg2.connect(**db_config)
                             cursor_temp = conn.cursor()
 
@@ -902,7 +944,8 @@ class InspectorInterface:
                                 unit_number = None
                             cursor_temp.close()
 
-                            # 🆕 GENERATE SMART FILENAME
+                            # GENERATE SMART FILENAME
+                            from reports.excel_generator_api_professional import generate_report_filename
                             filename = generate_report_filename(
                                 building_name=building_name,
                                 inspection_date=inspection_date,
@@ -912,32 +955,59 @@ class InspectorInterface:
 
                             output_path = os.path.join(tempfile.gettempdir(), filename)
                             
-                            # Generate report with photos
+                            # ✅ NEW: Get images from session state
+                            images = None
+                            images_info = []
+                            
+                            if 'report_images' in st.session_state:
+                                report_images = st.session_state.report_images
+                                
+                                # Check if at least one image is available
+                                has_logo = report_images.get('logo') and os.path.exists(report_images['logo'])
+                                has_cover = report_images.get('cover') and os.path.exists(report_images['cover'])
+                                
+                                if has_logo or has_cover:
+                                    images = {
+                                        'logo': report_images.get('logo') if has_logo else None,
+                                        'cover': report_images.get('cover') if has_cover else None
+                                    }
+                                    
+                                    if has_logo:
+                                        images_info.append("📌 Company logo in header")
+                                    if has_cover:
+                                        images_info.append("🖼️ Building photo on cover")
+                                    
+                                    st.caption(" | ".join(images_info))
+                                else:
+                                    st.caption("📄 Generating report without logo/cover images")
+                            else:
+                                st.caption("📄 Generating report without logo/cover images")
+                            
+                            # ✅ Generate report with photos AND IMAGES
                             success = create_word_report_from_database(
                                 inspection_ids=inspection_ids,
                                 db_connection=conn,
                                 api_key=api_key,
                                 output_path=output_path,
-                                report_type=report_type
+                                report_type=report_type,
+                                images=images  # ✅ NOW PASSING IMAGES!
                             )
                             
                             conn.close()
                             
                             if success and os.path.exists(output_path):
-                                # Success - provide download
                                 with open(output_path, 'rb') as f:
                                     st.download_button(
-                                        label="📥 Download Word Report",
+                                        label="📥 Download Professional Word Report",
                                         data=f,
                                         file_name=filename,
                                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                         use_container_width=True,
-                                        key="download_word_api"
+                                        key="download_word_api_professional"
                                     )
                                 
-                                st.success("✅ Word report with photos generated successfully!")
+                                st.success("✅ Professional Word report generated successfully!")
                                 
-                                # Show detailed summary
                                 file_size = os.path.getsize(output_path)
                                 
                                 col_a, col_b, col_c = st.columns(3)
@@ -948,47 +1018,43 @@ class InspectorInterface:
                                 with col_c:
                                     st.metric("File Size", f"{file_size / 1024:.1f} KB")
                                 
-                                st.info(f"""
-                                **Report Details:**
-                                • {total_defects} defects documented
-                                • {total_photos} full-size photos embedded
-                                • {total_notes} inspector notes included
-                                • Format: 5 inches wide with captions
-                                • Professional defect tables
-                                • Ready for printing
-                                """)
+                                # Enhanced feature list
+                                features = [
+                                    f"📋 {total_defects} defects documented",
+                                    f"📸 {total_photos} photos embedded",
+                                    f"📝 {total_notes} inspector notes included",
+                                    "📄 Professional cover page",
+                                    "📊 Executive overview with charts",
+                                    "🎨 Color-coded severity analysis",
+                                    "📈 Trade distribution analysis",
+                                    "💡 Strategic recommendations",
+                                    "🔧 Professional formatting"
+                                ]
                                 
-                                # Cleanup option
-                                if os.path.exists(output_path):
-                                    try:
-                                        import time
-                                        time.sleep(2)
-                                    except:
-                                        pass
+                                # Add image features if used
+                                if images:
+                                    if images.get('logo'):
+                                        features.insert(0, "✅ Company logo in header")
+                                    if images.get('cover'):
+                                        features.insert(1, "✅ Building photo on cover")
+                                
+                                st.info("**Professional Report Features:**\n" + "\n".join(f"• {f}" for f in features))
+                                
                             else:
                                 st.error("❌ Failed to generate Word report")
                                 st.warning("Check console logs for details")
                         
-                        except ImportError as ie:
-                            st.error(f"❌ Import Error: {ie}")
-                            st.warning("Make sure word_generator_api.py is in the reports/ directory")
-                            st.info("""
-                            **Required files:**
-                            • reports/word_generator_api.py
-                            • Install: pip install python-docx Pillow requests
-                            """)
-                        
                         except Exception as e:
-                            st.error(f"❌ Error generating Word: {e}")
+                            st.error(f"❌ Error generating Word report: {e}")
                             import traceback
                             with st.expander("🔍 Error Details"):
                                 st.code(traceback.format_exc())
             
             st.markdown("---")
             
-            # ───────────────────────────────────────────────────────────
+            # ───────────────────────────────────────────────────────────────
             # SECTION 4: Future Features
-            # ───────────────────────────────────────────────────────────
+            # ───────────────────────────────────────────────────────────────
             
             with st.expander("📧 Email Report (Coming Soon)", expanded=False):
                 st.caption("Future feature: Send reports directly via email")
@@ -4085,155 +4151,6 @@ Developer Access:
 def render_inspector_interface(user_info=None, auth_manager=None):
     """Main inspector interface function for integration with main.py"""
     
-    # ✅ BUTTON 1: Test Database Save
-    # if st.button("🧪 TEST DATABASE SAVE"):
-    #     st.write("### 🎯 Quick Save Test")
-        
-    #     try:
-    #         # Get connection manager
-    #         from database.connection_manager import get_connection_manager
-    #         conn_manager = get_connection_manager()
-    #         st.success(f"✅ Connection: {conn_manager.db_type}")
-            
-    #         # Create InspectorInterface WITHOUT conn_manager parameter
-    #         inspector = InspectorInterface()
-    #         processor = inspector.processor
-            
-    #         # Check processor
-    #         st.write(f"**inspector.conn_manager:** {inspector.conn_manager}")
-    #         st.write(f"**processor.conn_manager:** {processor.conn_manager}")
-            
-    #         if processor.conn_manager is None:
-    #             st.error("❌ PROBLEM: processor.conn_manager is None!")
-    #             st.error("This is why data isn't saving!")
-    #             st.stop()
-            
-    #         st.success("✅ Processor has conn_manager")
-            
-    #         # Create test data
-    #         import pandas as pd
-    #         import hashlib
-            
-    #         test_data = {
-    #             'auditName': ['08/11/2025 / 101 / TEST'],
-    #             'Title Page_Conducted on': ['2025-11-08'],
-    #             'Lot Details_Lot Number': ['101'],
-    #             'Pre-Settlement Inspection_Unit Type': ['Apartment'],
-    #             'Pre-Settlement Inspection_Living Room_Paint': ['Not OK'],
-    #         }
-    #         test_df = pd.DataFrame(test_data)
-            
-    #         # Load mapping
-    #         from core.data_processor import load_master_trade_mapping
-    #         mapping = load_master_trade_mapping()
-            
-    #         building_info = {'name': 'TEST', 'address': 'Test', 'date': '2025-11-08'}
-    #         file_hash = hashlib.md5(str(test_data).encode()).hexdigest()
-            
-    #         st.write("🔄 Processing test data...")
-            
-    #         # PROCESS - THIS SHOULD SAVE!
-    #         final_df, metrics, inspection_id = processor.process_inspection_data(
-    #             df=test_df,
-    #             mapping=mapping,
-    #             building_info=building_info,
-    #             inspector_name="Test Inspector",
-    #             original_filename="test.csv",
-    #             file_hash=file_hash
-    #         )
-            
-    #         st.write(f"**Result:** inspection_id = {inspection_id}")
-            
-    #         if inspection_id:
-    #             st.success(f"🎉 SUCCESS! Saved with ID: {inspection_id}")
-    #             st.balloons()
-                
-    #             # Verify in database
-    #             conn = conn_manager.get_connection()
-    #             cursor = conn.cursor()
-                
-    #             if conn_manager.db_type == "postgresql":
-    #                 cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = %s", (inspection_id,))
-    #             else:
-    #                 cursor.execute("SELECT COUNT(*) FROM inspector_inspection_items WHERE inspection_id = ?", (inspection_id,))
-                
-    #             count = cursor.fetchone()[0]
-    #             cursor.close()
-                
-    #             st.success(f"✅ Found {count} items in database!")
-                
-    #             # Cleanup option
-    #             if st.checkbox("🗑️ Delete test data"):
-    #                 cursor = conn.cursor()
-    #                 if conn_manager.db_type == "postgresql":
-    #                     cursor.execute("DELETE FROM inspector_inspection_items WHERE inspection_id = %s", (inspection_id,))
-    #                     cursor.execute("DELETE FROM inspector_inspections WHERE id = %s", (inspection_id,))
-    #                 else:
-    #                     cursor.execute("DELETE FROM inspector_inspection_items WHERE inspection_id = ?", (inspection_id,))
-    #                     cursor.execute("DELETE FROM inspector_inspections WHERE id = ?", (inspection_id,))
-    #                 conn.commit()
-    #                 cursor.close()
-    #                 st.info("✅ Test data deleted")
-                    
-    #         else:
-    #             st.error("❌ FAILED: inspection_id is None")
-    #             st.error("Data was processed but NOT saved!")
-    #             st.warning("Check your console/logs for error messages")
-                
-    #             st.info("""
-    #             **What to check:**
-    #             1. Look for messages starting with 🔍 or ❌ in console
-    #             2. Check if processor.conn_manager is None above
-    #             3. Look for "PostgreSQL save failed" errors
-    #             """)
-                
-    #     except Exception as e:
-    #         st.error(f"❌ Test failed: {e}")
-    #         st.exception(e)
-    
-    # # ✅ Separator OUTSIDE the first button
-    # st.write("---")
-    
-    # # ✅ BUTTON 2: Check Work Order Table Schema (OUTSIDE the first button's if block)
-    # if st.button("🔍 Check Work Order Table Schema"):
-    #     st.write("### 📊 Work Order Table Structure")
-        
-    #     try:
-    #         from database.connection_manager import get_connection_manager
-    #         conn_manager = get_connection_manager()
-    #         conn = conn_manager.get_connection()
-    #         cursor = conn.cursor()
-            
-    #         st.write("Checking `inspector_work_orders` table...")
-            
-    #         cursor.execute("""
-    #             SELECT column_name, data_type, is_nullable
-    #             FROM information_schema.columns 
-    #             WHERE table_name = 'inspector_work_orders'
-    #             ORDER BY ordinal_position
-    #         """)
-            
-    #         columns = cursor.fetchall()
-    #         cursor.close()
-            
-    #         if columns:
-    #             st.success(f"✅ Found {len(columns)} columns in inspector_work_orders table:")
-                
-    #             for i, col in enumerate(columns, 1):
-    #                 nullable = "✅ nullable" if col[2] == 'YES' else "❌ NOT NULL"
-    #                 st.write(f"{i}. **{col[0]}** - `{col[1]}` - {nullable}")
-    #         else:
-    #             st.error("❌ Table 'inspector_work_orders' not found or has no columns!")
-                
-    #     except Exception as e:
-    #         st.error(f"❌ Error checking table: {e}")
-    #         st.exception(e)
-    
-    # # ✅ Another separator
-    # st.write("---")
-    
-    # ✅ REST OF YOUR CODE (Initialize inspector interface)
-    # Initialize or update the inspector interface with user context
     if 'inspector_interface' not in st.session_state:
         st.session_state.inspector_interface = InspectorInterface(user_info=user_info)
     else:
