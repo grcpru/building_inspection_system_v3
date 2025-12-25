@@ -291,51 +291,51 @@ class InspectorInterface:
             st.session_state.report_images = {'logo': None, 'cover': None}
 
     def _save_report_images(self, logo_upload, cover_upload):
-    """Save uploaded logo and cover images"""
-    import tempfile
-    import os
-    
-    images_saved = 0
-    
-    if 'report_images' not in st.session_state:
-        st.session_state.report_images = {'logo': None, 'cover': None}
-    
-    if logo_upload is not None:
-        try:
-            temp_dir = tempfile.gettempdir()
-            logo_path = os.path.join(temp_dir, f"report_logo_{id(logo_upload)}.png")
-            with open(logo_path, 'wb') as f:
-                f.write(logo_upload.getbuffer())
-            st.session_state.report_images['logo'] = logo_path
-            images_saved += 1
-        except Exception as e:
-            st.error(f"Error saving logo: {e}")
-    
-    if cover_upload is not None:
-        try:
-            temp_dir = tempfile.gettempdir()
-            cover_path = os.path.join(temp_dir, f"report_cover_{id(cover_upload)}.png")
-            with open(cover_path, 'wb') as f:
-                f.write(cover_upload.getbuffer())
-            st.session_state.report_images['cover'] = cover_path
-            images_saved += 1
-        except Exception as e:
-            st.error(f"Error saving cover: {e}")
-    
-    return images_saved
+        """Save uploaded logo and cover images"""
+        import tempfile
+        import os
+        
+        images_saved = 0
+        
+        if 'report_images' not in st.session_state:
+            st.session_state.report_images = {'logo': None, 'cover': None}
+        
+        if logo_upload is not None:
+            try:
+                temp_dir = tempfile.gettempdir()
+                logo_path = os.path.join(temp_dir, f"report_logo_{id(logo_upload)}.png")
+                with open(logo_path, 'wb') as f:
+                    f.write(logo_upload.getbuffer())
+                st.session_state.report_images['logo'] = logo_path
+                images_saved += 1
+            except Exception as e:
+                st.error(f"Error saving logo: {e}")
+        
+        if cover_upload is not None:
+            try:
+                temp_dir = tempfile.gettempdir()
+                cover_path = os.path.join(temp_dir, f"report_cover_{id(cover_upload)}.png")
+                with open(cover_path, 'wb') as f:
+                    f.write(cover_upload.getbuffer())
+                st.session_state.report_images['cover'] = cover_path
+                images_saved += 1
+            except Exception as e:
+                st.error(f"Error saving cover: {e}")
+        
+        return images_saved
 
-def _clear_report_images(self):
-    """Clear uploaded images"""
-    import os
-    
-    if 'report_images' in st.session_state:
-        for img_type, img_path in st.session_state.report_images.items():
-            if img_path and os.path.exists(img_path):
-                try:
-                    os.remove(img_path)
-                except:
-                    pass
-        st.session_state.report_images = {'logo': None, 'cover': None}
+    def _clear_report_images(self):
+        """Clear uploaded images"""
+        import os
+        
+        if 'report_images' in st.session_state:
+            for img_type, img_path in st.session_state.report_images.items():
+                if img_path and os.path.exists(img_path):
+                    try:
+                        os.remove(img_path)
+                    except:
+                        pass
+            st.session_state.report_images = {'logo': None, 'cover': None}
     
     def _get_connection(self):
         """Get database connection using connection manager"""
