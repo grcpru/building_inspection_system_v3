@@ -617,7 +617,7 @@ class InspectorInterface:
             # 🆕 SECTION 2.5: Report Enhancement Images
             # ───────────────────────────────────────────────────────────────
             
-            with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=False):
+            with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):  
                 st.info("✨ Add your company logo and building photo to create professional Word reports")
                 
                 col1, col2 = st.columns(2)
