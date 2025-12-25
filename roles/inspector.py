@@ -339,7 +339,140 @@ class InspectorInterface:
                 with open(cover_path, 'wb') as f:
                     f.write(cover_upload.getbuffer())
                 
+                # Store in session stateclass InspectorInterface:
+    """Inspector interface with enhanced V3 database integration for cross-role data access"""
+        
+    def __init__(self, db_path: str = "building_inspection.db", user_info: dict = None):
+        """Initialize with connection manager"""
+        self._button_counter = 0
+        
+        # ✅ Use connection manager
+        from database.connection_manager import get_connection_manager
+        self.conn_manager = get_connection_manager()
+        self.db_type = self.conn_manager.db_type
+        
+        # ✅ Pass connection manager to processor
+        self.processor = InspectionDataProcessor(db_path, conn_manager=self.conn_manager)
+        
+        self.mapper = TradeMapper()
+        self.processed_data = None
+        self.metrics = None
+        self.trade_mapping = None
+        self.current_inspection_id = None
+        self.user_info = user_info
+        self.auth_manager = None
+        
+        # Keep db_manager for legacy features only (SQLite)
+        try:
+            from database.setup import DatabaseManager
+            
+            try:
+                # Pass connection manager for PostgreSQL support
+                self.db_manager = DatabaseManager(db_path, conn_manager=self.conn_manager)
+                print(f"✅ DatabaseManager initialized with {self.db_type}")
+            except TypeError:
+                # Fallback if DatabaseManager doesn't accept conn_manager yet
+                if self.db_type == "sqlite":
+                    self.db_manager = DatabaseManager(db_path)
+                    print(f"⚠️  DatabaseManager: SQLite only")
+                else:
+                    # Create minimal wrapper for PostgreSQL
+                    class DBWrapper:
+                        def __init__(self, cm):
+                            self.cm = cm
+                            self.db_type = getattr(cm, 'db_type', 'postgresql')
+                        def connect(self):
+                            return self.cm.get_connection()
+                    self.db_manager = DBWrapper(self.conn_manager)
+                    print(f"✅ DatabaseManager: Using DBWrapper for {self.db_type}")
+            
+            # ✅ MOVED THIS OUTSIDE! Now it ALWAYS runs
+            # Ensure processor has database access
+            if hasattr(self, 'processor') and self.processor:
+                if not hasattr(self.processor, 'db_manager') or self.processor.db_manager is None:
+                    self.processor.db_manager = self.db_manager
+                    print(f"✅ Assigned db_manager to processor")
+                    
+        except ImportError as e:
+            print(f"⚠️  DatabaseManager not available: {e}")
+            self.db_manager = None
+        
+        if 'report_images' not in st.session_state:
+            st.session_state.report_images = {'logo': None, 'cover': None}
+
+    def _save_report_images(self, logo_upload, cover_upload):
+        """
+        Save uploaded logo and cover images to temporary directory
+        
+        Args:
+            logo_upload: Streamlit file uploader object for logo
+            cover_upload: Streamlit file uploader object for cover
+            
+        Returns:
+            int: Number of images saved (0, 1, or 2)
+        """
+        import tempfile
+        import os
+        
+        images_saved = 0
+        
+        # Initialize session state if not exists
+        if 'report_images' not in st.session_state:
+            st.session_state.report_images = {'logo': None, 'cover': None}
+        
+        # Save logo
+        if logo_upload is not None:
+            try:
+                # Create temp file
+                temp_dir = tempfile.gettempdir()
+                logo_path = os.path.join(temp_dir, f"report_logo_{id(logo_upload)}.png")
+                
+                # Write file
+                with open(logo_path, 'wb') as f:
+                    f.write(logo_upload.getbuffer())
+                
                 # Store in session state
+                st.session_state.report_images['logo'] = logo_path
+                images_saved += 1
+                
+            except Exception as e:
+                st.error(f"Error saving logo: {e}")
+        
+        # Save cover
+        if cover_upload is not None:
+            try:
+                # Create temp file
+                temp_dir = tempfile.gettempdir()
+                cover_path = os.path.join(temp_dir, f"report_cover_{id(cover_upload)}.png")
+                
+                # Write file
+                with open(cover_path, 'wb') as f:
+                    f.write(cover_upload.getbuffer())
+                
+                # Store in session state
+                st.session_state.report_images['cover'] = cover_path
+                images_saved += 1
+                
+            except Exception as e:
+                st.error(f"Error saving cover: {e}")
+        
+        return images_saved
+    
+    def _clear_report_images(self):
+        """Clear uploaded images from session state and delete temp files"""
+        import os
+        
+        if 'report_images' in st.session_state:
+            # Delete files if they exist
+            for img_type, img_path in st.session_state.report_images.items():
+                if img_path and os.path.exists(img_path):
+                    try:
+                        os.remove(img_path)
+                    except Exception as e:
+                        print(f"Could not delete {img_type} file: {e}")
+            
+            # Reset session state
+            st.session_state.report_images = {'logo': None, 'cover': None}
                 st.session_state.report_images['cover'] = cover_path
                 images_saved += 1
                 
@@ -686,7 +819,7 @@ class InspectorInterface:
                             st.info("No photos found in this inspection")
             
             st.markdown("---")
-            
+            st.error("🔍 TEST: YOU SHOULD SEE THIS!")  # ← ADD THIS ONE LINE
             # ───────────────────────────────────────────────────────────────
             # 🆕 SECTION 2.5: Report Enhancement Images
             # ───────────────────────────────────────────────────────────────
