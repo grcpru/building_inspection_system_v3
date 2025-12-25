@@ -291,50 +291,77 @@ class InspectorInterface:
             st.session_state.report_images = {'logo': None, 'cover': None}
 
     def _save_report_images(self, logo_upload, cover_upload):
-        """Save uploaded logo and cover images"""
+        """
+        Save uploaded logo and cover images to temporary directory
+        
+        Args:
+            logo_upload: Streamlit file uploader object for logo
+            cover_upload: Streamlit file uploader object for cover
+            
+        Returns:
+            int: Number of images saved (0, 1, or 2)
+        """
         import tempfile
         import os
         
         images_saved = 0
         
+        # Initialize session state if not exists
         if 'report_images' not in st.session_state:
             st.session_state.report_images = {'logo': None, 'cover': None}
         
+        # Save logo
         if logo_upload is not None:
             try:
+                # Create temp file
                 temp_dir = tempfile.gettempdir()
                 logo_path = os.path.join(temp_dir, f"report_logo_{id(logo_upload)}.png")
+                
+                # Write file
                 with open(logo_path, 'wb') as f:
                     f.write(logo_upload.getbuffer())
+                
+                # Store in session state
                 st.session_state.report_images['logo'] = logo_path
                 images_saved += 1
+                
             except Exception as e:
                 st.error(f"Error saving logo: {e}")
         
+        # Save cover
         if cover_upload is not None:
             try:
+                # Create temp file
                 temp_dir = tempfile.gettempdir()
                 cover_path = os.path.join(temp_dir, f"report_cover_{id(cover_upload)}.png")
+                
+                # Write file
                 with open(cover_path, 'wb') as f:
                     f.write(cover_upload.getbuffer())
+                
+                # Store in session state
                 st.session_state.report_images['cover'] = cover_path
                 images_saved += 1
+                
             except Exception as e:
                 st.error(f"Error saving cover: {e}")
         
         return images_saved
-
+    
     def _clear_report_images(self):
-        """Clear uploaded images"""
+        """Clear uploaded images from session state and delete temp files"""
         import os
         
         if 'report_images' in st.session_state:
+            # Delete files if they exist
             for img_type, img_path in st.session_state.report_images.items():
                 if img_path and os.path.exists(img_path):
                     try:
                         os.remove(img_path)
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"Could not delete {img_type} file: {e}")
+            
+            # Reset session state
             st.session_state.report_images = {'logo': None, 'cover': None}
     
     def _get_connection(self):
