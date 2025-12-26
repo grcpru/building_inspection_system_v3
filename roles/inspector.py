@@ -363,29 +363,6 @@ class InspectorInterface:
             
             # Reset session state
             st.session_state.report_images = {'logo': None, 'cover': None}
-                st.session_state.report_images['cover'] = cover_path
-                images_saved += 1
-                
-            except Exception as e:
-                st.error(f"Error saving cover: {e}")
-        
-        return images_saved
-    
-    def _clear_report_images(self):
-        """Clear uploaded images from session state and delete temp files"""
-        import os
-        
-        if 'report_images' in st.session_state:
-            # Delete files if they exist
-            for img_type, img_path in st.session_state.report_images.items():
-                if img_path and os.path.exists(img_path):
-                    try:
-                        os.remove(img_path)
-                    except Exception as e:
-                        print(f"Could not delete {img_type} file: {e}")
-            
-            # Reset session state
-            st.session_state.report_images = {'logo': None, 'cover': None}
     
     def _get_connection(self):
         """Get database connection using connection manager"""
