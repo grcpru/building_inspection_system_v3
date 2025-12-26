@@ -742,7 +742,7 @@ def create_word_report_from_database(
         
         print(f"Generating professional Word report for {building_name}...")
         
-        # Get defects
+        # ✅ CORRECTED QUERY - MATCHES EXCEL GENERATOR
         cursor.execute("""
             SELECT 
                 ii.room,
@@ -776,11 +776,11 @@ def create_word_report_from_database(
             print("No defects found for selected inspections")
             return False
         
-        # Convert to DataFrame - MATCHES THE 16 COLUMNS FROM SQL QUERY
+        # ✅ CORRECTED DATAFRAME - 16 COLUMNS MATCHING QUERY
         df = pd.DataFrame(rows, columns=[
             'room',              # 1
             'component',         # 2
-            'description',       # 3 - from ii.notes
+            'description',       # 3 - from ii.notes (the defect description!)
             'trade',            # 4
             'severity',         # 5 - from ii.urgency
             'status',           # 6 - from ii.status_class
