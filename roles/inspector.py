@@ -831,14 +831,14 @@ class InspectorInterface:
             st.write(f"- Total photos: {total_photos}")
             st.write(f"- Selected inspections: {len(selected_inspections)}")
 
-            try:
-                st.success("🔍 About to create expander...")
+        try:
+            st.success("🔍 About to create expander...")
 
             # ───────────────────────────────────────────────────────────────
             # 🆕 SECTION 2.5: Report Enhancement Images
             # ───────────────────────────────────────────────────────────────
             
-                with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
+            with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
                     st.info("✨ Add your company logo and building photo to create professional Word reports")
                     
                     col1, col2 = st.columns(2)
