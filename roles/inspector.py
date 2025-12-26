@@ -819,76 +819,84 @@ class InspectorInterface:
                             st.info("No photos found in this inspection")
             
             st.markdown("---")
-            st.error("🔍 TEST: YOU SHOULD SEE THIS!")  # ← ADD THIS ONE LINE
+            # Test message
+            st.error("🔍 DEBUG: You should see this message!")
+
             # ───────────────────────────────────────────────────────────────
             # 🆕 SECTION 2.5: Report Enhancement Images
             # ───────────────────────────────────────────────────────────────
-            
-            with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):  
-                st.info("✨ Add your company logo and building photo to create professional Word reports")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**Company Logo:**")
-                    st.caption("Appears in document header (2.0\" width)")
+
+            try:
+                with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
+                    st.info("✨ Add your company logo and building photo to create professional Word reports")
                     
-                    logo_upload = st.file_uploader(
-                        "Upload company logo",
-                        type=['png', 'jpg', 'jpeg'],
-                        key="api_logo_upload",
-                        help="Recommended: 200x100px PNG with transparent background"
-                    )
+                    col1, col2 = st.columns(2)
                     
-                    if logo_upload:
-                        st.image(logo_upload, caption="✅ Logo Preview", width=150)
-                        st.success("Logo ready for upload")
-                
-                with col2:
-                    st.markdown("**Building Cover Photo:**")
-                    st.caption("Appears on cover page (4.7\" width)")
-                    
-                    cover_upload = st.file_uploader(
-                        "Upload building photo",
-                        type=['png', 'jpg', 'jpeg'],
-                        key="api_cover_upload",
-                        help="Recommended: 800x600px landscape format"
-                    )
-                    
-                    if cover_upload:
-                        st.image(cover_upload, caption="✅ Cover Preview", width=150)
-                        st.success("Cover photo ready for upload")
-                
-                # Save images button
-                col_save, col_clear = st.columns([2, 1])
-                
-                with col_save:
-                    if st.button("💾 Save Images for Reports", key="save_api_images", use_container_width=True, type="primary"):
-                        images_saved = self._save_report_images(logo_upload, cover_upload)
-                        if images_saved > 0:
-                            st.success(f"✅ {images_saved} image(s) saved successfully!")
-                            st.balloons()
-                        else:
-                            st.info("No new images to save - upload files above first")
-                
-                with col_clear:
-                    if st.button("🗑️ Clear All", key="clear_api_images", use_container_width=True):
-                        self._clear_report_images()
-                        st.success("Images cleared!")
-                        st.rerun()
-                
-                # Show current status
-                if 'report_images' in st.session_state:
-                    current_images = [k for k, v in st.session_state.report_images.items() if v is not None]
-                    if current_images:
-                        st.markdown("---")
-                        st.success(f"✅ **Images ready for reports:** {', '.join(current_images)}")
+                    with col1:
+                        st.markdown("**Company Logo:**")
+                        st.caption("Appears in document header (2.0\" width)")
                         
-                        # Show file paths for verification
-                        for img_type, img_path in st.session_state.report_images.items():
-                            if img_path:
-                                st.caption(f"• {img_type.capitalize()}: {os.path.basename(img_path)}")
-            
+                        logo_upload = st.file_uploader(
+                            "Upload company logo",
+                            type=['png', 'jpg', 'jpeg'],
+                            key="api_logo_upload",
+                            help="Recommended: 200x100px PNG with transparent background"
+                        )
+                        
+                        if logo_upload:
+                            st.image(logo_upload, caption="✅ Logo Preview", width=150)
+                            st.success("Logo ready for upload")
+                    
+                    with col2:
+                        st.markdown("**Building Cover Photo:**")
+                        st.caption("Appears on cover page (4.7\" width)")
+                        
+                        cover_upload = st.file_uploader(
+                            "Upload building photo",
+                            type=['png', 'jpg', 'jpeg'],
+                            key="api_cover_upload",
+                            help="Recommended: 800x600px landscape format"
+                        )
+                        
+                        if cover_upload:
+                            st.image(cover_upload, caption="✅ Cover Preview", width=150)
+                            st.success("Cover photo ready for upload")
+                    
+                    # Save images button
+                    col_save, col_clear = st.columns([2, 1])
+                    
+                    with col_save:
+                        if st.button("💾 Save Images for Reports", key="save_api_images", use_container_width=True, type="primary"):
+                            images_saved = self._save_report_images(logo_upload, cover_upload)
+                            if images_saved > 0:
+                                st.success(f"✅ {images_saved} image(s) saved successfully!")
+                                st.balloons()
+                            else:
+                                st.info("No new images to save - upload files above first")
+                    
+                    with col_clear:
+                        if st.button("🗑️ Clear All", key="clear_api_images", use_container_width=True):
+                            self._clear_report_images()
+                            st.success("Images cleared!")
+                            st.rerun()
+                    
+                    # Show current status
+                    if 'report_images' in st.session_state:
+                        current_images = [k for k, v in st.session_state.report_images.items() if v is not None]
+                        if current_images:
+                            st.markdown("---")
+                            st.success(f"✅ **Images ready for reports:** {', '.join(current_images)}")
+                            
+                            # Show file paths for verification
+                            for img_type, img_path in st.session_state.report_images.items():
+                                if img_path:
+                                    st.caption(f"• {img_type.capitalize()}: {os.path.basename(img_path)}")
+
+            except Exception as e:
+                st.error(f"❌ Error in image upload section: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
             st.markdown("---")
             
             # ───────────────────────────────────────────────────────────────
