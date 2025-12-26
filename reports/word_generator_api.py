@@ -745,19 +745,28 @@ def create_word_report_from_database(
         # Get defects
         cursor.execute("""
             SELECT 
-                item_id,
-                unit,
-                room,
-                component,
-                item_description,
-                severity,
-                trade,
-                photo_url,
-                notes
-            FROM inspector_inspection_items
-            WHERE inspection_id = ANY(%s)
-            AND severity IS NOT NULL
-            ORDER BY unit, room, component
+                ii.room,
+                ii.component,
+                ii.notes,
+                ii.trade,
+                ii.urgency,
+                ii.status_class,
+                ii.photo_url,
+                ii.photo_media_id,
+                ii.inspector_notes,
+                ii.inspection_date,
+                ii.created_at,
+                ii.planned_completion,
+                ii.owner_signoff_timestamp,
+                ii.unit,
+                b.name as building_name,
+                ii.unit_type
+            FROM inspector_inspection_items ii
+            JOIN inspector_inspections i ON ii.inspection_id = i.id
+            JOIN inspector_buildings b ON i.building_id = b.id
+            WHERE ii.inspection_id = ANY(%s)
+            AND LOWER(ii.status_class) = 'not ok'
+            ORDER BY ii.unit, ii.room, ii.component
         """, (inspection_ids,))
         
         rows = cursor.fetchall()
