@@ -749,7 +749,7 @@ def create_word_report_from_database(
                 unit,
                 room,
                 component,
-                issue,
+                item_description,
                 severity,
                 trade,
                 photo_url,
