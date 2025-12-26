@@ -334,7 +334,7 @@ def generate_single_inspection_report(doc, df, building_name, api_key, images=No
         details = [
             ('Room/Location', row.get('room', 'Unknown')),
             ('Component', row.get('component', 'Unknown')),
-            ('Issue Description', row.get('issue', 'No description')),
+            ('Issue Description', row.get('description', 'No description')),  # ✅ CORRECT
             ('Severity', row.get('severity', 'Unknown')),
             ('Trade Category', row.get('trade', 'Unknown')),
             ('Unit', row.get('unit', 'Unknown')),
@@ -776,10 +776,24 @@ def create_word_report_from_database(
             print("No defects found for selected inspections")
             return False
         
-        # Convert to DataFrame
+        # Convert to DataFrame - MATCHES THE 16 COLUMNS FROM SQL QUERY
         df = pd.DataFrame(rows, columns=[
-            'item_id', 'unit', 'room', 'component', 'issue', 
-            'severity', 'trade', 'photo_url', 'notes'
+            'room',              # 1
+            'component',         # 2
+            'description',       # 3 - from ii.notes
+            'trade',            # 4
+            'severity',         # 5 - from ii.urgency
+            'status',           # 6 - from ii.status_class
+            'photo_url',        # 7
+            'photo_media_id',   # 8
+            'notes',            # 9 - from ii.inspector_notes
+            'inspection_date',  # 10
+            'created_at',       # 11
+            'planned_completion', # 12
+            'owner_signoff_timestamp', # 13
+            'unit',             # 14
+            'building_name',    # 15
+            'unit_type'         # 16
         ])
         
         print(f"Found {len(df)} defects to process")
