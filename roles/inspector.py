@@ -819,26 +819,13 @@ class InspectorInterface:
                             st.info("No photos found in this inspection")
             
             st.markdown("---")
-            # ═══════════════════════════════════════════════════════════════
-            # 🔍 DIAGNOSTIC CODE - Add this block
-            # ═══════════════════════════════════════════════════════════════
-
-            st.error("🔍 DEBUG CHECKPOINT 1: Code reached this point!")
-
-            st.write("Debug Info:")
-            st.write(f"- Methods exist: {hasattr(self, '_save_report_images')}, {hasattr(self, '_clear_report_images')}")
-            st.write(f"- Session state has report_images: {'report_images' in st.session_state}")
-            st.write(f"- Total photos: {total_photos}")
-            st.write(f"- Selected inspections: {len(selected_inspections)}")
-
-        try:
-            st.success("🔍 About to create expander...")
-
+            
             # ───────────────────────────────────────────────────────────────
             # 🆕 SECTION 2.5: Report Enhancement Images
             # ───────────────────────────────────────────────────────────────
             
-            with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
+            try:
+                with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
                     st.info("✨ Add your company logo and building photo to create professional Word reports")
                     
                     col1, col2 = st.columns(2)
@@ -902,12 +889,12 @@ class InspectorInterface:
                             for img_type, img_path in st.session_state.report_images.items():
                                 if img_path:
                                     st.caption(f"• {img_type.capitalize()}: {os.path.basename(img_path)}")
-
+            
             except Exception as e:
                 st.error(f"❌ Error in image upload section: {e}")
                 import traceback
                 st.code(traceback.format_exc())
-
+            
             st.markdown("---")
             
             # ───────────────────────────────────────────────────────────────
