@@ -34,6 +34,78 @@ except ImportError:
     NUMPY_AVAILABLE = False
     np = None
 
+# ═══════════════════════════════════════════════════════════════════
+# METRICS CALCULATION
+# ═══════════════════════════════════════════════════════════════════
+
+def calculate_metrics(processed_data, total_inspections, building_name, address, 
+                     inspection_date, inspection_date_range, is_multi_day):
+    """Calculate metrics from processed data"""
+    
+    print("📊 Calculating metrics...")
+    
+    metrics = {}
+    
+    # Basic info
+    metrics['building_name'] = building_name
+    metrics['address'] = address
+    metrics['inspection_date'] = inspection_date
+    metrics['inspection_date_range'] = inspection_date_range
+    metrics['is_multi_day_inspection'] = is_multi_day
+    
+    # Defect counts
+    metrics['total_defects'] = len(processed_data)
+    metrics['total_inspections'] = total_inspections
+    metrics['total_units'] = processed_data['Unit'].nunique()
+    
+    print(f"   Total defects: {metrics['total_defects']}")
+    print(f"   Total inspections: {metrics['total_inspections']}")
+    print(f"   Total units: {metrics['total_units']}")
+    
+    # Defect rate
+    if total_inspections > 0:
+        metrics['defect_rate'] = (metrics['total_defects'] / total_inspections) * 100
+    else:
+        metrics['defect_rate'] = 0
+    
+    # Average defects per unit
+    if metrics['total_units'] > 0:
+        metrics['avg_defects_per_unit'] = metrics['total_defects'] / metrics['total_units']
+    else:
+        metrics['avg_defects_per_unit'] = 0
+    
+    # Unit summary by defect count
+    unit_defects = processed_data.groupby('Unit').size().reset_index(name='DefectCount')
+    unit_defects = unit_defects.sort_values('DefectCount', ascending=False)
+    metrics['summary_unit'] = unit_defects
+    
+    print(f"   Unit summary shape: {unit_defects.shape}")
+    
+    # Unit categories
+    metrics['ready_units'] = len(unit_defects[unit_defects['DefectCount'] <= 2])
+    metrics['minor_work_units'] = len(unit_defects[(unit_defects['DefectCount'] >= 3) & (unit_defects['DefectCount'] <= 7)])
+    metrics['major_work_units'] = len(unit_defects[(unit_defects['DefectCount'] >= 8) & (unit_defects['DefectCount'] <= 14)])
+    metrics['extensive_work_units'] = len(unit_defects[unit_defects['DefectCount'] >= 15])
+    
+    # Percentages
+    total_units = metrics['total_units']
+    if total_units > 0:
+        metrics['ready_pct'] = (metrics['ready_units'] / total_units) * 100
+        metrics['minor_pct'] = (metrics['minor_work_units'] / total_units) * 100
+        metrics['major_pct'] = (metrics['major_work_units'] / total_units) * 100
+        metrics['extensive_pct'] = (metrics['extensive_work_units'] / total_units) * 100
+    else:
+        metrics['ready_pct'] = metrics['minor_pct'] = metrics['major_pct'] = metrics['extensive_pct'] = 0
+    
+    # Trade summary
+    trade_defects = processed_data.groupby('Trade').size().reset_index(name='DefectCount')
+    trade_defects = trade_defects.sort_values('DefectCount', ascending=False)
+    metrics['summary_trade'] = trade_defects
+    
+    print(f"   Trade summary shape: {trade_defects.shape}")
+    print("✅ Metrics calculated")
+    
+    return metrics
 
 def create_word_report_from_database(
     inspection_ids: list,
