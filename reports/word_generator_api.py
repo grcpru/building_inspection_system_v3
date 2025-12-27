@@ -34,6 +34,13 @@ except ImportError:
     NUMPY_AVAILABLE = False
     np = None
 
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("⚠️ PIL not available - using basic image sizing")
+    
 # ═══════════════════════════════════════════════════════════════════
 # METRICS CALCULATION
 # ═══════════════════════════════════════════════════════════════════
@@ -284,6 +291,8 @@ def generate_single_inspection_report(processed_data, metrics, api_key, images=N
         # Unit snapshot
         add_unit_snapshot(doc, processed_data, metrics)
         
+        add_defect_analysis_charts(doc, processed_data)
+        
         # Room-by-room defect breakdown with photos
         add_room_by_room_defects(doc, processed_data, api_key)
         
@@ -508,14 +517,206 @@ def add_unit_snapshot(doc, processed_data, metrics):
     except Exception as e:
         print(f"Error in unit snapshot: {e}")
 
-
-def add_room_by_room_defects(doc, processed_data, api_key):
-    """
-    DETAILED DEFECTS - Table format with photos
-    """
+def add_defect_analysis_charts(doc, processed_data):
+    """Add visual analysis charts for single unit"""
     
     try:
-        # Header
+        header = doc.add_paragraph("DEFECT ANALYSIS")
+        header.style = 'CleanSectionHeader'
+        
+        line_para = doc.add_paragraph()
+        line_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        line_run = line_para.add_run("─" * 63)
+        line_run.font.name = 'Arial'
+        line_run.font.size = Pt(10)
+        line_run.font.color.rgb = RGBColor(0, 0, 0)
+        
+        doc.add_paragraph()
+        
+        # ══════════════════════════════════════════════════════
+        # TRADE DISTRIBUTION CHART
+        # ══════════════════════════════════════════════════════
+        
+        trade_header = doc.add_paragraph("Defects by Trade Category")
+        trade_header.style = 'CleanSubsectionHeader'
+        
+        trade_counts = processed_data['Trade'].value_counts()
+        
+        if MATPLOTLIB_AVAILABLE:
+            # Create pie chart
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99', '#ff99cc', '#c2c2f0']
+            wedges, texts, autotexts = ax.pie(
+                trade_counts.values,
+                labels=[sanitize_text(str(t)) for t in trade_counts.index],
+                autopct='%1.1f%%',
+                colors=colors[:len(trade_counts)],
+                startangle=90
+            )
+            
+            # Style text
+            for text in texts:
+                text.set_fontsize(11)
+                text.set_fontweight('bold')
+            for autotext in autotexts:
+                autotext.set_color('white')
+                autotext.set_fontsize(10)
+                autotext.set_fontweight('bold')
+            
+            ax.set_title('Distribution of Defects by Trade Category', 
+                        fontsize=14, fontweight='bold', pad=20)
+            
+            plt.tight_layout()
+            
+            # Add to document
+            chart_buffer = BytesIO()
+            fig.savefig(chart_buffer, format='png', dpi=300, bbox_inches='tight')
+            chart_buffer.seek(0)
+            
+            chart_para = doc.add_paragraph()
+            chart_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            chart_para.add_run().add_picture(chart_buffer, width=Inches(6.0))
+            
+            plt.close()
+            
+            doc.add_paragraph()
+        else:
+            # Text fallback
+            for trade, count in trade_counts.items():
+                trade_para = doc.add_paragraph()
+                trade_para.style = 'CleanBody'
+                trade_para.paragraph_format.left_indent = Inches(0.5)
+                trade_text = f"• {sanitize_text(trade)}: {count} defect{'s' if count != 1 else ''}"
+                trade_para.add_run(trade_text)
+        
+        # ══════════════════════════════════════════════════════
+        # ROOM DISTRIBUTION CHART
+        # ══════════════════════════════════════════════════════
+        
+        room_header = doc.add_paragraph("Defects by Room/Location")
+        room_header.style = 'CleanSubsectionHeader'
+        
+        room_counts = processed_data['Room'].value_counts()
+        
+        if MATPLOTLIB_AVAILABLE:
+            # Create horizontal bar chart
+            fig, ax = plt.subplots(figsize=(10, max(6, len(room_counts) * 0.5)))
+            
+            colors = ['#ff6b6b' if count > 3 else '#4ecdc4' if count > 1 else '#95e1d3' 
+                     for count in room_counts.values]
+            
+            y_pos = range(len(room_counts))
+            ax.barh(y_pos, room_counts.values, color=colors, alpha=0.8)
+            
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels([sanitize_text(str(r)) for r in room_counts.index], 
+                              fontsize=11)
+            ax.set_xlabel('Number of Defects', fontsize=12, fontweight='bold')
+            ax.set_title('Defects by Room/Location', 
+                        fontsize=14, fontweight='bold', pad=20)
+            
+            ax.grid(axis='x', alpha=0.3, linestyle=':')
+            
+            # Add value labels
+            for i, (count, color) in enumerate(zip(room_counts.values, colors)):
+                ax.text(count + 0.1, i, str(count), 
+                       va='center', fontweight='bold', fontsize=10)
+            
+            plt.tight_layout()
+            
+            # Add to document
+            chart_buffer = BytesIO()
+            fig.savefig(chart_buffer, format='png', dpi=300, bbox_inches='tight')
+            chart_buffer.seek(0)
+            
+            chart_para = doc.add_paragraph()
+            chart_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            chart_para.add_run().add_picture(chart_buffer, width=Inches(6.0))
+            
+            plt.close()
+            
+            doc.add_paragraph()
+        else:
+            # Text fallback
+            for room, count in room_counts.items():
+                room_para = doc.add_paragraph()
+                room_para.style = 'CleanBody'
+                room_para.paragraph_format.left_indent = Inches(0.5)
+                room_text = f"• {sanitize_text(room)}: {count} defect{'s' if count != 1 else ''}"
+                room_para.add_run(room_text)
+        
+        # ══════════════════════════════════════════════════════
+        # PRIORITY ACTION ITEMS TABLE
+        # ══════════════════════════════════════════════════════
+        
+        priority_header = doc.add_paragraph("Priority Action Items")
+        priority_header.style = 'CleanSubsectionHeader'
+        
+        # Categorize by severity
+        urgent_items = processed_data[processed_data['Severity'].str.contains('Urgent', case=False, na=False)]
+        high_items = processed_data[processed_data['Severity'].str.contains('High', case=False, na=False)]
+        medium_low_items = processed_data[~processed_data['Severity'].str.contains('Urgent|High', case=False, na=False)]
+        
+        # Create summary table
+        summary_table = doc.add_table(rows=4, cols=3)
+        summary_table.style = 'Table Grid'
+        
+        # Headers
+        headers = ['Priority Level', 'Count', 'Action Timeline']
+        for i, header_text in enumerate(headers):
+            cell = summary_table.cell(0, i)
+            set_cell_background_color(cell, "D9D9D9")
+            cell.text = header_text
+            cell.paragraphs[0].runs[0].font.name = 'Arial'
+            cell.paragraphs[0].runs[0].font.size = Pt(11)
+            cell.paragraphs[0].runs[0].font.bold = True
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Data rows
+        priority_data = [
+            ('🔴 Urgent', len(urgent_items), 'Fix immediately (1-2 days)', 'FFE6E6'),
+            ('🟠 High Priority', len(high_items), 'Fix within 7 days', 'FFF3D7'),
+            ('🟢 Medium/Low', len(medium_low_items), 'Fix before settlement', 'E6FFE6')
+        ]
+        
+        for row_idx, (level, count, timeline, bg_color) in enumerate(priority_data, 1):
+            # Priority level
+            cell0 = summary_table.cell(row_idx, 0)
+            set_cell_background_color(cell0, bg_color)
+            cell0.text = level
+            cell0.paragraphs[0].runs[0].font.name = 'Arial'
+            cell0.paragraphs[0].runs[0].font.size = Pt(10)
+            cell0.paragraphs[0].runs[0].font.bold = True
+            
+            # Count
+            cell1 = summary_table.cell(row_idx, 1)
+            set_cell_background_color(cell1, bg_color)
+            cell1.text = str(count)
+            cell1.paragraphs[0].runs[0].font.name = 'Arial'
+            cell1.paragraphs[0].runs[0].font.size = Pt(10)
+            cell1.paragraphs[0].runs[0].font.bold = True
+            cell1.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # Timeline
+            cell2 = summary_table.cell(row_idx, 2)
+            set_cell_background_color(cell2, bg_color)
+            cell2.text = timeline
+            cell2.paragraphs[0].runs[0].font.name = 'Arial'
+            cell2.paragraphs[0].runs[0].font.size = Pt(10)
+        
+        doc.add_paragraph()
+        doc.add_page_break()
+    
+    except Exception as e:
+        print(f"Error in defect analysis: {e}")
+        import traceback
+        traceback.print_exc()
+
+def add_room_by_room_defects(doc, processed_data, api_key):
+    """DETAILED DEFECTS - Table format with FIXED SIZE photos"""
+    
+    try:
         header = doc.add_paragraph("DETAILED DEFECTS")
         header.style = 'CleanSectionHeader'
         
@@ -529,16 +730,10 @@ def add_room_by_room_defects(doc, processed_data, api_key):
         doc.add_paragraph()
         
         total_defects = len(processed_data)
-        print(f"\n🔍 DETAILED DEFECTS DEBUG:")
-        print(f"   Total defects: {total_defects}")
-        print(f"   API key provided: {bool(api_key)}")
-        print(f"   Columns: {list(processed_data.columns)}")
+        print(f"\n🔍 Processing {total_defects} defects...")
         
-        # Process each defect
         for idx, (_, defect) in enumerate(processed_data.iterrows(), 1):
-            print(f"\n   📋 Defect {idx}/{total_defects}:")
-            print(f"      Room: {defect.get('Room', 'N/A')}")
-            print(f"      Component: {defect.get('Component', 'N/A')}")
+            print(f"   📋 Defect {idx}/{total_defects}")
             
             # Defect number header
             defect_num_para = doc.add_paragraph()
@@ -606,7 +801,7 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             cell_value_3.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_3.paragraphs[0].runs[0].font.size = Pt(10)
             
-            # Row 5: Photo Defect
+            # Row 5: Photo Defect - FIXED SIZE
             cell_label_4 = table.cell(4, 0)
             cell_value_4 = table.cell(4, 1)
             set_cell_background_color(cell_label_4, "D9D9D9")
@@ -615,47 +810,67 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             cell_label_4.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_4.paragraphs[0].runs[0].font.bold = True
             
-            # DEBUG: Check all possible photo fields
+            # Get photo
             photo_url = defect.get('photo_url')
-            photo_media_id = defect.get('photo_media_id')
             
-            print(f"      photo_url: {photo_url}")
-            print(f"      photo_media_id: {photo_media_id}")
-            print(f"      photo_url type: {type(photo_url)}")
-            
-            # Try to get photo
-            photo_added = False
-            
-            # Check if we have a valid photo URL
             if photo_url and not pd.isna(photo_url) and str(photo_url).strip() != '' and str(photo_url).lower() != 'nan':
                 if api_key:
-                    print(f"      🔄 Attempting download...")
                     try:
-                        # Download photo
                         import requests
+                        from io import BytesIO
+                        from PIL import Image
+                        
+                        # Download photo
                         headers = {'Authorization': f'Bearer {api_key}'}
                         response = requests.get(str(photo_url), headers=headers, timeout=30)
                         
-                        print(f"      Response status: {response.status_code}")
-                        
                         if response.status_code == 200:
-                            # Create BytesIO from response
-                            from io import BytesIO
-                            photo_data = BytesIO(response.content)
+                            # Load image to get dimensions
+                            img_data = BytesIO(response.content)
+                            img = Image.open(img_data)
+                            original_width, original_height = img.size
+                            
+                            print(f"      📸 Original: {original_width}x{original_height}px")
+                            
+                            # ═══════════════════════════════════════════════
+                            # SMART PHOTO SIZING
+                            # ═══════════════════════════════════════════════
+                            
+                            # Define fixed container dimensions
+                            MAX_WIDTH = Inches(4.0)   # Maximum width
+                            MAX_HEIGHT = Inches(3.0)  # Maximum height (prevents super tall photos)
+                            
+                            # Calculate aspect ratio
+                            aspect_ratio = original_width / original_height
+                            
+                            # Determine final size (maintain aspect ratio within constraints)
+                            if aspect_ratio > (MAX_WIDTH / MAX_HEIGHT):
+                                # Wide photo - constrain by width
+                                final_width = MAX_WIDTH
+                                final_height = MAX_WIDTH / aspect_ratio
+                            else:
+                                # Tall photo - constrain by height
+                                final_height = MAX_HEIGHT
+                                final_width = MAX_HEIGHT * aspect_ratio
+                            
+                            print(f"      📐 Resized: {final_width} x {final_height}")
+                            
+                            # Reset image data pointer
+                            img_data = BytesIO(response.content)
                             
                             # Clear cell and add photo
                             cell_value_4.text = ""
                             photo_para = cell_value_4.paragraphs[0]
                             photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                             
-                            # Add picture
+                            # Add picture with calculated size
                             run = photo_para.add_run()
-                            run.add_picture(photo_data, width=Inches(4.0))
+                            run.add_picture(img_data, width=final_width, height=final_height)
                             
                             # Add timestamp
                             timestamp_para = cell_value_4.add_paragraph()
                             timestamp_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            timestamp_para.paragraph_format.space_before = Pt(0)
+                            timestamp_para.paragraph_format.space_before = Pt(2)
                             timestamp_para.paragraph_format.space_after = Pt(0)
                             
                             inspection_date = defect.get('inspection_date', datetime.now())
@@ -670,33 +885,27 @@ def add_room_by_room_defects(doc, processed_data, api_key):
                             
                             timestamp_run = timestamp_para.add_run(timestamp_str)
                             timestamp_run.font.name = 'Arial'
-                            timestamp_run.font.size = Pt(10)
-                            timestamp_run.font.color.rgb = RGBColor(255, 255, 255)
+                            timestamp_run.font.size = Pt(9)
+                            timestamp_run.font.color.rgb = RGBColor(100, 100, 100)
                             timestamp_run.font.bold = True
                             
-                            photo_added = True
-                            print(f"      ✅ Photo added successfully")
+                            print(f"      ✅ Photo added (fixed size)")
                         else:
-                            print(f"      ❌ Download failed: {response.status_code}")
-                            cell_value_4.text = f"Photo download failed ({response.status_code})"
+                            cell_value_4.text = f"Download failed ({response.status_code})"
                     
                     except Exception as e:
                         print(f"      ❌ Photo error: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        cell_value_4.text = f"Photo error: {str(e)[:50]}"
+                        cell_value_4.text = f"Photo error"
                 else:
-                    print(f"      ⚠️ No API key")
-                    cell_value_4.text = "No API key provided"
+                    cell_value_4.text = "No API key"
             else:
-                print(f"      ⚠️ No valid photo URL")
                 cell_value_4.text = "No photo available"
             
             # Space between defects
             doc.add_paragraph()
             doc.add_paragraph()
         
-        print(f"\n   ✅ Completed processing all {total_defects} defects")
+        print(f"\n   ✅ Completed all {total_defects} defects")
         doc.add_page_break()
     
     except Exception as e:
