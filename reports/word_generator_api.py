@@ -59,7 +59,17 @@ def create_word_report_from_database(
     """
     
     try:
-        print(f"🎨 Generating professional Word report...")
+        print(f"🎨 Generating Word report (type: {report_type})...")
+        
+        # DEBUG: Check images
+        if images:
+            print(f"📷 Images provided: {images}")
+            if images.get('logo'):
+                print(f"   Logo path: {images['logo']} (exists: {os.path.exists(images['logo'])})")
+            if images.get('cover'):
+                print(f"   Cover path: {images['cover']} (exists: {os.path.exists(images['cover'])})")
+        else:
+            print("⚠️  No images provided")
         
         cursor = db_connection.cursor()
         
@@ -99,8 +109,10 @@ def create_word_report_from_database(
             is_multi_day = True
         
         print(f"📍 Building: {building_name}")
+        print(f"📅 Date: {inspection_date_range}")
+        print(f"🔢 Inspections: {inspection_count}")
         
-        # Get all defects
+        # Get all defects with proper column names
         cursor.execute("""
             SELECT 
                 ii.room,
@@ -138,28 +150,31 @@ def create_word_report_from_database(
             print("❌ No defects found")
             return False
         
-        # Convert to DataFrame
+        # Convert to DataFrame with CORRECT column names
         processed_data = pd.DataFrame(defect_rows, columns=[
-            'Room', 'Component', 'Notes', 'Trade', 'Urgency', 'StatusClass',
+            'Room', 'Component', 'Issue', 'Trade', 'Severity', 'StatusClass',
             'photo_url', 'photo_media_id', 'inspector_notes', 'inspection_date',
             'Unit', 'unit_type'
         ])
         
-        # Standardize column names
-        processed_data.columns = [
-            'Room', 'Component', 'Issue', 'Trade', 'Severity', 'StatusClass',
-            'photo_url', 'photo_media_id', 'inspector_notes', 'inspection_date',
-            'Unit', 'unit_type'
-        ]
+        # CRITICAL: Set StatusClass to "Not OK" for filtering
+        processed_data['StatusClass'] = 'Not OK'
         
-        print(f"📊 Found {len(processed_data)} defects across {total_inspections} inspections")
+        print(f"📊 Found {len(processed_data)} defects")
+        print(f"📋 Columns: {list(processed_data.columns)}")
+        print(f"🔍 Sample data:\n{processed_data.head()}")
         
         # Calculate metrics
         metrics = calculate_metrics(processed_data, total_inspections, building_name, 
                                     address, inspection_date, inspection_date_range, is_multi_day)
         
-        # Generate report
-        doc = generate_professional_word_report(processed_data, metrics, images)
+        # Generate appropriate report type
+        if report_type == "single" or len(inspection_ids) == 1:
+            print("📄 Generating SINGLE inspection report (detailed with photos)...")
+            doc = generate_single_inspection_report(processed_data, metrics, api_key, images)
+        else:
+            print("📊 Generating BUILDING SUMMARY report (executive overview)...")
+            doc = generate_professional_word_report(processed_data, metrics, images)
         
         # Save
         doc.save(output_path)
@@ -173,6 +188,320 @@ def create_word_report_from_database(
         traceback.print_exc()
         return False
 
+
+# ═══════════════════════════════════════════════════════════════════
+# SINGLE INSPECTION REPORT (New Function)
+# ═══════════════════════════════════════════════════════════════════
+
+def generate_single_inspection_report(processed_data, metrics, api_key, images=None):
+    """
+    Generate detailed single inspection report with photos
+    Similar to single unit report but for API data
+    """
+    
+    try:
+        doc = Document()
+        setup_document_formatting(doc)
+        
+        # Add logo and cover
+        if images:
+            add_logo_to_header(doc, images)
+        add_clean_cover_page(doc, metrics, images)
+        
+        # Unit Information Section
+        add_single_unit_info(doc, processed_data, metrics)
+        
+        # Executive Summary
+        add_single_executive_summary(doc, processed_data, metrics)
+        
+        # Detailed Defects with Photos
+        add_detailed_defects_with_photos(doc, processed_data, api_key)
+        
+        # Recommendations
+        add_single_recommendations(doc, metrics)
+        
+        print("✅ Single inspection report completed!")
+        return doc
+    
+    except Exception as e:
+        print(f"❌ Error in single report: {e}")
+        import traceback
+        traceback.print_exc()
+        return create_error_document(e, metrics)
+
+
+def add_single_unit_info(doc, processed_data, metrics):
+    """Add unit information for single inspection"""
+    
+    try:
+        header = doc.add_paragraph("UNIT INFORMATION")
+        header.style = 'CleanSectionHeader'
+        
+        line_para = doc.add_paragraph()
+        line_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        line_run = line_para.add_run("─" * 63)
+        line_run.font.name = 'Arial'
+        line_run.font.size = Pt(10)
+        line_run.font.color.rgb = RGBColor(0, 0, 0)
+        
+        # Get unit details
+        unit = processed_data['Unit'].iloc[0] if len(processed_data) > 0 else 'Unknown'
+        unit_type = processed_data['unit_type'].iloc[0] if 'unit_type' in processed_data.columns and len(processed_data) > 0 else 'Apartment'
+        inspection_date = processed_data['inspection_date'].iloc[0] if 'inspection_date' in processed_data.columns and len(processed_data) > 0 else 'N/A'
+        
+        # Format date
+        if hasattr(inspection_date, 'strftime'):
+            inspection_date = inspection_date.strftime('%d %B %Y')
+        elif inspection_date != 'N/A':
+            try:
+                from datetime import datetime
+                date_obj = datetime.strptime(str(inspection_date), '%Y-%m-%d')
+                inspection_date = date_obj.strftime('%d %B %Y')
+            except:
+                inspection_date = str(inspection_date)
+        
+        # Unit info table
+        table = doc.add_table(rows=4, cols=2)
+        table.style = 'Table Grid'
+        
+        unit_details = [
+            ('Building', metrics['building_name']),
+            ('Unit Number', unit),
+            ('Unit Type', unit_type),
+            ('Inspection Date', inspection_date)
+        ]
+        
+        for i, (label, value) in enumerate(unit_details):
+            cell_label = table.cell(i, 0)
+            cell_value = table.cell(i, 1)
+            
+            # Header background
+            set_cell_background_color(cell_label, "F0F0F0")
+            
+            # Label
+            cell_label.text = label
+            cell_label.paragraphs[0].runs[0].font.bold = True
+            cell_label.paragraphs[0].runs[0].font.name = 'Arial'
+            cell_label.paragraphs[0].runs[0].font.size = Pt(11)
+            cell_label.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
+            
+            # Value
+            cell_value.text = sanitize_text(str(value))
+            cell_value.paragraphs[0].runs[0].font.name = 'Arial'
+            cell_value.paragraphs[0].runs[0].font.size = Pt(11)
+            cell_value.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
+        
+        doc.add_paragraph()
+        doc.add_page_break()
+    
+    except Exception as e:
+        print(f"Error in unit info: {e}")
+
+
+def add_single_executive_summary(doc, processed_data, metrics):
+    """Executive summary for single inspection"""
+    
+    try:
+        header = doc.add_paragraph("EXECUTIVE SUMMARY")
+        header.style = 'CleanSectionHeader'
+        
+        line_para = doc.add_paragraph()
+        line_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        line_run = line_para.add_run("─" * 63)
+        line_run.font.name = 'Arial'
+        line_run.font.size = Pt(10)
+        line_run.font.color.rgb = RGBColor(0, 0, 0)
+        
+        total_defects = len(processed_data)
+        
+        # Get severity and trade counts
+        severity_counts = processed_data['Severity'].value_counts()
+        trade_counts = processed_data['Trade'].value_counts()
+        
+        summary_para = doc.add_paragraph()
+        summary_para.style = 'CleanBody'
+        
+        summary_text = f"**Total Defects Identified**: {total_defects}\n\n"
+        
+        if len(severity_counts) > 0:
+            summary_text += f"**Most Common Severity**: {severity_counts.index[0]} ({severity_counts.iloc[0]} defects)\n\n"
+        
+        if len(trade_counts) > 0:
+            summary_text += f"**Primary Trade Category**: {trade_counts.index[0]} ({trade_counts.iloc[0]} defects)\n\n"
+        
+        summary_text += "**Severity Breakdown**:\n"
+        for severity, count in severity_counts.items():
+            summary_text += f"• {severity}: {count} defect{'s' if count != 1 else ''}\n"
+        
+        add_formatted_text_with_bold(summary_para, summary_text)
+        
+        doc.add_page_break()
+    
+    except Exception as e:
+        print(f"Error in executive summary: {e}")
+
+
+def add_detailed_defects_with_photos(doc, processed_data, api_key):
+    """Add detailed defects section with photos"""
+    
+    try:
+        header = doc.add_paragraph("DETAILED DEFECTS")
+        header.style = 'CleanSectionHeader'
+        
+        line_para = doc.add_paragraph()
+        line_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        line_run = line_para.add_run("─" * 63)
+        line_run.font.name = 'Arial'
+        line_run.font.size = Pt(10)
+        line_run.font.color.rgb = RGBColor(0, 0, 0)
+        
+        total_defects = len(processed_data)
+        
+        for idx, (_, row) in enumerate(processed_data.iterrows(), 1):
+            # Defect header
+            defect_header = doc.add_paragraph()
+            defect_header.style = 'CleanSubsectionHeader'
+            header_text = f"Defect {idx} of {total_defects} - {row.get('Severity', 'Unknown')}"
+            add_formatted_text_with_bold(defect_header, f"**{header_text}**")
+            
+            # Defect details table
+            table = doc.add_table(rows=6, cols=2)
+            table.style = 'Table Grid'
+            
+            details = [
+                ('Room/Location', row.get('Room', 'Unknown')),
+                ('Component', row.get('Component', 'Unknown')),
+                ('Issue Description', row.get('Issue', 'No description')),
+                ('Severity', row.get('Severity', 'Unknown')),
+                ('Trade Category', row.get('Trade', 'Unknown')),
+                ('Unit', row.get('Unit', 'Unknown'))
+            ]
+            
+            for i, (label, value) in enumerate(details):
+                cell_label = table.cell(i, 0)
+                cell_value = table.cell(i, 1)
+                
+                # Header background
+                set_cell_background_color(cell_label, "F0F0F0")
+                
+                # Label
+                cell_label.text = label
+                cell_label.paragraphs[0].runs[0].font.bold = True
+                cell_label.paragraphs[0].runs[0].font.name = 'Arial'
+                cell_label.paragraphs[0].runs[0].font.size = Pt(10)
+                cell_label.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
+                
+                # Value
+                cell_value.text = sanitize_text(str(value))
+                cell_value.paragraphs[0].runs[0].font.name = 'Arial'
+                cell_value.paragraphs[0].runs[0].font.size = Pt(10)
+                cell_value.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
+            
+            doc.add_paragraph()
+            
+            # Inspector notes if available
+            notes = row.get('inspector_notes', '')
+            if notes and str(notes).strip() and str(notes).lower() != 'nan':
+                notes_para = doc.add_paragraph()
+                notes_para.style = 'CleanBody'
+                add_formatted_text_with_bold(notes_para, f"**Inspector Notes**: {sanitize_text(str(notes))}")
+                doc.add_paragraph()
+            
+            # Photo
+            photo_url = row.get('photo_url')
+            if photo_url and api_key:
+                print(f"   Downloading photo for defect {idx}...")
+                photo_data = download_photo(photo_url, api_key)
+                if photo_data:
+                    try:
+                        img_para = doc.add_paragraph()
+                        img_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        img_para.add_run().add_picture(photo_data, width=Inches(5.0))
+                        
+                        caption = doc.add_paragraph()
+                        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        caption_run = caption.add_run(f"Photo: {row.get('Room', 'Unknown')} - {row.get('Component', 'Unknown')}")
+                        caption_run.font.name = 'Arial'
+                        caption_run.font.size = Pt(9)
+                        caption_run.font.italic = True
+                        caption_run.font.color.rgb = RGBColor(100, 100, 100)
+                        
+                        print(f"   ✅ Photo added")
+                    except Exception as e:
+                        print(f"   ❌ Error embedding photo: {e}")
+            
+            # Separator
+            sep_para = doc.add_paragraph()
+            sep_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            sep_run = sep_para.add_run("─" * 80)
+            sep_run.font.color.rgb = RGBColor(200, 200, 200)
+            sep_run.font.size = Pt(8)
+            
+            doc.add_paragraph()
+        
+        doc.add_page_break()
+    
+    except Exception as e:
+        print(f"Error in detailed defects: {e}")
+
+
+def add_single_recommendations(doc, metrics):
+    """Recommendations for single inspection"""
+    
+    try:
+        header = doc.add_paragraph("RECOMMENDATIONS")
+        header.style = 'CleanSectionHeader'
+        
+        line_para = doc.add_paragraph()
+        line_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        line_run = line_para.add_run("─" * 63)
+        line_run.font.name = 'Arial'
+        line_run.font.size = Pt(10)
+        line_run.font.color.rgb = RGBColor(0, 0, 0)
+        
+        rec_para = doc.add_paragraph()
+        rec_para.style = 'CleanBody'
+        
+        rec_text = """Based on the inspection findings for this unit:
+
+**1. Immediate Actions**: Address all urgent defects before settlement to ensure compliance with quality standards.
+
+**2. Trade Coordination**: Schedule remediation work with appropriate trade contractors based on defect categories identified.
+
+**3. Follow-up Inspection**: Conduct verification inspection after remediation to confirm all issues have been resolved.
+
+**4. Documentation**: Maintain photographic evidence of completed repairs for settlement records."""
+        
+        add_formatted_text_with_bold(rec_para, rec_text)
+        
+        # Footer
+        doc.add_paragraph()
+        closing_para = doc.add_paragraph()
+        closing_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        closing_run = closing_para.add_run("END OF REPORT")
+        closing_run.font.name = 'Arial'
+        closing_run.font.size = Pt(14)
+        closing_run.font.color.rgb = RGBColor(0, 0, 0)
+        closing_run.font.bold = True
+    
+    except Exception as e:
+        print(f"Error in recommendations: {e}")
+
+
+def download_photo(photo_url, api_key):
+    """Download photo from SafetyCulture API"""
+    try:
+        headers = {'Authorization': f'Bearer {api_key}'}
+        response = requests.get(photo_url, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            return BytesIO(response.content)
+        else:
+            print(f"   Photo download failed: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"   Photo download error: {e}")
+        return None
 
 def calculate_metrics(processed_data, total_inspections, building_name, address, 
                      inspection_date, inspection_date_range, is_multi_day):
@@ -1407,26 +1736,33 @@ def add_text_units_summary(doc, metrics):
 # ═══════════════════════════════════════════════════════════════════
 
 def generate_complete_component_details(processed_data):
-    """Generate component details for trade tables"""
+    """Generate component details for trade tables - FIXED"""
     
     try:
-        # Use correct column names (StatusClass, not status_class)
+        print("🔍 Generating component details...")
+        print(f"   Input shape: {processed_data.shape}")
+        print(f"   Columns: {list(processed_data.columns)}")
+        
+        # Check required columns
         required_columns = ['StatusClass', 'Trade', 'Room', 'Component', 'Unit']
         missing_columns = [col for col in required_columns if col not in processed_data.columns]
         
         if missing_columns:
-            print(f"Missing columns: {missing_columns}")
+            print(f"   ❌ Missing columns: {missing_columns}")
             return pd.DataFrame()
         
-        # Filter for defects (StatusClass column)
-        defects_only = processed_data[processed_data['StatusClass'] == 'Not OK']
+        # Filter for defects - StatusClass should already be "Not OK"
+        defects_only = processed_data[processed_data['StatusClass'] == 'Not OK'].copy()
+        print(f"   Defects found: {len(defects_only)}")
         
         if len(defects_only) == 0:
+            print("   ❌ No defects to process")
             return pd.DataFrame()
         
         # Group by trade, room, component
+        print("   Grouping data...")
         component_summary = defects_only.groupby(['Trade', 'Room', 'Component']).agg({
-            'Unit': lambda x: ', '.join(sorted(x.astype(str).unique()))
+            'Unit': lambda x: ', '.join(sorted([str(u) for u in x.unique()]))
         }).reset_index()
         
         component_summary.columns = ['Trade', 'Room', 'Component', 'Affected Units']
@@ -1436,36 +1772,44 @@ def generate_complete_component_details(processed_data):
         component_summary = component_summary.merge(unit_counts, on=['Trade', 'Room', 'Component'])
         component_summary.columns = ['Trade', 'Room', 'Component', 'Affected Units', 'Unit Count']
         
-        # Sort by trade and unit count
+        # Sort
         component_summary = component_summary.sort_values(['Trade', 'Unit Count'], ascending=[True, False])
+        
+        print(f"   ✅ Generated {len(component_summary)} component rows")
+        print(f"   Sample:\n{component_summary.head()}")
         
         return component_summary
     
     except Exception as e:
-        print(f"Error generating component details: {e}")
+        print(f"   ❌ Error generating component details: {e}")
+        import traceback
+        traceback.print_exc()
         return pd.DataFrame()
 
 
 def generate_component_breakdown(processed_data):
-    """Generate component breakdown for analysis"""
+    """Generate component breakdown - FIXED"""
     
     try:
-        required_columns = ['StatusClass', 'Trade', 'Room', 'Component', 'Unit']
+        print("🔍 Generating component breakdown...")
+        
+        required_columns = ['StatusClass', 'Trade', 'Component', 'Unit']
         missing_columns = [col for col in required_columns if col not in processed_data.columns]
         
         if missing_columns:
-            print(f"Missing columns: {missing_columns}")
+            print(f"   ❌ Missing columns: {missing_columns}")
             return pd.DataFrame()
         
         # Filter for defects
-        defects_only = processed_data[processed_data['StatusClass'] == 'Not OK']
+        defects_only = processed_data[processed_data['StatusClass'] == 'Not OK'].copy()
+        print(f"   Defects found: {len(defects_only)}")
         
         if len(defects_only) == 0:
             return pd.DataFrame()
         
         # Group by component and trade
         component_summary = defects_only.groupby(['Component', 'Trade']).agg({
-            'Unit': lambda x: ', '.join(sorted(x.astype(str).unique()))
+            'Unit': lambda x: ', '.join(sorted([str(u) for u in x.unique()]))
         }).reset_index()
         
         component_summary.columns = ['Component', 'Trade', 'Affected_Units']
@@ -1475,15 +1819,18 @@ def generate_component_breakdown(processed_data):
         component_summary = component_summary.merge(unit_counts, on=['Component', 'Trade'])
         component_summary.columns = ['Component', 'Trade', 'Affected_Units', 'Unit_Count']
         
-        # Sort by unit count descending
+        # Sort
         component_summary = component_summary.sort_values(['Unit_Count', 'Component'], ascending=[False, True])
+        
+        print(f"   ✅ Generated {len(component_summary)} component rows")
         
         return component_summary
     
     except Exception as e:
-        print(f"Error generating component breakdown: {e}")
+        print(f"   ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return pd.DataFrame()
-
 
 def add_trade_tables(doc, component_details):
     """Add trade-specific tables with shading"""
