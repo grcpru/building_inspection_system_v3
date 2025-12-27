@@ -261,35 +261,36 @@ def create_word_report_from_database(
         return False
 
 # ═══════════════════════════════════════════════════════════════════
-# SINGLE INSPECTION REPORT - MATCHES SCREENSHOT EXACTLY
+# SINGLE INSPECTION REPORT - MODERN REDESIGN WITH PHOTOS
 # ═══════════════════════════════════════════════════════════════════
 
 def generate_single_inspection_report(processed_data, metrics, api_key, images=None):
     """
-    Generate single inspection report matching screenshot format exactly
+    Generate modern single inspection report with prominent photos
+    Completely different from building summary report
     """
     
     try:
         doc = Document()
         setup_document_formatting(doc)
         
-        # Add logo and cover
+        # Add logo and cover with SINGLE UNIT styling
         if images:
             add_logo_to_header(doc, images)
         
-        # Cover page
+        # Custom cover page for single unit
         add_single_unit_cover_page(doc, processed_data, metrics, images)
         
-        # Inspection Overview
-        add_single_inspection_overview(doc, processed_data, metrics)
+        # Unit snapshot
+        add_unit_snapshot(doc, processed_data, metrics)
         
-        # Detailed Defects (EXACTLY like screenshot)
-        add_single_detailed_defects(doc, processed_data, api_key)
+        # Room-by-room defect breakdown with photos
+        add_room_by_room_defects(doc, processed_data, api_key)
         
-        # Report Documentation
-        add_single_report_documentation(doc, processed_data, metrics)
+        # Summary and recommendations
+        add_single_unit_summary(doc, processed_data, metrics)
         
-        print("✅ Single inspection report completed!")
+        print("✅ Single unit report completed!")
         return doc
     
     except Exception as e:
@@ -300,13 +301,13 @@ def generate_single_inspection_report(processed_data, metrics, api_key, images=N
 
 
 def add_single_unit_cover_page(doc, processed_data, metrics, images=None):
-    """Cover page for single unit - matches template"""
+    """Custom cover page for single unit inspection"""
     
     try:
-        # Title
+        # Main title
         title_para = doc.add_paragraph()
         title_para.style = 'CleanTitle'
-        title_run = title_para.add_run("PRE-SETTLEMENT\nINSPECTION REPORT")
+        title_run = title_para.add_run("UNIT INSPECTION REPORT")
         title_run.font.size = Pt(28)
         
         # Line separator
@@ -317,24 +318,27 @@ def add_single_unit_cover_page(doc, processed_data, metrics, images=None):
         line_run.font.size = Pt(12)
         line_run.font.color.rgb = RGBColor(0, 0, 0)
         
+        # Get unit info
+        unit = processed_data['Unit'].iloc[0] if len(processed_data) > 0 else 'Unknown'
+        
+        # Unit number - large and prominent
+        doc.add_paragraph()
+        unit_para = doc.add_paragraph()
+        unit_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        unit_run = unit_para.add_run(f"UNIT {sanitize_text(str(unit))}")
+        unit_run.font.name = 'Arial'
+        unit_run.font.size = Pt(24)
+        unit_run.font.bold = True
+        unit_run.font.color.rgb = RGBColor(0, 0, 0)
+        
         # Building name
         doc.add_paragraph()
         building_para = doc.add_paragraph()
         building_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        building_run = building_para.add_run(sanitize_text(metrics['building_name'].upper()))
+        building_run = building_para.add_run(sanitize_text(metrics['building_name']))
         building_run.font.name = 'Arial'
-        building_run.font.size = Pt(22)
-        building_run.font.bold = True
+        building_run.font.size = Pt(18)
         building_run.font.color.rgb = RGBColor(0, 0, 0)
-        
-        # Address
-        doc.add_paragraph()
-        address_para = doc.add_paragraph()
-        address_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        address_run = address_para.add_run(sanitize_text(metrics['address']))
-        address_run.font.name = 'Arial'
-        address_run.font.size = Pt(14)
-        address_run.font.color.rgb = RGBColor(0, 0, 0)
         
         # Cover image
         if images and images.get('cover') and os.path.exists(images['cover']):
@@ -347,17 +351,39 @@ def add_single_unit_cover_page(doc, processed_data, metrics, images=None):
             except Exception as e:
                 print(f"Error adding cover image: {e}")
         
+        # Quick stats box
+        doc.add_paragraph()
+        stats_para = doc.add_paragraph()
+        stats_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        total_defects = len(processed_data)
+        inspection_date = processed_data['inspection_date'].iloc[0] if 'inspection_date' in processed_data.columns else 'N/A'
+        
+        if hasattr(inspection_date, 'strftime'):
+            date_str = inspection_date.strftime('%d %B %Y')
+        else:
+            date_str = str(inspection_date)
+        
+        stats_text = f"""Inspection Date: {date_str}
+Total Defects Found: {total_defects}
+Status: {'REQUIRES ATTENTION' if total_defects > 5 else 'MINOR WORK NEEDED'}"""
+        
+        stats_run = stats_para.add_run(stats_text)
+        stats_run.font.name = 'Arial'
+        stats_run.font.size = Pt(12)
+        stats_run.font.color.rgb = RGBColor(0, 0, 0)
+        
         doc.add_page_break()
     
     except Exception as e:
-        print(f"Error in cover page: {e}")
+        print(f"Error in single unit cover: {e}")
 
 
-def add_single_inspection_overview(doc, processed_data, metrics):
-    """Inspection Overview - Single Unit Format"""
+def add_unit_snapshot(doc, processed_data, metrics):
+    """Quick snapshot of unit condition"""
     
     try:
-        header = doc.add_paragraph("INSPECTION OVERVIEW")
+        header = doc.add_paragraph("UNIT SNAPSHOT")
         header.style = 'CleanSectionHeader'
         
         line_para = doc.add_paragraph()
@@ -367,83 +393,130 @@ def add_single_inspection_overview(doc, processed_data, metrics):
         line_run.font.size = Pt(10)
         line_run.font.color.rgb = RGBColor(0, 0, 0)
         
-        doc.add_paragraph()
-        
-        # Get data
-        unit = processed_data['Unit'].iloc[0] if len(processed_data) > 0 else 'Unknown'
+        # Get stats
         total_defects = len(processed_data)
-        total_items = metrics.get('total_inspections', 1)
-        defect_rate = (total_defects / total_items * 100) if total_items > 0 else 0
+        severity_counts = processed_data['Severity'].value_counts()
+        trade_counts = processed_data['Trade'].value_counts()
+        room_counts = processed_data['Room'].value_counts()
         
-        # Create metrics table
-        table = doc.add_table(rows=2, cols=3)
-        table.alignment = 1
+        # Create summary boxes
+        table = doc.add_table(rows=2, cols=2)
+        table.style = 'Table Grid'
         
         for col in table.columns:
-            col.width = Inches(2.4)
+            col.width = Inches(3.5)
         
-        metrics_data = [
-            ("UNIT NUMBER", str(unit), "Units Inspected", "A8D3E6", RGBColor(192, 0, 0)),
-            ("DEFECTS FOUND", str(total_defects), f"{defect_rate:.1f}% Rate", "FEDBDB", RGBColor(0, 0, 0)),
-            ("READY UNITS", "0", "0.0%", "C8E6C9", RGBColor(0, 0, 0)),
-            ("MINOR WORK", "0", "0.0%", "FFF3D7", RGBColor(0, 0, 0)),
-            ("MAJOR WORK", "1", "100.0%", "F4C2A1", RGBColor(0, 0, 0)),
-            ("EXTENSIVE WORK", "0", "0.0%", "F4A6A6", RGBColor(0, 0, 0))
-        ]
+        # Box 1: Severity Breakdown
+        cell1 = table.cell(0, 0)
+        set_cell_background_color(cell1, "FFE6E6")
+        para1 = cell1.paragraphs[0]
+        para1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para1.paragraph_format.space_before = Pt(10)
+        para1.paragraph_format.space_after = Pt(10)
         
-        for i, (label, value, subtitle, bg_color, text_color) in enumerate(metrics_data):
-            row_idx = i // 3
-            col_idx = i % 3
+        run1a = para1.add_run("SEVERITY BREAKDOWN\n")
+        run1a.font.name = 'Arial'
+        run1a.font.size = Pt(11)
+        run1a.font.bold = True
+        run1a.font.color.rgb = RGBColor(0, 0, 0)
+        
+        for severity, count in severity_counts.items():
+            run1b = para1.add_run(f"{severity}: {count}\n")
+            run1b.font.name = 'Arial'
+            run1b.font.size = Pt(10)
+            run1b.font.color.rgb = RGBColor(0, 0, 0)
+        
+        # Box 2: Top Trade
+        cell2 = table.cell(0, 1)
+        set_cell_background_color(cell2, "E6F3FF")
+        para2 = cell2.paragraphs[0]
+        para2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para2.paragraph_format.space_before = Pt(10)
+        para2.paragraph_format.space_after = Pt(10)
+        
+        run2a = para2.add_run("PRIMARY TRADE\n")
+        run2a.font.name = 'Arial'
+        run2a.font.size = Pt(11)
+        run2a.font.bold = True
+        run2a.font.color.rgb = RGBColor(0, 0, 0)
+        
+        if len(trade_counts) > 0:
+            run2b = para2.add_run(f"{sanitize_text(trade_counts.index[0])}\n")
+            run2b.font.name = 'Arial'
+            run2b.font.size = Pt(14)
+            run2b.font.bold = True
+            run2b.font.color.rgb = RGBColor(0, 0, 0)
             
-            cell = table.cell(row_idx, col_idx)
-            cell.text = ""
-            
-            try:
-                shading_elm = parse_xml(f'<w:shd xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:fill="{bg_color}"/>')
-                cell._tc.get_or_add_tcPr().append(shading_elm)
-            except:
-                pass
-            
-            para = cell.paragraphs[0]
-            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            para.paragraph_format.space_before = Pt(12)
-            para.paragraph_format.space_after = Pt(12)
-            
-            # Label
-            label_run = para.add_run(f"{label}\n")
-            label_run.font.name = 'Arial'
-            label_run.font.size = Pt(10)
-            label_run.font.bold = True if label == "UNIT NUMBER" else False
-            label_run.font.color.rgb = text_color if label == "UNIT NUMBER" else RGBColor(0, 0, 0)
-            
-            # Value
-            value_run = para.add_run(f"{value}\n")
-            value_run.font.name = 'Arial'
-            value_run.font.size = Pt(24)
-            value_run.font.bold = True
-            value_run.font.color.rgb = text_color if label == "UNIT NUMBER" else RGBColor(0, 0, 0)
-            
-            # Subtitle
-            subtitle_run = para.add_run(subtitle)
-            subtitle_run.font.name = 'Arial'
-            subtitle_run.font.size = Pt(9)
-            subtitle_run.font.color.rgb = RGBColor(0, 0, 0)
+            run2c = para2.add_run(f"{trade_counts.iloc[0]} defects")
+            run2c.font.name = 'Arial'
+            run2c.font.size = Pt(10)
+            run2c.font.color.rgb = RGBColor(0, 0, 0)
+        
+        # Box 3: Rooms Affected
+        cell3 = table.cell(1, 0)
+        set_cell_background_color(cell3, "FFF9E6")
+        para3 = cell3.paragraphs[0]
+        para3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para3.paragraph_format.space_before = Pt(10)
+        para3.paragraph_format.space_after = Pt(10)
+        
+        run3a = para3.add_run("ROOMS AFFECTED\n")
+        run3a.font.name = 'Arial'
+        run3a.font.size = Pt(11)
+        run3a.font.bold = True
+        run3a.font.color.rgb = RGBColor(0, 0, 0)
+        
+        run3b = para3.add_run(f"{len(room_counts)}\n")
+        run3b.font.name = 'Arial'
+        run3b.font.size = Pt(20)
+        run3b.font.bold = True
+        run3b.font.color.rgb = RGBColor(0, 0, 0)
+        
+        run3c = para3.add_run("room areas")
+        run3c.font.name = 'Arial'
+        run3c.font.size = Pt(10)
+        run3c.font.color.rgb = RGBColor(0, 0, 0)
+        
+        # Box 4: Total Defects
+        cell4 = table.cell(1, 1)
+        set_cell_background_color(cell4, "E6FFE6")
+        para4 = cell4.paragraphs[0]
+        para4.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para4.paragraph_format.space_before = Pt(10)
+        para4.paragraph_format.space_after = Pt(10)
+        
+        run4a = para4.add_run("TOTAL DEFECTS\n")
+        run4a.font.name = 'Arial'
+        run4a.font.size = Pt(11)
+        run4a.font.bold = True
+        run4a.font.color.rgb = RGBColor(0, 0, 0)
+        
+        run4b = para4.add_run(f"{total_defects}\n")
+        run4b.font.name = 'Arial'
+        run4b.font.size = Pt(20)
+        run4b.font.bold = True
+        run4b.font.color.rgb = RGBColor(192, 0, 0) if total_defects > 10 else RGBColor(255, 140, 0)
+        
+        run4c = para4.add_run("items identified")
+        run4c.font.name = 'Arial'
+        run4c.font.size = Pt(10)
+        run4c.font.color.rgb = RGBColor(0, 0, 0)
         
         doc.add_paragraph()
         doc.add_page_break()
     
     except Exception as e:
-        print(f"Error in inspection overview: {e}")
+        print(f"Error in unit snapshot: {e}")
 
 
-def add_single_detailed_defects(doc, processed_data, api_key):
+def add_room_by_room_defects(doc, processed_data, api_key):
     """
-    Detailed Defects - EXACTLY matches screenshot format
-    Shows each defect in a table with photo embedded
+    DETAILED DEFECTS - Table format matching screenshot
+    Replaces the room-by-room grouping
     """
     
     try:
-        # Header
+        # Header - "DETAILED DEFECTS" instead of "DEFECTS BY ROOM"
         header = doc.add_paragraph("DETAILED DEFECTS")
         header.style = 'CleanSectionHeader'
         
@@ -457,9 +530,12 @@ def add_single_detailed_defects(doc, processed_data, api_key):
         doc.add_paragraph()
         
         total_defects = len(processed_data)
+        print(f"   Processing {total_defects} defects for detailed view...")
         
-        # Each defect
+        # Process EACH defect (not grouped by room)
         for idx, (_, defect) in enumerate(processed_data.iterrows(), 1):
+            print(f"   📋 Processing defect {idx} of {total_defects}...")
+            
             # Defect number header
             defect_num_para = doc.add_paragraph()
             defect_num_run = defect_num_para.add_run(f"Defect {idx} of {total_defects}")
@@ -468,7 +544,7 @@ def add_single_detailed_defects(doc, processed_data, api_key):
             defect_num_run.font.bold = True
             defect_num_run.font.color.rgb = RGBColor(0, 0, 0)
             
-            # Create table - 5 rows, 2 columns
+            # Create table - EXACTLY like screenshot
             table = doc.add_table(rows=5, cols=2)
             table.style = 'Table Grid'
             
@@ -479,6 +555,7 @@ def add_single_detailed_defects(doc, processed_data, api_key):
             cell_label_0 = table.cell(0, 0)
             cell_value_0 = table.cell(0, 1)
             set_cell_background_color(cell_label_0, "D9D9D9")
+            
             cell_label_0.text = "Room/Location"
             cell_label_0.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_0.paragraphs[0].runs[0].font.size = Pt(10)
@@ -494,6 +571,7 @@ def add_single_detailed_defects(doc, processed_data, api_key):
             cell_label_1 = table.cell(1, 0)
             cell_value_1 = table.cell(1, 1)
             set_cell_background_color(cell_label_1, "D9D9D9")
+            
             cell_label_1.text = "Component"
             cell_label_1.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_1.paragraphs[0].runs[0].font.size = Pt(10)
@@ -509,6 +587,7 @@ def add_single_detailed_defects(doc, processed_data, api_key):
             cell_label_2 = table.cell(2, 0)
             cell_value_2 = table.cell(2, 1)
             set_cell_background_color(cell_label_2, "D9D9D9")
+            
             cell_label_2.text = "Trade Category"
             cell_label_2.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_2.paragraphs[0].runs[0].font.size = Pt(10)
@@ -524,14 +603,18 @@ def add_single_detailed_defects(doc, processed_data, api_key):
             cell_label_3 = table.cell(3, 0)
             cell_value_3 = table.cell(3, 1)
             set_cell_background_color(cell_label_3, "D9D9D9")
+            
             cell_label_3.text = "Inspector Notes"
             cell_label_3.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_3.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_3.paragraphs[0].runs[0].font.bold = True
             cell_label_3.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
             
-            # Get inspector notes or issue description
+            # Get inspector notes or issue
             notes = defect.get('inspector_notes', defect.get('Issue', 'No notes'))
+            if pd.isna(notes) or str(notes).strip() == '' or str(notes).lower() == 'nan':
+                notes = defect.get('Issue', 'No notes')
+            
             cell_value_3.text = sanitize_text(str(notes))
             cell_value_3.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_3.paragraphs[0].runs[0].font.size = Pt(10)
@@ -541,6 +624,7 @@ def add_single_detailed_defects(doc, processed_data, api_key):
             cell_label_4 = table.cell(4, 0)
             cell_value_4 = table.cell(4, 1)
             set_cell_background_color(cell_label_4, "D9D9D9")
+            
             cell_label_4.text = "Photo Defect"
             cell_label_4.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_4.paragraphs[0].runs[0].font.size = Pt(10)
@@ -549,13 +633,18 @@ def add_single_detailed_defects(doc, processed_data, api_key):
             
             # Add photo in the cell
             photo_url = defect.get('photo_url')
-            if photo_url and api_key:
-                print(f"   📸 Downloading photo for defect {idx}...")
+            print(f"      Photo URL: {photo_url}")
+            
+            if photo_url and str(photo_url).strip() and str(photo_url) != 'nan' and api_key:
+                print(f"      📸 Downloading photo...")
                 photo_data = download_photo(photo_url, api_key)
+                
                 if photo_data:
                     try:
-                        # Clear cell
+                        # Clear the cell
                         cell_value_4.text = ""
+                        
+                        # Get the first paragraph
                         photo_para = cell_value_4.paragraphs[0]
                         photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         
@@ -563,18 +652,23 @@ def add_single_detailed_defects(doc, processed_data, api_key):
                         run = photo_para.add_run()
                         run.add_picture(photo_data, width=Inches(4.0))
                         
-                        # Add timestamp overlay
+                        # Add timestamp below photo
                         timestamp_para = cell_value_4.add_paragraph()
                         timestamp_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         timestamp_para.paragraph_format.space_before = Pt(0)
                         timestamp_para.paragraph_format.space_after = Pt(0)
                         
-                        # Get timestamp
+                        # Format timestamp
                         inspection_date = defect.get('inspection_date', datetime.now())
                         if hasattr(inspection_date, 'strftime'):
                             timestamp_str = inspection_date.strftime('%d %b %Y at %I:%M%p').lower()
                         else:
-                            timestamp_str = str(inspection_date)
+                            try:
+                                from datetime import datetime as dt
+                                date_obj = dt.strptime(str(inspection_date), '%Y-%m-%d %H:%M:%S')
+                                timestamp_str = date_obj.strftime('%d %b %Y at %I:%M%p').lower()
+                            except:
+                                timestamp_str = str(inspection_date)
                         
                         timestamp_run = timestamp_para.add_run(timestamp_str)
                         timestamp_run.font.name = 'Arial'
@@ -582,32 +676,43 @@ def add_single_detailed_defects(doc, processed_data, api_key):
                         timestamp_run.font.color.rgb = RGBColor(255, 255, 255)
                         timestamp_run.font.bold = True
                         
-                        print(f"   ✅ Photo added")
+                        print(f"      ✅ Photo added successfully")
                     except Exception as e:
-                        print(f"   ❌ Photo error: {e}")
+                        print(f"      ❌ Error embedding photo: {e}")
+                        import traceback
+                        traceback.print_exc()
                         cell_value_4.text = "Photo error"
                 else:
+                    print(f"      ⚠️ No photo data received")
                     cell_value_4.text = "Photo not available"
             else:
-                cell_value_4.text = "No photo"
+                if not photo_url or str(photo_url).strip() == '' or str(photo_url) == 'nan':
+                    print(f"      ⚠️ No photo URL")
+                    cell_value_4.text = "No photo URL"
+                elif not api_key:
+                    print(f"      ⚠️ No API key")
+                    cell_value_4.text = "No API key provided"
+                else:
+                    print(f"      ⚠️ Photo not available")
+                    cell_value_4.text = "No photo"
             
             # Space between defects
             doc.add_paragraph()
             doc.add_paragraph()
         
+        print(f"   ✅ Completed all {total_defects} defects")
         doc.add_page_break()
     
     except Exception as e:
-        print(f"Error in detailed defects: {e}")
+        print(f"❌ Error in detailed defects: {e}")
         import traceback
         traceback.print_exc()
 
-
-def add_single_report_documentation(doc, processed_data, metrics):
-    """Report Documentation section"""
+def add_single_unit_summary(doc, processed_data, metrics):
+    """Final summary and action items for single unit"""
     
     try:
-        header = doc.add_paragraph("REPORT DOCUMENTATION & APPENDICES")
+        header = doc.add_paragraph("SUMMARY & NEXT STEPS")
         header.style = 'CleanSectionHeader'
         
         line_para = doc.add_paragraph()
@@ -617,77 +722,61 @@ def add_single_report_documentation(doc, processed_data, metrics):
         line_run.font.size = Pt(10)
         line_run.font.color.rgb = RGBColor(0, 0, 0)
         
-        doc.add_paragraph()
-        
-        # Metrics
-        metrics_header = doc.add_paragraph("COMPREHENSIVE INSPECTION METRICS")
-        metrics_header.style = 'CleanSubsectionHeader'
-        
         total_defects = len(processed_data)
-        total_items = metrics.get('total_inspections', 1)
-        defect_rate = (total_defects / total_items * 100) if total_items > 0 else 0
-        quality_score = max(0, 100 - defect_rate)
+        severity_counts = processed_data['Severity'].value_counts()
+        trade_counts = processed_data['Trade'].value_counts()
         
-        scope_para = doc.add_paragraph()
-        scope_para.style = 'CleanBody'
+        # Summary box
+        summary_para = doc.add_paragraph()
+        summary_para.style = 'CleanBody'
         
-        scope_text = f"""**INSPECTION SCOPE & RESULTS**:
-- Total Residential Units Evaluated: 1
-- Total Building Components Assessed: {total_items:,}
-- Total Defects Documented: {total_defects}
-- Overall Defect Rate: {defect_rate:.2f}%
-- Average Defects per Unit: {total_defects:.2f}
-- Development Quality Score: {quality_score:.1f}/100
+        summary_text = f"""**INSPECTION SUMMARY**
 
-**DEFECT LEVEL FRAMEWORK DISTRIBUTION**:
-- Minor Work Required: 0 units (0.0%)
-- Intermediate Remediation Required: 0 units (0.0%)
-- Major Remediation Required: 1 units (100.0%)
-- Extensive Remediation Required: 0 units (0.0%)"""
+This unit inspection identified {total_defects} defects requiring attention before settlement. """
         
-        add_formatted_text_with_bold(scope_para, scope_text)
+        if len(severity_counts) > 0:
+            urgent = severity_counts.get('Urgent', 0)
+            high = severity_counts.get('High Priority', 0)
+            
+            if urgent > 0:
+                summary_text += f"**{urgent} urgent defect{'s' if urgent != 1 else ''}** require immediate remediation. "
+            if high > 0:
+                summary_text += f"{high} high priority item{'s' if high != 1 else ''} should be addressed promptly. "
         
-        doc.add_paragraph()
-        
-        # Report metadata
-        resources_header = doc.add_paragraph("REPORT GENERATION & COMPANION RESOURCES")
-        resources_header.style = 'CleanSubsectionHeader'
-        
-        inspection_date = processed_data['inspection_date'].iloc[0] if 'inspection_date' in processed_data.columns else datetime.now()
-        if hasattr(inspection_date, 'strftime'):
-            inspection_date_str = inspection_date.strftime('%d %B %Y')
-        else:
-            inspection_date_str = str(inspection_date)
-        
-        resources_para = doc.add_paragraph()
-        resources_para.style = 'CleanBody'
-        
-        resources_text = f"""**REPORT METADATA**:
-- Report Generated: {datetime.now().strftime('%d %B %Y at %I:%M %p')}
-- Inspection Completion: {inspection_date_str}
-- Building Development: {sanitize_text(metrics.get('building_name', 'N/A'))}
-- Property Location: {sanitize_text(metrics.get('address', 'N/A'))}
+        summary_text += f"""
 
-**COMPANION DOCUMENTATION SUITE**:
-Complete defect inventories, unit-by-unit detailed breakdowns, interactive filterable data tables, and comprehensive photographic documentation are available in the accompanying Excel analytics workbook.
-
-**TECHNICAL SUPPORT & FOLLOW-UP**:
-For technical inquiries, data interpretation assistance, or additional analysis requirements, please contact the inspection team. Ongoing support is available for remediation planning, progress tracking, and post-completion verification inspections."""
+**PRIMARY TRADE CATEGORIES**:
+"""
         
-        add_formatted_text_with_bold(resources_para, resources_text)
+        for trade, count in trade_counts.head(3).items():
+            summary_text += f"• {sanitize_text(trade)}: {count} defect{'s' if count != 1 else ''}\n"
+        
+        summary_text += """
+**RECOMMENDED ACTIONS**:
+
+1. **Immediate**: Address all urgent and high priority defects within 7 days
+2. **Trade Coordination**: Schedule remediation with qualified contractors
+3. **Re-inspection**: Book follow-up inspection after repairs completed
+4. **Documentation**: Maintain photographic evidence of all completed work
+5. **Settlement**: Obtain final sign-off before proceeding to settlement
+
+**TIMELINE**: Estimated 2-3 weeks for complete remediation based on defect complexity."""
+        
+        add_formatted_text_with_bold(summary_para, summary_text)
         
         # Footer
         doc.add_paragraph()
+        doc.add_paragraph()
         closing_para = doc.add_paragraph()
         closing_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        closing_run = closing_para.add_run("END OF REPORT")
+        closing_run = closing_para.add_run("─── END OF UNIT INSPECTION REPORT ───")
         closing_run.font.name = 'Arial'
-        closing_run.font.size = Pt(14)
+        closing_run.font.size = Pt(12)
         closing_run.font.color.rgb = RGBColor(0, 0, 0)
         closing_run.font.bold = True
     
     except Exception as e:
-        print(f"Error in report documentation: {e}")
+        print(f"Error in unit summary: {e}")
 # ═══════════════════════════════════════════════════════════════════
 # REST OF THE FUNCTIONS FROM WORKING TEMPLATE
 # ═══════════════════════════════════════════════════════════════════
