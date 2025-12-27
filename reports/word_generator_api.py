@@ -1100,7 +1100,7 @@ def add_data_visualization(doc, processed_data, metrics):
 
 
 def add_trade_summary(doc, processed_data, metrics):
-    """Trade summary section"""
+    """Trade summary section - FIXED WITH DEBUG"""
     
     try:
         header = doc.add_paragraph("TRADE-SPECIFIC DEFECT ANALYSIS")
@@ -1118,21 +1118,46 @@ def add_trade_summary(doc, processed_data, metrics):
         overview_para = doc.add_paragraph(overview_text)
         overview_para.style = 'CleanBody'
         
+        doc.add_paragraph()
+        
+        # DEBUG
+        print(f"\n🔍 TRADE SUMMARY DEBUG:")
+        print(f"   processed_data shape: {processed_data.shape}")
+        print(f"   processed_data columns: {list(processed_data.columns)}")
+        print(f"   StatusClass values: {processed_data['StatusClass'].unique()}")
+        print(f"   Sample data:\n{processed_data[['Trade', 'Component', 'Unit', 'StatusClass']].head()}")
+        
         if processed_data is not None and len(processed_data) > 0:
             try:
                 component_details = generate_complete_component_details(processed_data)
-                add_trade_tables(doc, component_details)
+                
+                print(f"   Component details shape: {component_details.shape}")
+                
+                if len(component_details) > 0:
+                    print(f"   ✅ Adding trade tables with {len(component_details)} rows")
+                    add_trade_tables(doc, component_details)
+                else:
+                    print(f"   ⚠️ No component details generated")
+                    # Add placeholder
+                    no_data = doc.add_paragraph("No trade-specific data available.")
+                    no_data.style = 'CleanBody'
             except Exception as e:
-                print(f"Error generating trade tables: {e}")
+                print(f"   ❌ Error generating trade tables: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"   ⚠️ No processed_data available")
         
         doc.add_page_break()
     
     except Exception as e:
-        print(f"Error in trade summary: {e}")
+        print(f"❌ Error in trade summary: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def add_component_breakdown(doc, processed_data, metrics):
-    """Component breakdown section"""
+    """Component breakdown section - FIXED WITH DEBUG"""
     
     try:
         header = doc.add_paragraph("COMPONENT-LEVEL ANALYSIS")
@@ -1152,14 +1177,24 @@ def add_component_breakdown(doc, processed_data, metrics):
         
         doc.add_paragraph()
         
+        # DEBUG
+        print(f"\n🔍 COMPONENT BREAKDOWN DEBUG:")
+        print(f"   processed_data is None: {processed_data is None}")
+        
         if processed_data is not None and len(processed_data) > 0:
+            print(f"   processed_data length: {len(processed_data)}")
+            
             component_data = generate_component_breakdown(processed_data)
+            
+            print(f"   component_data length: {len(component_data)}")
             
             if len(component_data) > 0:
                 most_freq_header = doc.add_paragraph("Most Frequently Affected Components")
                 most_freq_header.style = 'CleanSubsectionHeader'
                 
-                top_components = component_data.head(10)
+                top_components = component_data.head(15)
+                
+                print(f"   Creating table with {len(top_components)} rows")
                 
                 comp_table = doc.add_table(rows=1, cols=4)
                 comp_table.style = 'Table Grid'
@@ -1225,12 +1260,21 @@ def add_component_breakdown(doc, processed_data, metrics):
                     cell4.paragraphs[0].runs[0].font.bold = True
                     cell4.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
                     set_cell_background_color(cell4, row_color)
+                
+                print(f"   ✅ Table created successfully")
+            else:
+                print(f"   ⚠️ No component data generated")
+                no_data = doc.add_paragraph("No component data available.")
+                no_data.style = 'CleanBody'
+        else:
+            print(f"   ⚠️ No processed_data available")
         
         doc.add_page_break()
     
     except Exception as e:
-        print(f"Error in component breakdown: {e}")
-
+        print(f"❌ Error in component breakdown: {e}")
+        import traceback
+        traceback.print_exc()
 
 def add_recommendations(doc, metrics):
     """Recommendations section"""
