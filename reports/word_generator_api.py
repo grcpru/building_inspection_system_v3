@@ -511,12 +511,11 @@ def add_unit_snapshot(doc, processed_data, metrics):
 
 def add_room_by_room_defects(doc, processed_data, api_key):
     """
-    DETAILED DEFECTS - Table format matching screenshot
-    Replaces the room-by-room grouping
+    DETAILED DEFECTS - Table format with photos
     """
     
     try:
-        # Header - "DETAILED DEFECTS" instead of "DEFECTS BY ROOM"
+        # Header
         header = doc.add_paragraph("DETAILED DEFECTS")
         header.style = 'CleanSectionHeader'
         
@@ -530,11 +529,16 @@ def add_room_by_room_defects(doc, processed_data, api_key):
         doc.add_paragraph()
         
         total_defects = len(processed_data)
-        print(f"   Processing {total_defects} defects for detailed view...")
+        print(f"\n🔍 DETAILED DEFECTS DEBUG:")
+        print(f"   Total defects: {total_defects}")
+        print(f"   API key provided: {bool(api_key)}")
+        print(f"   Columns: {list(processed_data.columns)}")
         
-        # Process EACH defect (not grouped by room)
+        # Process each defect
         for idx, (_, defect) in enumerate(processed_data.iterrows(), 1):
-            print(f"   📋 Processing defect {idx} of {total_defects}...")
+            print(f"\n   📋 Defect {idx}/{total_defects}:")
+            print(f"      Room: {defect.get('Room', 'N/A')}")
+            print(f"      Component: {defect.get('Component', 'N/A')}")
             
             # Defect number header
             defect_num_para = doc.add_paragraph()
@@ -544,10 +548,9 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             defect_num_run.font.bold = True
             defect_num_run.font.color.rgb = RGBColor(0, 0, 0)
             
-            # Create table - EXACTLY like screenshot
+            # Create table
             table = doc.add_table(rows=5, cols=2)
             table.style = 'Table Grid'
-            
             table.columns[0].width = Inches(2.0)
             table.columns[1].width = Inches(4.5)
             
@@ -555,152 +558,145 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             cell_label_0 = table.cell(0, 0)
             cell_value_0 = table.cell(0, 1)
             set_cell_background_color(cell_label_0, "D9D9D9")
-            
             cell_label_0.text = "Room/Location"
             cell_label_0.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_0.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_0.paragraphs[0].runs[0].font.bold = True
-            cell_label_0.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
-            
             cell_value_0.text = sanitize_text(str(defect.get('Room', 'Unknown')))
             cell_value_0.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_0.paragraphs[0].runs[0].font.size = Pt(10)
-            cell_value_0.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
             
             # Row 2: Component
             cell_label_1 = table.cell(1, 0)
             cell_value_1 = table.cell(1, 1)
             set_cell_background_color(cell_label_1, "D9D9D9")
-            
             cell_label_1.text = "Component"
             cell_label_1.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_1.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_1.paragraphs[0].runs[0].font.bold = True
-            cell_label_1.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
-            
             cell_value_1.text = sanitize_text(str(defect.get('Component', 'Unknown')))
             cell_value_1.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_1.paragraphs[0].runs[0].font.size = Pt(10)
-            cell_value_1.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
             
             # Row 3: Trade Category
             cell_label_2 = table.cell(2, 0)
             cell_value_2 = table.cell(2, 1)
             set_cell_background_color(cell_label_2, "D9D9D9")
-            
             cell_label_2.text = "Trade Category"
             cell_label_2.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_2.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_2.paragraphs[0].runs[0].font.bold = True
-            cell_label_2.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
-            
             cell_value_2.text = sanitize_text(str(defect.get('Trade', 'Unknown')))
             cell_value_2.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_2.paragraphs[0].runs[0].font.size = Pt(10)
-            cell_value_2.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
             
             # Row 4: Inspector Notes
             cell_label_3 = table.cell(3, 0)
             cell_value_3 = table.cell(3, 1)
             set_cell_background_color(cell_label_3, "D9D9D9")
-            
             cell_label_3.text = "Inspector Notes"
             cell_label_3.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_3.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_3.paragraphs[0].runs[0].font.bold = True
-            cell_label_3.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
             
-            # Get inspector notes or issue
             notes = defect.get('inspector_notes', defect.get('Issue', 'No notes'))
             if pd.isna(notes) or str(notes).strip() == '' or str(notes).lower() == 'nan':
                 notes = defect.get('Issue', 'No notes')
-            
             cell_value_3.text = sanitize_text(str(notes))
             cell_value_3.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_3.paragraphs[0].runs[0].font.size = Pt(10)
-            cell_value_3.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
             
             # Row 5: Photo Defect
             cell_label_4 = table.cell(4, 0)
             cell_value_4 = table.cell(4, 1)
             set_cell_background_color(cell_label_4, "D9D9D9")
-            
             cell_label_4.text = "Photo Defect"
             cell_label_4.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_4.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_4.paragraphs[0].runs[0].font.bold = True
-            cell_label_4.paragraphs[0].runs[0].font.color.rgb = RGBColor(0, 0, 0)
             
-            # Add photo in the cell
+            # DEBUG: Check all possible photo fields
             photo_url = defect.get('photo_url')
-            print(f"      Photo URL: {photo_url}")
+            photo_media_id = defect.get('photo_media_id')
             
-            if photo_url and str(photo_url).strip() and str(photo_url) != 'nan' and api_key:
-                print(f"      📸 Downloading photo...")
-                photo_data = download_photo(photo_url, api_key)
-                
-                if photo_data:
+            print(f"      photo_url: {photo_url}")
+            print(f"      photo_media_id: {photo_media_id}")
+            print(f"      photo_url type: {type(photo_url)}")
+            
+            # Try to get photo
+            photo_added = False
+            
+            # Check if we have a valid photo URL
+            if photo_url and not pd.isna(photo_url) and str(photo_url).strip() != '' and str(photo_url).lower() != 'nan':
+                if api_key:
+                    print(f"      🔄 Attempting download...")
                     try:
-                        # Clear the cell
-                        cell_value_4.text = ""
+                        # Download photo
+                        import requests
+                        headers = {'Authorization': f'Bearer {api_key}'}
+                        response = requests.get(str(photo_url), headers=headers, timeout=30)
                         
-                        # Get the first paragraph
-                        photo_para = cell_value_4.paragraphs[0]
-                        photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        print(f"      Response status: {response.status_code}")
                         
-                        # Add photo
-                        run = photo_para.add_run()
-                        run.add_picture(photo_data, width=Inches(4.0))
-                        
-                        # Add timestamp below photo
-                        timestamp_para = cell_value_4.add_paragraph()
-                        timestamp_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        timestamp_para.paragraph_format.space_before = Pt(0)
-                        timestamp_para.paragraph_format.space_after = Pt(0)
-                        
-                        # Format timestamp
-                        inspection_date = defect.get('inspection_date', datetime.now())
-                        if hasattr(inspection_date, 'strftime'):
-                            timestamp_str = inspection_date.strftime('%d %b %Y at %I:%M%p').lower()
+                        if response.status_code == 200:
+                            # Create BytesIO from response
+                            from io import BytesIO
+                            photo_data = BytesIO(response.content)
+                            
+                            # Clear cell and add photo
+                            cell_value_4.text = ""
+                            photo_para = cell_value_4.paragraphs[0]
+                            photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            
+                            # Add picture
+                            run = photo_para.add_run()
+                            run.add_picture(photo_data, width=Inches(4.0))
+                            
+                            # Add timestamp
+                            timestamp_para = cell_value_4.add_paragraph()
+                            timestamp_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            timestamp_para.paragraph_format.space_before = Pt(0)
+                            timestamp_para.paragraph_format.space_after = Pt(0)
+                            
+                            inspection_date = defect.get('inspection_date', datetime.now())
+                            if hasattr(inspection_date, 'strftime'):
+                                timestamp_str = inspection_date.strftime('%d %b %Y at %I:%M%p').lower()
+                            else:
+                                try:
+                                    date_obj = datetime.strptime(str(inspection_date)[:19], '%Y-%m-%d %H:%M:%S')
+                                    timestamp_str = date_obj.strftime('%d %b %Y at %I:%M%p').lower()
+                                except:
+                                    timestamp_str = str(inspection_date)
+                            
+                            timestamp_run = timestamp_para.add_run(timestamp_str)
+                            timestamp_run.font.name = 'Arial'
+                            timestamp_run.font.size = Pt(10)
+                            timestamp_run.font.color.rgb = RGBColor(255, 255, 255)
+                            timestamp_run.font.bold = True
+                            
+                            photo_added = True
+                            print(f"      ✅ Photo added successfully")
                         else:
-                            try:
-                                from datetime import datetime as dt
-                                date_obj = dt.strptime(str(inspection_date), '%Y-%m-%d %H:%M:%S')
-                                timestamp_str = date_obj.strftime('%d %b %Y at %I:%M%p').lower()
-                            except:
-                                timestamp_str = str(inspection_date)
-                        
-                        timestamp_run = timestamp_para.add_run(timestamp_str)
-                        timestamp_run.font.name = 'Arial'
-                        timestamp_run.font.size = Pt(10)
-                        timestamp_run.font.color.rgb = RGBColor(255, 255, 255)
-                        timestamp_run.font.bold = True
-                        
-                        print(f"      ✅ Photo added successfully")
+                            print(f"      ❌ Download failed: {response.status_code}")
+                            cell_value_4.text = f"Photo download failed ({response.status_code})"
+                    
                     except Exception as e:
-                        print(f"      ❌ Error embedding photo: {e}")
+                        print(f"      ❌ Photo error: {e}")
                         import traceback
                         traceback.print_exc()
-                        cell_value_4.text = "Photo error"
+                        cell_value_4.text = f"Photo error: {str(e)[:50]}"
                 else:
-                    print(f"      ⚠️ No photo data received")
-                    cell_value_4.text = "Photo not available"
-            else:
-                if not photo_url or str(photo_url).strip() == '' or str(photo_url) == 'nan':
-                    print(f"      ⚠️ No photo URL")
-                    cell_value_4.text = "No photo URL"
-                elif not api_key:
                     print(f"      ⚠️ No API key")
                     cell_value_4.text = "No API key provided"
-                else:
-                    print(f"      ⚠️ Photo not available")
-                    cell_value_4.text = "No photo"
+            else:
+                print(f"      ⚠️ No valid photo URL")
+                cell_value_4.text = "No photo available"
             
             # Space between defects
             doc.add_paragraph()
             doc.add_paragraph()
         
-        print(f"   ✅ Completed all {total_defects} defects")
+        print(f"\n   ✅ Completed processing all {total_defects} defects")
         doc.add_page_break()
     
     except Exception as e:
@@ -777,6 +773,25 @@ This unit inspection identified {total_defects} defects requiring attention befo
     
     except Exception as e:
         print(f"Error in unit summary: {e}")
+
+def download_photo(photo_url, api_key):
+    """Download photo from SafetyCulture API"""
+    try:
+        import requests
+        from io import BytesIO
+        
+        headers = {'Authorization': f'Bearer {api_key}'}
+        response = requests.get(photo_url, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            return BytesIO(response.content)
+        else:
+            print(f"Photo download failed: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Photo download error: {e}")
+        return None
+    
 # ═══════════════════════════════════════════════════════════════════
 # REST OF THE FUNCTIONS FROM WORKING TEMPLATE
 # ═══════════════════════════════════════════════════════════════════
