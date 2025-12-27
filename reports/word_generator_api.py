@@ -10,6 +10,7 @@ from docx.shared import Inches, Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import parse_xml
 from datetime import datetime
+import pytz
 import pandas as pd
 import os
 import tempfile
@@ -40,7 +41,8 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
     print("⚠️ PIL not available - using basic image sizing")
-    
+
+MELBOURNE_TZ = pytz.timezone('Australia/Melbourne')   
 # ═══════════════════════════════════════════════════════════════════
 # METRICS CALCULATION
 # ═══════════════════════════════════════════════════════════════════
@@ -867,28 +869,7 @@ def add_room_by_room_defects(doc, processed_data, api_key):
                             run = photo_para.add_run()
                             run.add_picture(img_data, width=final_width, height=final_height)
                             
-                            # Add timestamp
-                            timestamp_para = cell_value_4.add_paragraph()
-                            timestamp_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            timestamp_para.paragraph_format.space_before = Pt(2)
-                            timestamp_para.paragraph_format.space_after = Pt(0)
-                            
-                            inspection_date = defect.get('inspection_date', datetime.now())
-                            if hasattr(inspection_date, 'strftime'):
-                                timestamp_str = inspection_date.strftime('%d %b %Y at %I:%M%p').lower()
-                            else:
-                                try:
-                                    date_obj = datetime.strptime(str(inspection_date)[:19], '%Y-%m-%d %H:%M:%S')
-                                    timestamp_str = date_obj.strftime('%d %b %Y at %I:%M%p').lower()
-                                except:
-                                    timestamp_str = str(inspection_date)
-                            
-                            timestamp_run = timestamp_para.add_run(timestamp_str)
-                            timestamp_run.font.name = 'Arial'
-                            timestamp_run.font.size = Pt(9)
-                            timestamp_run.font.color.rgb = RGBColor(100, 100, 100)
-                            timestamp_run.font.bold = True
-                            
+                                                        
                             print(f"      ✅ Photo added (fixed size)")
                         else:
                             cell_value_4.text = f"Download failed ({response.status_code})"
@@ -931,41 +912,40 @@ def add_single_unit_summary(doc, processed_data, metrics):
         severity_counts = processed_data['Severity'].value_counts()
         trade_counts = processed_data['Trade'].value_counts()
         
-        # Summary box
+        # Summary paragraph
         summary_para = doc.add_paragraph()
         summary_para.style = 'CleanBody'
         
-        summary_text = f"""**INSPECTION SUMMARY**
-
-This unit inspection identified {total_defects} defects requiring attention before settlement. """
+        summary_text = f"""**INSPECTION SUMMARY:**
+This unit inspection identified {total_defects} defects requiring attention before settlement."""
         
         if len(severity_counts) > 0:
             urgent = severity_counts.get('Urgent', 0)
             high = severity_counts.get('High Priority', 0)
             
             if urgent > 0:
-                summary_text += f"**{urgent} urgent defect{'s' if urgent != 1 else ''}** require immediate remediation. "
+                summary_text += f" **{urgent} urgent defect{'s' if urgent != 1 else ''}** require immediate remediation."
             if high > 0:
-                summary_text += f"{high} high priority item{'s' if high != 1 else ''} should be addressed promptly. "
+                summary_text += f" {high} high priority item{'s' if high != 1 else ''} should be addressed promptly."
         
         summary_text += f"""
 
-**PRIMARY TRADE CATEGORIES**:
+**PRIMARY TRADE CATEGORIES:**
 """
         
         for trade, count in trade_counts.head(3).items():
             summary_text += f"• {sanitize_text(trade)}: {count} defect{'s' if count != 1 else ''}\n"
         
         summary_text += """
-**RECOMMENDED ACTIONS**:
+**RECOMMENDED ACTIONS:**
+1.**Immediate:** Address all urgent and high priority defects within 7 days
+2.**Trade Coordination:** Schedule remediation with qualified contractors
+3.**Re-inspection:** Book follow-up inspection after repairs completed
+4.**Documentation:** Maintain photographic evidence of all completed work
+5.**Settlement:** Obtain final sign-off before proceeding to settlement
 
-1. **Immediate**: Address all urgent and high priority defects within 7 days
-2. **Trade Coordination**: Schedule remediation with qualified contractors
-3. **Re-inspection**: Book follow-up inspection after repairs completed
-4. **Documentation**: Maintain photographic evidence of all completed work
-5. **Settlement**: Obtain final sign-off before proceeding to settlement
-
-**TIMELINE**: Estimated 2-3 weeks for complete remediation based on defect complexity."""
+**TIMELINE:**
+Estimated 2-3 weeks for complete remediation based on defect complexity."""
         
         add_formatted_text_with_bold(summary_para, summary_text)
         
@@ -1106,34 +1086,37 @@ def sanitize_text(text):
     return text
 
 
-def add_formatted_text_with_bold(paragraph, text, style_name='CleanBody'):
-    """Add text with **bold** formatting support"""
+def add_formatted_text_with_bold(paragraph, text):
+    """
+    Add text with **bold** markers, properly handling newlines
+    """
     
-    try:
-        parts = re.split(r'\*\*(.*?)\*\*', text)
-        
-        for i, part in enumerate(parts):
-            if i % 2 == 0:  # Regular text
-                if part:
-                    run = paragraph.add_run(sanitize_text(part))
-                    run.font.name = 'Arial'
-                    run.font.size = Pt(11)
-                    run.font.color.rgb = RGBColor(0, 0, 0)
-            else:  # Bold text
-                run = paragraph.add_run(sanitize_text(part))
-                run.font.name = 'Arial'
-                run.font.size = Pt(11)
-                run.font.color.rgb = RGBColor(0, 0, 0)
-                run.font.bold = True
-        
-        paragraph.style = style_name
+    # Split by bold markers
+    parts = text.split('**')
     
-    except Exception as e:
-        run = paragraph.add_run(sanitize_text(text))
-        run.font.name = 'Arial'
-        run.font.size = Pt(11)
-        paragraph.style = style_name
-
+    for i, part in enumerate(parts):
+        if i % 2 == 1:  # Odd indices are bold
+            # Check if bold text ends with colon - add newline after
+            if part.strip().endswith(':'):
+                bold_run = paragraph.add_run(part)
+                bold_run.font.bold = True
+                bold_run.font.name = 'Arial'
+                bold_run.font.size = Pt(11)
+                bold_run.font.color.rgb = RGBColor(0, 0, 0)
+                # Add line break after bold with colon
+                paragraph.add_run('\n')
+            else:
+                bold_run = paragraph.add_run(part)
+                bold_run.font.bold = True
+                bold_run.font.name = 'Arial'
+                bold_run.font.size = Pt(11)
+                bold_run.font.color.rgb = RGBColor(0, 0, 0)
+        else:  # Even indices are normal
+            if part:  # Only add if not empty
+                normal_run = paragraph.add_run(part)
+                normal_run.font.name = 'Arial'
+                normal_run.font.size = Pt(11)
+                normal_run.font.color.rgb = RGBColor(0, 0, 0)
 
 def add_logo_to_header(doc, images=None):
     """Add logo to header"""
@@ -1766,7 +1749,7 @@ def add_recommendations(doc, metrics):
 
 
 def add_footer(doc, metrics):
-    """Footer section"""
+    """Footer section with Melbourne timezone"""
     
     try:
         header = doc.add_paragraph("REPORT DOCUMENTATION & APPENDICES")
@@ -1786,7 +1769,7 @@ def add_footer(doc, metrics):
         defect_rate = metrics.get('defect_rate', 0)
         quality_score = max(0, 100 - defect_rate)
         
-        data_summary_text = f"""**INSPECTION SCOPE & RESULTS**:
+        data_summary_text = f"""**INSPECTION SCOPE & RESULTS:**
 - Total Residential Units Evaluated: {metrics.get('total_units', 0):,}
 - Total Building Components Assessed: {metrics.get('total_inspections', 0):,}
 - Total Defects Documented: {metrics.get('total_defects', 0):,}
@@ -1794,7 +1777,7 @@ def add_footer(doc, metrics):
 - Average Defects per Unit: {avg_defects:.2f}
 - Development Quality Score: {quality_score:.1f}/100
 
-**DEFECT LEVEL FRAMEWORK DISTRIBUTION**:
+**DEFECT LEVEL FRAMEWORK DISTRIBUTION:**
 - Minor Work Required: {metrics.get('ready_units', 0)} units ({metrics.get('ready_pct', 0):.1f}%)
 - Intermediate Remediation Required: {metrics.get('minor_work_units', 0)} units ({metrics.get('minor_pct', 0):.1f}%)
 - Major Remediation Required: {metrics.get('major_work_units', 0)} units ({metrics.get('major_pct', 0):.1f}%)
@@ -1828,16 +1811,20 @@ def add_footer(doc, metrics):
             except:
                 inspection_date_display = metrics['inspection_date']
         
-        details_text = f"""**REPORT METADATA**:
-- Report Generated: {datetime.now().strftime('%d %B %Y at %I:%M %p')}
+        # ✨ MELBOURNE TIMEZONE for report generation
+        melbourne_now = datetime.now(MELBOURNE_TZ)
+        report_generated = melbourne_now.strftime('%d %B %Y at %I:%M %p')
+        
+        details_text = f"""**REPORT METADATA:**
+- Report Generated: {report_generated} (Melbourne Time)
 - Inspection Completion: {inspection_date_display}
 - Building Development: {sanitize_text(metrics.get('building_name', 'N/A'))}
 - Property Location: {sanitize_text(metrics.get('address', 'N/A'))}
 
-**COMPANION DOCUMENTATION SUITE**:
+**COMPANION DOCUMENTATION SUITE:**
 Complete defect inventories, unit-by-unit detailed breakdowns, interactive filterable data tables, and comprehensive photographic documentation are available in the accompanying Excel analytics workbook.
 
-**TECHNICAL SUPPORT & FOLLOW-UP**:
+**TECHNICAL SUPPORT & FOLLOW-UP:**
 For technical inquiries, data interpretation assistance, or additional analysis requirements, please contact the inspection team. Ongoing support is available for remediation planning, progress tracking, and post-completion verification inspections."""
         
         details_para = doc.add_paragraph()
