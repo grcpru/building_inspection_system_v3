@@ -349,6 +349,7 @@ class ProfessionalExcelGeneratorAPI:
         self,
         inspection_data: Dict[str, Any],
         defects: List[Dict[str, Any]],
+        all_items: List[Dict[str, Any]],
         output_path: str
     ) -> bool:
         """
@@ -386,7 +387,7 @@ class ProfessionalExcelGeneratorAPI:
             traceback.print_exc()
             return False
     
-    def _generate_excel_with_photos(self, final_df: pd.DataFrame, metrics: dict, temp_path: str) -> bool:
+    def _generate_excel_with_photos(self, final_df: pd.DataFrame, metrics: dict, all_items: List[Dict[str, Any]], temp_path: str) -> bool:
         """
         Two-pass Excel generation with professional template + photos
         
@@ -422,8 +423,29 @@ class ProfessionalExcelGeneratorAPI:
             # 2. Defects Only (with photos - renamed from All Defects)
             defects_sheet_idx = self._create_data_sheet_with_photos(workbook, final_df, "⚠️ Defects Only", formats)
             
+            # ✅ ADD THIS: Transform all_items to DataFrame for All Inspections sheet
+            all_items_df = pd.DataFrame(all_items) if len(all_items) > 0 else pd.DataFrame()
+            if len(all_items_df) > 0:
+                # Apply same transformations as defects
+                column_mapping = {
+                    'room': 'Room',
+                    'component': 'Component',
+                    'trade': 'Trade',
+                    'priority': 'Urgency',
+                    'status': 'StatusClass',
+                    'inspector_notes': 'InspectorNotes',
+                    'unit': 'Unit',
+                    'unit_type': 'UnitType'
+                }
+                for old_col, new_col in column_mapping.items():
+                    if old_col in all_items_df.columns:
+                        all_items_df[new_col] = all_items_df[old_col]
+                
+                if 'description' in all_items_df.columns:
+                    all_items_df['IssueDescription'] = all_items_df['description']
+
             # 3. All Inspections (all items, no photos)
-            self._create_all_inspections_sheet(workbook, final_df, metrics, formats)
+            self._create_all_inspections_sheet(workbook, all_items_df, metrics, formats)
             
             # 4. Component Details (analysis by component)
             self._create_component_details_sheet(workbook, final_df, formats)
@@ -1482,39 +1504,31 @@ def create_professional_excel_from_database(
         if report_type == "single" and len(inspection_ids) == 1:
             # Query single inspection
             inspection_data, defects = _query_inspection_data(db_connection, inspection_ids[0])
-            return generator.generate_professional_report(inspection_data, defects, output_path)
+            return generator.generate_professional_report(inspection_data, defects, all_items, output_path)
         
         elif report_type == "multi":
             # Multi-inspection support (e.g., building report with multiple units)
             logger.info(f"Creating multi-inspection report for {len(inspection_ids)} inspections")
-            
-            # Query all inspections and combine defects
+
+            # Query all inspections and combine defects AND all items
             all_defects = []
+            all_inspection_items = []  # ✅ ADD THIS!
             building_name = None
             address = None
             inspection_dates = []
-            unit_types_set = set()  # 🆕 Collect unique unit types
-            
+            unit_types_set = set()
+
             for inspection_id in inspection_ids:
                 try:
-                    inspection_data, defects = _query_inspection_data(db_connection, inspection_id)
+                    inspection_data, defects, all_items = _query_inspection_data(db_connection, inspection_id)  # ✅ UPDATE!
                     
-                    # Collect building info from first inspection
-                    if building_name is None:
-                        building_name = inspection_data.get('building_name', 'Building')
-                        address = inspection_data.get('address', 'Address')
-                    
-                    # Collect inspection dates
-                    if inspection_data.get('inspection_date'):
-                        inspection_dates.append(inspection_data['inspection_date'])
-                    
-                    # 🆕 Collect unit types from defects
-                    for defect in defects:
-                        if defect.get('unit_type'):
-                            unit_types_set.add(defect['unit_type'])
+                    # ... existing code ...
                     
                     # Add all defects
                     all_defects.extend(defects)
+                    
+                    # ✅ ADD THIS: Add all inspection items
+                    all_inspection_items.extend(all_items)
                     
                 except Exception as e:
                     logger.error(f"Error querying inspection {inspection_id}: {str(e)}")
@@ -1547,7 +1561,7 @@ def create_professional_excel_from_database(
             logger.info(f"Combined {len(all_defects)} defects from {len(inspection_ids)} inspections")
             
             # Generate report with combined data
-            return generator.generate_professional_report(combined_inspection_data, all_defects, output_path)
+            return generator.generate_professional_report(combined_inspection_data, all_defects, all_inspection_items, output_path)  # ✅ UPDATE!
         
         else:
             logger.error(f"Invalid report type: {report_type}")
@@ -1642,7 +1656,48 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
         cursor.close()
         raise
     
-    # Query defects with photos, dates, and building info (case-insensitive status filter)
+    # ═══════════════════════════════════════════════════════════════
+    # Query 1: ALL INSPECTION ITEMS (for "All Inspections" sheet)
+    # ═══════════════════════════════════════════════════════════════
+    cursor.execute("""
+        SELECT ii.room, ii.component, ii.notes, ii.trade, ii.urgency, ii.status_class,
+            ii.photo_url, ii.photo_media_id, ii.photos_json, ii.inspector_notes,
+            ii.inspection_date, ii.created_at, ii.planned_completion, ii.owner_signoff_timestamp,
+            ii.unit, b.name as building_name, ii.unit_type
+        FROM inspector_inspection_items ii
+        JOIN inspector_inspections i ON ii.inspection_id = i.id
+        JOIN inspector_buildings b ON i.building_id = b.id
+        WHERE ii.inspection_id = %s
+        ORDER BY ii.unit, ii.room, ii.component
+    """, (inspection_id,))
+
+    all_items = []
+    for row in cursor.fetchall():
+        all_items.append({
+            'room': row[0],
+            'component': row[1],
+            'description': row[2],
+            'trade': row[3],
+            'priority': row[4],
+            'status': row[5],
+            'photo_url': row[6],
+            'photo_media_id': row[7],
+            'photos_json': row[8],
+            'inspector_notes': row[9],
+            'inspection_date': row[10],
+            'created_at': row[11],
+            'planned_completion': row[12],
+            'owner_signoff_timestamp': row[13],
+            'unit': row[14],
+            'building_name': row[15],
+            'unit_type': row[16]
+        })
+
+    logger.info(f"Found {len(all_items)} total inspection items for inspection {inspection_id}")
+
+    # ═══════════════════════════════════════════════════════════════
+    # Query 2: DEFECTS ONLY (for other sheets)
+    # ═══════════════════════════════════════════════════════════════
     cursor.execute("""
         SELECT ii.room, ii.component, ii.notes, ii.trade, ii.urgency, ii.status_class,
             ii.photo_url, ii.photo_media_id, ii.photos_json, ii.inspector_notes,
@@ -1655,7 +1710,7 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
         AND LOWER(ii.status_class) = 'not ok'
         ORDER BY ii.room, ii.component
     """, (inspection_id,))
-    
+
     defects = []
     for row in cursor.fetchall():
         defects.append({
@@ -1675,16 +1730,16 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
             'owner_signoff_timestamp': row[13],
             'unit': row[14],
             'building_name': row[15],
-            'unit_type': row[16]  # 🆕 ADD unit_type!
+            'unit_type': row[16]
         })
-    
+
     logger.info(f"Found {len(defects)} defects for inspection {inspection_id}")
-    
+
     if len(defects) == 0:
         logger.warning(f"No defects found for inspection {inspection_id} - check status_class values")
-    
+
     cursor.close()
-    return inspection_data, defects
+    return inspection_data, defects, all_items  # ✅ RETURN BOTH!
 
 
 def generate_report_filename(
