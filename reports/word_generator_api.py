@@ -804,7 +804,7 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             cell_value_3.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_3.paragraphs[0].runs[0].font.size = Pt(10)
             
-            # Row 5: Photo Defects (MULTIPLE PHOTOS)
+            # Row 5: Photo Defects (MULTIPLE PHOTOS - DEBUG VERSION)
             cell_label_4 = table.cell(4, 0)
             cell_value_4 = table.cell(4, 1)
             set_cell_background_color(cell_label_4, "D9D9D9")
@@ -814,23 +814,45 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             cell_label_4.paragraphs[0].runs[0].font.bold = True
 
             # ═══════════════════════════════════════════════
-            # SHOW ALL PHOTOS (not just first one!)
+            # DEBUG: SHOW ALL PHOTOS (not just first one!)
             # ═══════════════════════════════════════════════
 
+            # Get photos_json value
             photos_json = defect.get('photos_json')
             all_photos = []
+
+            # DEBUG: Print what we got
+            print(f"\n      🔍 DEBUG Defect {idx}:")
+            print(f"         photos_json type: {type(photos_json)}")
+            print(f"         photos_json value: {str(photos_json)[:200]}")
+            print(f"         photo_url: {defect.get('photo_url')}")
 
             if photos_json and not pd.isna(photos_json):
                 try:
                     import json
+                    
                     # Parse photos_json (it's a JSONB array)
                     if isinstance(photos_json, str):
+                        print(f"         ➡️  Parsing string JSON...")
                         all_photos = json.loads(photos_json)
                     elif isinstance(photos_json, list):
+                        print(f"         ➡️  Already a list!")
                         all_photos = photos_json
+                    else:
+                        print(f"         ⚠️  Unknown type: {type(photos_json)}")
+                    
+                    print(f"         ✅ Parsed {len(all_photos)} photos")
+                    if len(all_photos) > 0:
+                        print(f"         First photo structure: {all_photos[0]}")
+                
                 except Exception as e:
-                    print(f"      ⚠️  Error parsing photos_json: {e}")
+                    print(f"         ❌ Error parsing photos_json: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"         ⚠️  photos_json is None or NaN")
 
+            # Try to add photos
             if len(all_photos) > 0 and api_key:
                 try:
                     import requests
@@ -842,25 +864,35 @@ def add_room_by_room_defects(doc, processed_data, api_key):
                     photo_para = cell_value_4.paragraphs[0]
                     photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     
-                    print(f"      📸 Adding {len(all_photos)} photos...")
+                    print(f"      📸 Adding {len(all_photos)} photos to Word...")
                     
                     for photo_idx, photo_obj in enumerate(all_photos, 1):
+                        print(f"         Processing photo {photo_idx}/{len(all_photos)}")
+                        print(f"         Photo object: {photo_obj}")
+                        
                         photo_url = photo_obj.get('url')
                         
                         if not photo_url:
+                            print(f"         ⚠️  No URL in photo object!")
                             continue
+                        
+                        print(f"         Downloading: {photo_url[:50]}...")
                         
                         # Download photo
                         headers = {'Authorization': f'Bearer {api_key}'}
                         response = requests.get(str(photo_url), headers=headers, timeout=30)
                         
                         if response.status_code == 200:
+                            print(f"         ✅ Downloaded successfully ({len(response.content)} bytes)")
+                            
                             # Load image
                             img_data = BytesIO(response.content)
                             img = Image.open(img_data)
                             original_width, original_height = img.size
                             
-                            # Smart sizing (same as before)
+                            print(f"         Image size: {original_width}x{original_height}")
+                            
+                            # Smart sizing
                             MAX_WIDTH = Inches(4.0)
                             MAX_HEIGHT = Inches(3.0)
                             
@@ -873,6 +905,8 @@ def add_room_by_room_defects(doc, processed_data, api_key):
                                 final_height = MAX_HEIGHT
                                 final_width = MAX_HEIGHT * aspect_ratio
                             
+                            print(f"         Final size: {final_width} x {final_height}")
+                            
                             # Reset pointer
                             img_data = BytesIO(response.content)
                             
@@ -884,19 +918,23 @@ def add_room_by_room_defects(doc, processed_data, api_key):
                             if photo_idx < len(all_photos):
                                 photo_para.add_run('\n\n')
                             
-                            print(f"      ✅ Photo {photo_idx}/{len(all_photos)} added")
+                            print(f"         ✅ Photo {photo_idx}/{len(all_photos)} added to document")
                         else:
-                            print(f"      ❌ Photo {photo_idx} download failed ({response.status_code})")
+                            print(f"         ❌ Download failed: HTTP {response.status_code}")
                     
                     print(f"      ✅ Completed all {len(all_photos)} photos")
                 
                 except Exception as e:
                     print(f"      ❌ Error adding photos: {e}")
+                    import traceback
+                    traceback.print_exc()
                     cell_value_4.text = "Photo error"
             else:
                 if len(all_photos) == 0:
+                    print(f"      ⚠️  No photos to add (all_photos is empty)")
                     cell_value_4.text = "No photos available"
                 else:
+                    print(f"      ⚠️  No API key")
                     cell_value_4.text = "No API key"
             
             # Space between defects

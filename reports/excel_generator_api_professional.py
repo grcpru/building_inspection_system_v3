@@ -1339,30 +1339,48 @@ class ProfessionalExcelGeneratorAPI:
             photos_failed = 0
             rows_with_photos = 0
             
-            for row_idx, (_, row) in enumerate(data_df.iterrows(), start=2):  # Excel rows start at 2 (1=header)
+            for row_idx, (_, row) in enumerate(data_df.iterrows(), start=2):
                 try:
                     # ─────────────────────────────────────────────────────
-                    # GET ALL PHOTOS FROM photos_json
+                    # DEBUG: GET ALL PHOTOS FROM photos_json
                     # ─────────────────────────────────────────────────────
                     photos_json = row.get('photos_json')
                     all_photos = []
                     
+                    # DEBUG logging
+                    logger.info(f"\n🔍 Row {row_idx} DEBUG:")
+                    logger.info(f"   photos_json type: {type(photos_json)}")
+                    logger.info(f"   photos_json value: {str(photos_json)[:200]}")
+                    logger.info(f"   photo_url: {row.get('photo_url')}")
+                    
                     if pd.notna(photos_json) and photos_json:
                         try:
                             import json
+                            
                             # Parse photos_json (it's a JSONB array)
                             if isinstance(photos_json, str):
+                                logger.info(f"   ➡️  Parsing string JSON...")
                                 all_photos = json.loads(photos_json)
                             elif isinstance(photos_json, list):
+                                logger.info(f"   ➡️  Already a list!")
                                 all_photos = photos_json
+                            else:
+                                logger.warning(f"   ⚠️  Unknown type: {type(photos_json)}")
+                            
+                            logger.info(f"   ✅ Parsed {len(all_photos)} photos")
+                            if len(all_photos) > 0:
+                                logger.info(f"   First photo: {all_photos[0]}")
+                        
                         except Exception as e:
-                            logger.error(f"Error parsing photos_json for row {row_idx}: {e}")
+                            logger.error(f"   ❌ Error parsing photos_json: {e}")
+                    else:
+                        logger.warning(f"   ⚠️  photos_json is None or NaN")
                     
                     # ─────────────────────────────────────────────────────
                     # ADD PHOTOS TO SEPARATE COLUMNS (up to 10)
                     # ─────────────────────────────────────────────────────
                     if len(all_photos) > 0:
-                        logger.info(f"Row {row_idx}: Adding {len(all_photos)} photos across columns")
+                        logger.info(f"   📸 Adding {len(all_photos)} photos to Excel across columns...")
                         rows_with_photos += 1
                         
                         # Set row height for photos (120 points ≈ 160 pixels)
@@ -1370,15 +1388,23 @@ class ProfessionalExcelGeneratorAPI:
                         
                         # Add each photo to its own column
                         for photo_idx, photo_obj in enumerate(all_photos[:max_photos]):
+                            logger.info(f"      Processing photo {photo_idx + 1}/{len(all_photos)}")
+                            logger.info(f"      Photo object: {photo_obj}")
+                            
                             photo_url = photo_obj.get('url')
                             
                             if not photo_url:
+                                logger.warning(f"      ⚠️  No URL in photo object!")
                                 continue
+                            
+                            logger.info(f"      Downloading: {photo_url[:50]}...")
                             
                             # Download photo
                             img = self.download_photo(photo_url)
                             
                             if img:
+                                logger.info(f"      ✅ Downloaded successfully")
+                                
                                 # Resize to thumbnail
                                 img_bytes = self.resize_to_thumbnail(img, size=(150, 150))
                                 
@@ -1388,9 +1414,10 @@ class ProfessionalExcelGeneratorAPI:
                                 xl_img.height = 150
                                 
                                 # Calculate column for this photo
-                                # Photo 1 → Column J (10), Photo 2 → Column K (11), etc.
                                 photo_col = photo_start_col + photo_idx
                                 col_letter = get_column_letter(photo_col)
+                                
+                                logger.info(f"      Adding to column {col_letter}")
                                 
                                 # Position image in cell
                                 cell_ref = f'{col_letter}{row_idx}'
@@ -1400,23 +1427,16 @@ class ProfessionalExcelGeneratorAPI:
                                 ws.add_image(xl_img)
                                 
                                 photos_added += 1
-                                
-                                if photos_added % 10 == 0:
-                                    logger.info(f"  Progress: {photos_added} photos added...")
+                                logger.info(f"      ✅ Photo {photo_idx + 1} added successfully")
                             else:
                                 photos_failed += 1
-                                # Write fallback text
+                                logger.error(f"      ❌ Download failed")
                                 ws.cell(row=row_idx, column=photo_col, value="Failed")
                         
-                        logger.info(f"  ✅ Row {row_idx}: Added {min(len(all_photos), max_photos)} photos")
+                        logger.info(f"   ✅ Row {row_idx}: Completed {min(len(all_photos), max_photos)} photos")
                     else:
-                        # No photos - keep normal row height
+                        logger.info(f"   ⚠️  No photos for this row")
                         ws.row_dimensions[row_idx].height = 30
-                        
-                except Exception as e:
-                    logger.error(f"Error adding photos for row {row_idx}: {str(e)}")
-                    photos_failed += 1
-                    continue
             
             # ═══════════════════════════════════════════════════════════════
             # SAVE WORKBOOK
