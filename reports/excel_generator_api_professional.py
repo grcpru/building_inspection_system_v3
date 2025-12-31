@@ -1552,11 +1552,11 @@ def create_professional_excel_from_database(
                 'inspection_date': max(inspection_dates) if inspection_dates else 'N/A',
                 'inspector_name': 'Multiple Inspectors',
                 'total_defects': len(all_defects),
-                'building_name': building_name,
-                'address': address,
+                'building_name': building_name or 'Building Report',  # ✅ DEFAULT VALUE!
+                'address': address or 'Address not specified',  # ✅ DEFAULT VALUE!
                 'unit': 'Multiple Units',
-                'unit_type': unit_type_str,  # 🆕 Use actual unit types, not "Mixed"!
-                'total_items': sum(1 for _ in all_defects)  # Approximate
+                'unit_type': unit_type_str,
+                'total_items': sum(1 for _ in all_defects)
             }
             
             logger.info(f"Combined {len(all_defects)} defects from {len(inspection_ids)} inspections")
