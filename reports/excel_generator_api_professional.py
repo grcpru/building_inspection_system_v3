@@ -1346,26 +1346,21 @@ class ProfessionalExcelGeneratorAPI:
                     # ─────────────────────────────────────────────────────
                     photos_json = row.get('photos_json')
                     all_photos = []
-                    
+
                     # DEBUG logging
                     logger.info(f"\n🔍 Row {row_idx} DEBUG:")
                     logger.info(f"   photos_json type: {type(photos_json)}")
                     logger.info(f"   photos_json value: {str(photos_json)[:200]}")
                     logger.info(f"   photo_url: {row.get('photo_url')}")
-                    
-                    if pd.notna(photos_json) and photos_json:
+
+                    # ✅ FIXED CONDITION
+                    if photos_json is not None and (isinstance(photos_json, list) and len(photos_json) > 0):
                         try:
                             import json
                             
-                            # Parse photos_json (it's a JSONB array)
-                            if isinstance(photos_json, str):
-                                logger.info(f"   ➡️  Parsing string JSON...")
-                                all_photos = json.loads(photos_json)
-                            elif isinstance(photos_json, list):
-                                logger.info(f"   ➡️  Already a list!")
-                                all_photos = photos_json
-                            else:
-                                logger.warning(f"   ⚠️  Unknown type: {type(photos_json)}")
+                            # It's already a list from DataFrame
+                            logger.info(f"   ➡️  Already a list!")
+                            all_photos = photos_json
                             
                             logger.info(f"   ✅ Parsed {len(all_photos)} photos")
                             if len(all_photos) > 0:
@@ -1374,7 +1369,7 @@ class ProfessionalExcelGeneratorAPI:
                         except Exception as e:
                             logger.error(f"   ❌ Error parsing photos_json: {e}")
                     else:
-                        logger.warning(f"   ⚠️  photos_json is None or NaN")
+                        logger.warning(f"   ⚠️  photos_json is None or empty")
                     
                     # ─────────────────────────────────────────────────────
                     # ADD PHOTOS TO SEPARATE COLUMNS (up to 10)

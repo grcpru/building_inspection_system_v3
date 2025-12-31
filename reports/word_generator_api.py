@@ -827,30 +827,23 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             print(f"         photos_json value: {str(photos_json)[:200]}")
             print(f"         photo_url: {defect.get('photo_url')}")
 
-            if photos_json and not pd.isna(photos_json):
+            # ✅ FIXED CONDITION
+            if photos_json is not None and (isinstance(photos_json, list) and len(photos_json) > 0):
                 try:
                     import json
                     
-                    # Parse photos_json (it's a JSONB array)
-                    if isinstance(photos_json, str):
-                        print(f"         ➡️  Parsing string JSON...")
-                        all_photos = json.loads(photos_json)
-                    elif isinstance(photos_json, list):
-                        print(f"         ➡️  Already a list!")
-                        all_photos = photos_json
-                    else:
-                        print(f"         ⚠️  Unknown type: {type(photos_json)}")
+                    # It's already a list from DataFrame
+                    print(f"         ➡️  Already a list!")
+                    all_photos = photos_json
                     
                     print(f"         ✅ Parsed {len(all_photos)} photos")
                     if len(all_photos) > 0:
                         print(f"         First photo structure: {all_photos[0]}")
                 
                 except Exception as e:
-                    print(f"         ❌ Error parsing photos_json: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    print(f"         ❌ Error: {e}")
             else:
-                print(f"         ⚠️  photos_json is None or NaN")
+                print(f"         ⚠️  photos_json is None or empty")
 
             # Try to add photos
             if len(all_photos) > 0 and api_key:
