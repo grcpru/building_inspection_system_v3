@@ -346,18 +346,19 @@ class ProfessionalExcelGeneratorAPI:
         return metrics
     
     def generate_professional_report(
-        self,
-        inspection_data: Dict[str, Any],
-        defects: List[Dict[str, Any]],
-        all_items: List[Dict[str, Any]],
-        output_path: str
-    ) -> bool:
+    self,
+    inspection_data: Dict[str, Any],
+    defects: List[Dict[str, Any]],
+    all_items: List[Dict[str, Any]],  # Already added
+    output_path: str
+) -> bool:
         """
         Generate professional Excel report with photos
         
         Args:
             inspection_data: Inspection metadata dict
             defects: List of defect dicts with photo URLs
+            all_items: List of ALL inspection items (for All Inspections sheet)
             output_path: Path to save Excel file
             
         Returns:
@@ -372,7 +373,7 @@ class ProfessionalExcelGeneratorAPI:
             logger.info(f"Transformed data: {len(processed_data)} rows, {len(metrics['summary_trade'])} trades")
             
             # Generate Excel using two-pass process
-            success = self._generate_excel_with_photos(processed_data, metrics, output_path)
+            success = self._generate_excel_with_photos(processed_data, metrics, all_items, output_path)  # ✅ FIXED!
             
             if success:
                 logger.info(f"Professional Excel report saved to: {output_path}")
@@ -380,7 +381,7 @@ class ProfessionalExcelGeneratorAPI:
             else:
                 logger.error("Failed to generate professional Excel report")
                 return False
-            
+                
         except Exception as e:
             logger.error(f"Error generating professional Excel report: {str(e)}")
             import traceback
