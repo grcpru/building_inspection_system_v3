@@ -204,6 +204,7 @@ def create_word_report_from_database(
                 ii.status_class,
                 ii.photo_url,
                 ii.photo_media_id,
+                ii.photos_json,
                 ii.inspector_notes,
                 ii.inspection_date,
                 ii.unit,
@@ -234,7 +235,7 @@ def create_word_report_from_database(
         # Convert to DataFrame with CORRECT column names
         processed_data = pd.DataFrame(defect_rows, columns=[
             'Room', 'Component', 'Issue', 'Trade', 'Severity', 'StatusClass',
-            'photo_url', 'photo_media_id', 'inspector_notes', 'inspection_date',
+            'photo_url', 'photo_media_id', 'photos_json', 'inspector_notes', 'inspection_date',
             'Unit', 'unit_type'
         ])
         
@@ -560,14 +561,14 @@ def add_defect_analysis_charts(doc, processed_data):
             # Style text
             for text in texts:
                 text.set_fontsize(11)
-                text.set_fontweight('bold')
+                #text.set_fontweight('bold')
             for autotext in autotexts:
                 autotext.set_color('white')
                 autotext.set_fontsize(10)
-                autotext.set_fontweight('bold')
+                #autotext.set_fontweight('bold')
             
             ax.set_title('Distribution of Defects by Trade Category', 
-                        fontsize=14, fontweight='bold', pad=20)
+                        fontsize=12, fontweight='bold', pad=20)
             
             plt.tight_layout()
             
@@ -803,84 +804,100 @@ def add_room_by_room_defects(doc, processed_data, api_key):
             cell_value_3.paragraphs[0].runs[0].font.name = 'Arial'
             cell_value_3.paragraphs[0].runs[0].font.size = Pt(10)
             
-            # Row 5: Photo Defect - FIXED SIZE
+            # Row 5: Photo Defects (MULTIPLE PHOTOS)
             cell_label_4 = table.cell(4, 0)
             cell_value_4 = table.cell(4, 1)
             set_cell_background_color(cell_label_4, "D9D9D9")
-            cell_label_4.text = "Photo Defect"
+            cell_label_4.text = "Photo Defects"
             cell_label_4.paragraphs[0].runs[0].font.name = 'Arial'
             cell_label_4.paragraphs[0].runs[0].font.size = Pt(10)
             cell_label_4.paragraphs[0].runs[0].font.bold = True
-            
-            # Get photo
-            photo_url = defect.get('photo_url')
-            
-            if photo_url and not pd.isna(photo_url) and str(photo_url).strip() != '' and str(photo_url).lower() != 'nan':
-                if api_key:
-                    try:
-                        import requests
-                        from io import BytesIO
-                        from PIL import Image
+
+            # ═══════════════════════════════════════════════
+            # SHOW ALL PHOTOS (not just first one!)
+            # ═══════════════════════════════════════════════
+
+            photos_json = defect.get('photos_json')
+            all_photos = []
+
+            if photos_json and not pd.isna(photos_json):
+                try:
+                    import json
+                    # Parse photos_json (it's a JSONB array)
+                    if isinstance(photos_json, str):
+                        all_photos = json.loads(photos_json)
+                    elif isinstance(photos_json, list):
+                        all_photos = photos_json
+                except Exception as e:
+                    print(f"      ⚠️  Error parsing photos_json: {e}")
+
+            if len(all_photos) > 0 and api_key:
+                try:
+                    import requests
+                    from io import BytesIO
+                    from PIL import Image
+                    
+                    # Clear cell
+                    cell_value_4.text = ""
+                    photo_para = cell_value_4.paragraphs[0]
+                    photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    
+                    print(f"      📸 Adding {len(all_photos)} photos...")
+                    
+                    for photo_idx, photo_obj in enumerate(all_photos, 1):
+                        photo_url = photo_obj.get('url')
+                        
+                        if not photo_url:
+                            continue
                         
                         # Download photo
                         headers = {'Authorization': f'Bearer {api_key}'}
                         response = requests.get(str(photo_url), headers=headers, timeout=30)
                         
                         if response.status_code == 200:
-                            # Load image to get dimensions
+                            # Load image
                             img_data = BytesIO(response.content)
                             img = Image.open(img_data)
                             original_width, original_height = img.size
                             
-                            print(f"      📸 Original: {original_width}x{original_height}px")
+                            # Smart sizing (same as before)
+                            MAX_WIDTH = Inches(4.0)
+                            MAX_HEIGHT = Inches(3.0)
                             
-                            # ═══════════════════════════════════════════════
-                            # SMART PHOTO SIZING
-                            # ═══════════════════════════════════════════════
-                            
-                            # Define fixed container dimensions
-                            MAX_WIDTH = Inches(4.0)   # Maximum width
-                            MAX_HEIGHT = Inches(3.0)  # Maximum height (prevents super tall photos)
-                            
-                            # Calculate aspect ratio
                             aspect_ratio = original_width / original_height
                             
-                            # Determine final size (maintain aspect ratio within constraints)
                             if aspect_ratio > (MAX_WIDTH / MAX_HEIGHT):
-                                # Wide photo - constrain by width
                                 final_width = MAX_WIDTH
                                 final_height = MAX_WIDTH / aspect_ratio
                             else:
-                                # Tall photo - constrain by height
                                 final_height = MAX_HEIGHT
                                 final_width = MAX_HEIGHT * aspect_ratio
                             
-                            print(f"      📐 Resized: {final_width} x {final_height}")
-                            
-                            # Reset image data pointer
+                            # Reset pointer
                             img_data = BytesIO(response.content)
                             
-                            # Clear cell and add photo
-                            cell_value_4.text = ""
-                            photo_para = cell_value_4.paragraphs[0]
-                            photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            
-                            # Add picture with calculated size
+                            # Add photo
                             run = photo_para.add_run()
                             run.add_picture(img_data, width=final_width, height=final_height)
                             
-                                                        
-                            print(f"      ✅ Photo added (fixed size)")
+                            # Add spacing between photos (except after last one)
+                            if photo_idx < len(all_photos):
+                                photo_para.add_run('\n\n')
+                            
+                            print(f"      ✅ Photo {photo_idx}/{len(all_photos)} added")
                         else:
-                            cell_value_4.text = f"Download failed ({response.status_code})"
+                            print(f"      ❌ Photo {photo_idx} download failed ({response.status_code})")
                     
-                    except Exception as e:
-                        print(f"      ❌ Photo error: {e}")
-                        cell_value_4.text = f"Photo error"
+                    print(f"      ✅ Completed all {len(all_photos)} photos")
+                
+                except Exception as e:
+                    print(f"      ❌ Error adding photos: {e}")
+                    cell_value_4.text = "Photo error"
+            else:
+                if len(all_photos) == 0:
+                    cell_value_4.text = "No photos available"
                 else:
                     cell_value_4.text = "No API key"
-            else:
-                cell_value_4.text = "No photo available"
             
             # Space between defects
             doc.add_paragraph()

@@ -781,16 +781,14 @@ class ProfessionalExcelGeneratorAPI:
     
     def _create_data_sheet_with_photos(self, workbook, data_df, sheet_name, formats):
         """
-        Create defects-only sheet with photos (Pass 1)
-        Format: Inspection Date | Building | Unit | Room | Component | Trade | Priority | Status | Inspector Notes | Photo
-        Photos will be added in Pass 2 with openpyxl
-        
-        Returns:
-            Sheet name for photo embedding in Pass 2
+        Create defects-only sheet with MULTIPLE photo columns (Pass 1)
+        Format: Inspection Date | Building | Unit | Room | Component | Trade | Priority | Status | Inspector Notes | Photo 1 | Photo 2 | ... | Photo 10
         """
         ws = workbook.add_worksheet(sheet_name)
         
-        # Column widths - Inspection Date FIRST, NO Issue Description
+        # ═══════════════════════════════════════════════════════════════
+        # COLUMN WIDTHS - 10 PHOTO COLUMNS
+        # ═══════════════════════════════════════════════════════════════
         ws.set_column('A:A', 15)  # Inspection Date
         ws.set_column('B:B', 15)  # Building
         ws.set_column('C:C', 12)  # Unit
@@ -800,14 +798,25 @@ class ProfessionalExcelGeneratorAPI:
         ws.set_column('G:G', 12)  # Priority
         ws.set_column('H:H', 12)  # Status
         ws.set_column('I:I', 50)  # Inspector Notes
-        ws.set_column('J:J', 20)  # Photo (will be populated in Pass 2)
         
-        # Headers - Inspection Date FIRST, no Issue Description
-        headers = ['Inspection Date', 'Building', 'Unit', 'Room', 'Component', 'Trade', 'Priority', 'Status', 'Inspector Notes', 'Photo']
+        # 10 Photo columns (J through S)
+        for col_letter in ['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S']:
+            ws.set_column(f'{col_letter}:{col_letter}', 20)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # HEADERS - 10 PHOTO COLUMNS
+        # ═══════════════════════════════════════════════════════════════
+        headers = [
+            'Inspection Date', 'Building', 'Unit', 'Room', 'Component', 
+            'Trade', 'Priority', 'Status', 'Inspector Notes',
+            'Photo 1', 'Photo 2', 'Photo 3', 'Photo 4', 'Photo 5',
+            'Photo 6', 'Photo 7', 'Photo 8', 'Photo 9', 'Photo 10'
+        ]
+        
         for col_idx, header in enumerate(headers):
             ws.write(0, col_idx, header, formats['header'])
         
-        # Date format
+        # Date formats
         date_fmt = workbook.add_format({
             'border': 1,
             'align': 'center',
@@ -822,7 +831,9 @@ class ProfessionalExcelGeneratorAPI:
             'bg_color': '#F7F9FC'
         })
         
-        # Data rows
+        # ═══════════════════════════════════════════════════════════════
+        # DATA ROWS
+        # ═══════════════════════════════════════════════════════════════
         for row_idx, (_, row) in enumerate(data_df.iterrows(), start=1):
             is_alt = (row_idx % 2 == 0)
             base_fmt = formats['cell_alt'] if is_alt else formats['cell']
@@ -854,7 +865,7 @@ class ProfessionalExcelGeneratorAPI:
             else:
                 ws.write(row_idx, 0, '', base_fmt)
             
-            # Write data (NO Issue Description column!)
+            # Write data columns
             ws.write(row_idx, 1, building_display, base_fmt)  # Building
             ws.write(row_idx, 2, unit, base_fmt)  # Unit
             ws.write(row_idx, 3, str(row.get('Room', '')), base_fmt)
@@ -864,8 +875,9 @@ class ProfessionalExcelGeneratorAPI:
             ws.write(row_idx, 7, str(row.get('StatusClass', '')), base_fmt)
             ws.write(row_idx, 8, str(row.get('InspectorNotes', '')), notes_fmt)
             
-            # Photo column (J) - Leave blank, images will be embedded in Pass 2
-            ws.write(row_idx, 9, '', base_fmt)
+            # Photo columns (J=9 through S=18) - Leave blank, images will be embedded in Pass 2
+            for photo_col_idx in range(9, 19):  # Columns 9-18 (J-S)
+                ws.write(row_idx, photo_col_idx, '', base_fmt)
         
         return sheet_name
     
@@ -1283,7 +1295,7 @@ class ProfessionalExcelGeneratorAPI:
     
     def _add_photos_with_openpyxl(self, excel_path: str, data_df: pd.DataFrame):
         """
-        Pass 2: Add photos to Excel using openpyxl
+        Pass 2: Add photos to Excel using openpyxl - DISTRIBUTE ACROSS 10 COLUMNS
         
         Args:
             excel_path: Path to Excel file created by xlsxwriter
@@ -1299,7 +1311,7 @@ class ProfessionalExcelGeneratorAPI:
             # Load workbook
             wb = openpyxl.load_workbook(excel_path)
             
-            # Find the "Defects Only" sheet (renamed from All Defects)
+            # Find the "Defects Only" sheet
             sheet_name = "⚠️ Defects Only"
             if sheet_name not in wb.sheetnames:
                 logger.warning(f"Sheet '{sheet_name}' not found in workbook")
@@ -1309,73 +1321,120 @@ class ProfessionalExcelGeneratorAPI:
             ws = wb[sheet_name]
             logger.info(f"Found sheet: {sheet_name}")
             
-            # Column J is for photos (column 10, 1-indexed) - NOW THAT WE ADDED BUILDING & UNIT
-            photo_col = 10
-            photo_col_letter = get_column_letter(photo_col)
+            # ═══════════════════════════════════════════════════════════════
+            # PHOTO COLUMNS: J (10) through S (19) = 10 columns
+            # ═══════════════════════════════════════════════════════════════
+            photo_start_col = 10  # Column J
+            max_photos = 10
             
-            # Set column width for photos
-            ws.column_dimensions[photo_col_letter].width = 20
+            # Set column widths for all photo columns
+            for photo_idx in range(max_photos):
+                col_letter = get_column_letter(photo_start_col + photo_idx)
+                ws.column_dimensions[col_letter].width = 20
             
-            # Iterate through data rows (skip header row 0)
+            # ═══════════════════════════════════════════════════════════════
+            # ITERATE THROUGH ROWS AND ADD PHOTOS
+            # ═══════════════════════════════════════════════════════════════
             photos_added = 0
             photos_failed = 0
+            rows_with_photos = 0
             
-            for row_idx, (_, row) in enumerate(data_df.iterrows(), start=2):  # Excel rows start at 1, +1 for header
+            for row_idx, (_, row) in enumerate(data_df.iterrows(), start=2):  # Excel rows start at 2 (1=header)
                 try:
-                    photo_url = row.get('photo_url')
+                    # ─────────────────────────────────────────────────────
+                    # GET ALL PHOTOS FROM photos_json
+                    # ─────────────────────────────────────────────────────
+                    photos_json = row.get('photos_json')
+                    all_photos = []
                     
-                    if pd.notna(photo_url) and photo_url:
-                        # Download photo
-                        img = self.download_photo(photo_url)
+                    if pd.notna(photos_json) and photos_json:
+                        try:
+                            import json
+                            # Parse photos_json (it's a JSONB array)
+                            if isinstance(photos_json, str):
+                                all_photos = json.loads(photos_json)
+                            elif isinstance(photos_json, list):
+                                all_photos = photos_json
+                        except Exception as e:
+                            logger.error(f"Error parsing photos_json for row {row_idx}: {e}")
+                    
+                    # ─────────────────────────────────────────────────────
+                    # ADD PHOTOS TO SEPARATE COLUMNS (up to 10)
+                    # ─────────────────────────────────────────────────────
+                    if len(all_photos) > 0:
+                        logger.info(f"Row {row_idx}: Adding {len(all_photos)} photos across columns")
+                        rows_with_photos += 1
                         
-                        if img:
-                            # Resize to thumbnail
-                            img_bytes = self.resize_to_thumbnail(img, size=(150, 150))
+                        # Set row height for photos (120 points ≈ 160 pixels)
+                        ws.row_dimensions[row_idx].height = 120
+                        
+                        # Add each photo to its own column
+                        for photo_idx, photo_obj in enumerate(all_photos[:max_photos]):
+                            photo_url = photo_obj.get('url')
                             
-                            # Create openpyxl image object
-                            xl_img = XLImage(img_bytes)
+                            if not photo_url:
+                                continue
                             
-                            # Set image size (in pixels)
-                            xl_img.width = 150
-                            xl_img.height = 150
+                            # Download photo
+                            img = self.download_photo(photo_url)
                             
-                            # Position image in cell (column H, current row)
-                            cell_ref = f'{photo_col_letter}{row_idx}'
-                            xl_img.anchor = cell_ref
-                            
-                            # Add image to worksheet
-                            ws.add_image(xl_img)
-                            
-                            # Set row height (in points, 120 points ≈ 160 pixels)
-                            ws.row_dimensions[row_idx].height = 120
-                            
-                            photos_added += 1
-                            
-                            if photos_added % 10 == 0:
-                                logger.info(f"Added {photos_added} photos...")
-                        else:
-                            photos_failed += 1
-                            # Write fallback text
-                            ws.cell(row=row_idx, column=photo_col, value="Photo unavailable")
+                            if img:
+                                # Resize to thumbnail
+                                img_bytes = self.resize_to_thumbnail(img, size=(150, 150))
+                                
+                                # Create openpyxl image object
+                                xl_img = XLImage(img_bytes)
+                                xl_img.width = 150
+                                xl_img.height = 150
+                                
+                                # Calculate column for this photo
+                                # Photo 1 → Column J (10), Photo 2 → Column K (11), etc.
+                                photo_col = photo_start_col + photo_idx
+                                col_letter = get_column_letter(photo_col)
+                                
+                                # Position image in cell
+                                cell_ref = f'{col_letter}{row_idx}'
+                                xl_img.anchor = cell_ref
+                                
+                                # Add image to worksheet
+                                ws.add_image(xl_img)
+                                
+                                photos_added += 1
+                                
+                                if photos_added % 10 == 0:
+                                    logger.info(f"  Progress: {photos_added} photos added...")
+                            else:
+                                photos_failed += 1
+                                # Write fallback text
+                                ws.cell(row=row_idx, column=photo_col, value="Failed")
+                        
+                        logger.info(f"  ✅ Row {row_idx}: Added {min(len(all_photos), max_photos)} photos")
                     else:
-                        # No photo for this row
+                        # No photos - keep normal row height
                         ws.row_dimensions[row_idx].height = 30
                         
                 except Exception as e:
-                    logger.error(f"Error adding photo for row {row_idx}: {str(e)}")
+                    logger.error(f"Error adding photos for row {row_idx}: {str(e)}")
                     photos_failed += 1
                     continue
             
-            # Save workbook
+            # ═══════════════════════════════════════════════════════════════
+            # SAVE WORKBOOK
+            # ═══════════════════════════════════════════════════════════════
             wb.save(excel_path)
-            logger.info(f"Photos added: {photos_added}, Failed: {photos_failed}")
-            logger.info(f"Excel file with photos saved: {excel_path}")
+            
+            logger.info("=" * 70)
+            logger.info(f"📊 PHOTO EMBEDDING COMPLETE")
+            logger.info(f"   Rows with photos: {rows_with_photos}")
+            logger.info(f"   Photos added: {photos_added}")
+            logger.info(f"   Photos failed: {photos_failed}")
+            logger.info(f"   Excel file saved: {excel_path}")
+            logger.info("=" * 70)
             
         except Exception as e:
             logger.error(f"Error in openpyxl photo pass: {str(e)}")
             import traceback
             traceback.print_exc()
-            # Don't raise - file should still have all the data without photos
 
 
 def create_professional_excel_from_database(
@@ -1567,7 +1626,7 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
     # Query defects with photos, dates, and building info (case-insensitive status filter)
     cursor.execute("""
         SELECT ii.room, ii.component, ii.notes, ii.trade, ii.urgency, ii.status_class,
-            ii.photo_url, ii.photo_media_id, ii.inspector_notes,
+            ii.photo_url, ii.photo_media_id, ii.photos_json, ii.inspector_notes,
             ii.inspection_date, ii.created_at, ii.planned_completion, ii.owner_signoff_timestamp,
             ii.unit, b.name as building_name, ii.unit_type
         FROM inspector_inspection_items ii
@@ -1589,14 +1648,15 @@ def _query_inspection_data(db_connection, inspection_id: int) -> tuple:
             'status': row[5],
             'photo_url': row[6],
             'photo_media_id': row[7],
-            'inspector_notes': row[8],
-            'inspection_date': row[9],
-            'created_at': row[10],
-            'planned_completion': row[11],
-            'owner_signoff_timestamp': row[12],
-            'unit': row[13],
-            'building_name': row[14],
-            'unit_type': row[15]  # 🆕 ADD unit_type!
+            'photos_json': row[8],
+            'inspector_notes': row[9],
+            'inspection_date': row[10],
+            'created_at': row[11],
+            'planned_completion': row[12],
+            'owner_signoff_timestamp': row[13],
+            'unit': row[14],
+            'building_name': row[15],
+            'unit_type': row[16]  # 🆕 ADD unit_type!
         })
     
     logger.info(f"Found {len(defects)} defects for inspection {inspection_id}")
