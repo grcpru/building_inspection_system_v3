@@ -1437,6 +1437,10 @@ class ProfessionalExcelGeneratorAPI:
                     else:
                         logger.info(f"   ⚠️  No photos for this row")
                         ws.row_dimensions[row_idx].height = 30
+                
+                except Exception as e:  # ✅ ADD THIS!
+                    logger.error(f"   ❌ Error processing row {row_idx}: {e}")
+                    continue  # ✅ ADD THIS!
             
             # ═══════════════════════════════════════════════════════════════
             # SAVE WORKBOOK
