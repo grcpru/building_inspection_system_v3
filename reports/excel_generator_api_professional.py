@@ -889,10 +889,23 @@ class ProfessionalExcelGeneratorAPI:
             # Inspection Date - FIRST COLUMN
             insp_date = row.get('inspection_date') or row.get('InspectionDate')
             if pd.notna(insp_date):
+                # Convert to string in DD/MM/YYYY format to avoid timezone offset
                 if isinstance(insp_date, str):
-                    ws.write(row_idx, 0, insp_date, base_fmt)
+                    # If it's already a string in YYYY-MM-DD format, convert to DD/MM/YYYY
+                    try:
+                        from datetime import datetime as dt
+                        date_obj = dt.strptime(insp_date, '%Y-%m-%d')
+                        date_display = date_obj.strftime('%d/%m/%Y')
+                        ws.write(row_idx, 0, date_display, base_fmt)
+                    except:
+                        ws.write(row_idx, 0, insp_date, base_fmt)
                 else:
-                    ws.write(row_idx, 0, insp_date, date_row_fmt)
+                    # If it's a date object, format it as DD/MM/YYYY string
+                    try:
+                        date_display = insp_date.strftime('%d/%m/%Y')
+                        ws.write(row_idx, 0, date_display, base_fmt)
+                    except:
+                        ws.write(row_idx, 0, str(insp_date), base_fmt)
             else:
                 ws.write(row_idx, 0, '', base_fmt)
             
@@ -1021,10 +1034,23 @@ class ProfessionalExcelGeneratorAPI:
             # Inspection Date - FIRST COLUMN
             insp_date = row.get('inspection_date') or row.get('InspectionDate')
             if pd.notna(insp_date):
+                # Convert to string in DD/MM/YYYY format to avoid timezone offset
                 if isinstance(insp_date, str):
-                    ws.write(row_idx, 0, insp_date, base_fmt)
+                    # If it's already a string in YYYY-MM-DD format, convert to DD/MM/YYYY
+                    try:
+                        from datetime import datetime as dt
+                        date_obj = dt.strptime(insp_date, '%Y-%m-%d')
+                        date_display = date_obj.strftime('%d/%m/%Y')
+                        ws.write(row_idx, 0, date_display, base_fmt)
+                    except:
+                        ws.write(row_idx, 0, insp_date, base_fmt)
                 else:
-                    ws.write(row_idx, 0, insp_date, date_row_fmt)
+                    # If it's a date object, format it as DD/MM/YYYY string
+                    try:
+                        date_display = insp_date.strftime('%d/%m/%Y')
+                        ws.write(row_idx, 0, date_display, base_fmt)
+                    except:
+                        ws.write(row_idx, 0, str(insp_date), base_fmt)
             else:
                 ws.write(row_idx, 0, '', base_fmt)
             
