@@ -1184,22 +1184,21 @@ class ProfessionalExcelGeneratorAPI:
         ws = workbook.add_worksheet("🔄 Workflow Tracker")
         
         # Column widths
-        ws.set_column('A:A', 12)  # Date
+        ws.set_column('A:A', 15)  # Inspection Date (wider for full date)
         ws.set_column('B:B', 15)  # Inspection ID
         ws.set_column('C:C', 12)  # Apartment #
         ws.set_column('D:D', 18)  # Building
         ws.set_column('E:E', 20)  # Room
         ws.set_column('F:F', 35)  # Defect Description
         ws.set_column('G:G', 18)  # Trade
-        ws.set_column('H:H', 15)  # Photo Link
-        ws.set_column('I:I', 15)  # Sent to Builder
-        ws.set_column('J:J', 15)  # Builder Done
-        ws.set_column('K:K', 15)  # Owner Confirmed
+        ws.set_column('H:H', 15)  # Sent to Builder (moved from I)
+        ws.set_column('I:I', 15)  # Builder Done (moved from J)
+        ws.set_column('J:J', 15)  # Owner Confirmed (moved from K)
         
         # Headers
         headers = [
-            'Date', 'Inspection', 'Apt #', 'Building', 'Room', 
-            'Defect', 'Trade', 'Photo', '📤 Sent to Builder', 
+            'Inspection Date', 'Inspection', 'Apt #', 'Building', 'Room', 
+            'Defect', 'Trade', '📤 Sent to Builder', 
             '✅ Builder Done', '👍 Owner Confirmed'
         ]
         for col_idx, header in enumerate(headers):
@@ -1244,7 +1243,7 @@ class ProfessionalExcelGeneratorAPI:
                 row_fmt = yellow_fmt # 🟡 Pending (everything else - sent to builder but not done)
             
             # Write data with color coding
-            # Date
+            # Inspection Date (Column A/0)
             insp_date = row.get('inspection_date') or row.get('InspectionDate')
             if pd.notna(insp_date):
                 if isinstance(insp_date, str):
@@ -1253,17 +1252,16 @@ class ProfessionalExcelGeneratorAPI:
                     ws.write(row_idx, 0, insp_date, date_fmt)
             else:
                 ws.write(row_idx, 0, '', row_fmt)
-            
-            # Inspection ID (first 8 chars)
+
+            # Inspection ID (Column B/1) - first 8 chars
             inspection_id = str(row.get('inspection_id', ''))[:8]
             ws.write(row_idx, 1, inspection_id, row_fmt)
-            
-            # Apartment # (Unit)
+
+            # Apartment # (Column C/2)
             unit = str(row.get('unit') or row.get('Unit', ''))
             ws.write(row_idx, 2, unit, row_fmt)
-            
-            # Building - Simplified based on unit prefix
-            # If unit starts with G → "Building G", if starts with J → "Building J"
+
+            # Building (Column D/3) - Simplified based on unit prefix
             if unit and len(unit) > 0:
                 first_char = unit[0].upper()
                 if first_char == 'G':
@@ -1271,57 +1269,46 @@ class ProfessionalExcelGeneratorAPI:
                 elif first_char == 'J':
                     building_display = 'Building J'
                 else:
-                    # Fallback to full building name if not G or J
                     building_display = str(row.get('building_name') or row.get('Building', ''))
             else:
                 building_display = str(row.get('building_name') or row.get('Building', ''))
-            
+
             ws.write(row_idx, 3, building_display, row_fmt)
-            
-            # Room
+
+            # Room (Column E/4)
             ws.write(row_idx, 4, str(row.get('Room') or row.get('room', '')), row_fmt)
-            
-            # Defect Description
+
+            # Defect Description (Column F/5)
             defect_desc = row.get('IssueDescription') or row.get('description') or row.get('Component', '')
             ws.write(row_idx, 5, str(defect_desc), row_fmt)
-            
-            # Trade
+
+            # Trade (Column G/6)
             ws.write(row_idx, 6, str(row.get('Trade') or row.get('trade', '')), row_fmt)
-            
-            # Photo Link - Don't use API URL (requires authentication)
-            # Instead, refer to Defects Only sheet where photos are embedded
-            photo_url = row.get('photo_url')
-            if pd.notna(photo_url) and photo_url:
-                # Don't write URL - it won't work without API key
-                # Just indicate photo is available in other sheet
-                ws.write(row_idx, 7, 'See Defects Only', row_fmt)
-            else:
-                ws.write(row_idx, 7, 'No photo', row_fmt)
-            
-            # Sent to Builder date (when defect was created)
+
+            # ✅ PHOTO COLUMN REMOVED - columns shift left by 1
+
+            # Sent to Builder date (Column H/7 - was I/8)
             sent_date = row.get('created_at')
             if pd.notna(sent_date):
                 if isinstance(sent_date, str):
-                    ws.write(row_idx, 8, sent_date, row_fmt)
+                    ws.write(row_idx, 7, sent_date, row_fmt)
                 else:
-                    ws.write(row_idx, 8, sent_date, date_fmt)
+                    ws.write(row_idx, 7, sent_date, date_fmt)
             else:
-                ws.write(row_idx, 8, '', row_fmt)
-            
-            # Builder Done date - BLANK (to be filled manually when work complete)
-            # Note: planned_completion is just a plan, not actual completion!
-            ws.write(row_idx, 9, '', row_fmt)
-            
-            # Owner Confirmed date - Use owner_signoff_timestamp if exists
-            # This is the only one that's actually populated when confirmed
+                ws.write(row_idx, 7, '', row_fmt)
+
+            # Builder Done date (Column I/8 - was J/9) - BLANK (to be filled manually)
+            ws.write(row_idx, 8, '', row_fmt)
+
+            # Owner Confirmed date (Column J/9 - was K/10)
             owner_date = row.get('owner_signoff_timestamp')
             if pd.notna(owner_date):
                 if isinstance(owner_date, str):
-                    ws.write(row_idx, 10, owner_date, row_fmt)
+                    ws.write(row_idx, 9, owner_date, row_fmt)
                 else:
-                    ws.write(row_idx, 10, owner_date, date_fmt)
+                    ws.write(row_idx, 9, owner_date, date_fmt)
             else:
-                ws.write(row_idx, 10, '', row_fmt)
+                ws.write(row_idx, 9, '', row_fmt)
         
         # Add legend at the bottom
         legend_row = len(data_df) + 3
@@ -1338,19 +1325,20 @@ class ProfessionalExcelGeneratorAPI:
         # This makes the row turn blue automatically when someone fills in the date
         if len(data_df) > 0:
             # Apply to all data rows (row 2 onwards, since row 1 is header)
-            data_rows = f'A2:K{len(data_df) + 1}'
-            
-            # Rule 1: Green if Owner Confirmed has value (column K)
+            # ✅ Changed from K to J (Photo column removed)
+            data_rows = f'A2:J{len(data_df) + 1}'
+
+            # Rule 1: Green if Owner Confirmed has value (column J - was K)
             ws.conditional_format(data_rows, {
                 'type': 'formula',
-                'criteria': '=$K2<>""',
+                'criteria': '=$J2<>""',  # ✅ Changed from K to J
                 'format': green_fmt
             })
-            
-            # Rule 2: Blue if Builder Done has value but Owner Confirmed doesn't (column J has value, K blank)
+
+            # Rule 2: Blue if Builder Done has value but Owner Confirmed doesn't (column I has value, J blank)
             ws.conditional_format(data_rows, {
                 'type': 'formula', 
-                'criteria': '=AND($J2<>"",$K2="")',
+                'criteria': '=AND($I2<>"",$J2="")',  # ✅ Changed from J/K to I/J
                 'format': blue_fmt
             })
             
