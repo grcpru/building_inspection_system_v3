@@ -641,10 +641,16 @@ class ProfessionalExcelGeneratorAPI:
         else:
             inspection_date_display = metrics['inspection_date']
 
+        # ✅ FIX: Check for multi-day inspection and show date range
+        if metrics.get('is_multi_day_inspection', False):
+            inspection_date_display = metrics.get('inspection_date_range', metrics['inspection_date'])
+        else:
+            inspection_date_display = metrics['inspection_date']
+
         building_data = [
             ('Building Name', metrics['building_name']),
             ('Address', metrics['address']),
-            ('Inspection Date', inspection_date_display),  # ✅ Use conditional display
+            ('Inspection Date', inspection_date_display),  # ✅ Shows range if multi-day
             ('Total Units Inspected', f"{metrics['total_units']:,}"),
             ('Unit Types', metrics['unit_types_str'])
         ]
