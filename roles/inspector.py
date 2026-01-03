@@ -55,68 +55,60 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 def generate_api_excel_report(inspection_ids: list, db_config: dict, api_key: str) -> str:
-    """
-    Generate Excel report for API inspections with photos
-    
-    Args:
-        inspection_ids: List of inspection IDs to include
-        db_config: Database configuration dictionary
-        api_key: SafetyCulture API key for photo downloads
-        
-    Returns:
-        Path to the generated Excel file
-    """
+    """Generate Excel report for API inspections with photos"""
     import psycopg2
     
-    # Determine report type
-    report_type = "single" if len(inspection_ids) == 1 else "multi"
-
-    # 🆕 GET BUILDING INFO FOR SMART FILENAME
-    cursor_temp = conn.cursor()
-    if report_type == "single":
-        cursor_temp.execute("""
-            SELECT 
-                b.name as building_name,
-                i.inspection_date,
-                (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
-            FROM inspector_inspections i
-            JOIN inspector_buildings b ON i.building_id = b.id
-            WHERE i.id = %s
-        """, (inspection_ids[0], inspection_ids[0]))
-        row = cursor_temp.fetchone()
-        building_name = row[0] if row else "Building"
-        inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
-        unit_number = row[2] if row else None
-    else:
-        cursor_temp.execute("""
-            SELECT 
-                b.name as building_name,
-                MAX(i.inspection_date) as latest_date
-            FROM inspector_inspections i
-            JOIN inspector_buildings b ON i.building_id = b.id
-            WHERE i.id = ANY(%s)
-            GROUP BY b.name
-        """, (inspection_ids,))
-        row = cursor_temp.fetchone()
-        building_name = row[0] if row else "Building"
-        inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
-        unit_number = None
-    cursor_temp.close()
-
-    # 🆕 GENERATE SMART FILENAME
-    filename = generate_report_filename(
-        building_name=building_name,
-        inspection_date=inspection_date,
-        unit=unit_number,
-        report_type=report_type
-    ) + ".xlsx"
-
-    output_path = os.path.join(tempfile.gettempdir(), filename)
-    
-    # Connect to database
+    # ✅ FIX: Create connection FIRST
     conn = psycopg2.connect(**db_config)
     
     try:
+        # Determine report type
+        report_type = "single" if len(inspection_ids) == 1 else "multi"
+
+        # GET BUILDING INFO FOR SMART FILENAME
+        cursor_temp = conn.cursor()
+        
+        if report_type == "single":
+            cursor_temp.execute("""
+                SELECT 
+                    b.name as building_name,
+                    i.inspection_date,
+                    (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
+                FROM inspector_inspections i
+                JOIN inspector_buildings b ON i.building_id = b.id
+                WHERE i.id = %s
+            """, (inspection_ids[0], inspection_ids[0]))
+            row = cursor_temp.fetchone()
+            building_name = row[0] if row else "Building"
+            inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+            unit_number = row[2] if row else None
+        else:
+            cursor_temp.execute("""
+                SELECT 
+                    b.name as building_name,
+                    MAX(i.inspection_date) as latest_date
+                FROM inspector_inspections i
+                JOIN inspector_buildings b ON i.building_id = b.id
+                WHERE i.id = ANY(%s)
+                GROUP BY b.name
+            """, (inspection_ids,))
+            row = cursor_temp.fetchone()
+            building_name = row[0] if row else "Building"
+            inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+            unit_number = None
+        
+        cursor_temp.close()
+
+        # GENERATE SMART FILENAME
+        filename = generate_report_filename(
+            building_name=building_name,
+            inspection_date=inspection_date,
+            unit=unit_number,
+            report_type=report_type
+        ) + ".xlsx"
+
+        output_path = os.path.join(tempfile.gettempdir(), filename)
+        
         # Generate report
         success = create_professional_excel_from_database(
             inspection_ids=inspection_ids,
@@ -141,7 +133,6 @@ def generate_api_excel_report(inspection_ids: list, db_config: dict, api_key: st
     finally:
         conn.close()
 
-
 def generate_api_word_report(inspection_ids: list, db_config: dict, api_key: str) -> str:
     """
     Generate Word report for API inspections with photos
@@ -155,7 +146,8 @@ def generate_api_word_report(inspection_ids: list, db_config: dict, api_key: str
         Path to the generated Word file
     """
     import psycopg2
-    
+    # ✅ FIX: Create connection FIRST
+    conn = psycopg2.connect(**db_config)
     # Determine report type
     report_type = "single" if len(inspection_ids) == 1 else "multi"
 
@@ -290,6 +282,206 @@ class InspectorInterface:
         if 'report_images' not in st.session_state:
             st.session_state.report_images = {'logo': None, 'cover': None}
 
+    def _get_total_inspection_count(self):
+        """Get total inspection count"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM inspector_inspections")
+            result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            return result[0] if result else 0
+        except:
+            return 0
+
+    def _get_this_week_inspection_count(self):
+        """Get inspections from this week"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # Get date 7 days ago
+            week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+            
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    SELECT COUNT(*) FROM inspector_inspections
+                    WHERE inspection_date >= %s
+                """, (week_ago,))
+            else:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM inspector_inspections
+                    WHERE inspection_date >= ?
+                """, (week_ago,))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            return result[0] if result else 0
+        except:
+            return 0
+
+    def _get_total_defect_count(self):
+        """Get total defect count across all inspections"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT SUM(total_defects) FROM inspector_inspections
+                WHERE total_defects IS NOT NULL
+            """)
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            return int(result[0]) if result and result[0] else 0
+        except:
+            return 0
+
+    def _check_webhook_status(self):
+        """Check if webhook is working"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    SELECT MAX(created_at) as last_sync
+                    FROM inspector_inspections
+                """)
+            else:
+                cursor.execute("""
+                    SELECT MAX(created_at) as last_sync
+                    FROM inspector_inspections
+                """)
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            if result and result[0]:
+                last_sync = result[0]
+                
+                # Handle both string and datetime
+                if isinstance(last_sync, str):
+                    last_sync = datetime.fromisoformat(last_sync.replace('Z', '+00:00'))
+                
+                time_diff = datetime.now() - last_sync.replace(tzinfo=None)
+                hours_ago = time_diff.total_seconds() / 3600
+                
+                # If last sync was within 24 hours, webhook is likely working
+                if hours_ago < 24:
+                    return {
+                        'status': 'healthy',
+                        'last_sync': last_sync,
+                        'hours_ago': hours_ago,
+                        'message': f'{hours_ago:.1f}h ago'
+                    }
+                elif hours_ago < 168:  # 1 week
+                    return {
+                        'status': 'stale',
+                        'last_sync': last_sync,
+                        'hours_ago': hours_ago,
+                        'message': f'{int(hours_ago / 24)}d ago'
+                    }
+                else:
+                    return {
+                        'status': 'down',
+                        'last_sync': last_sync,
+                        'hours_ago': hours_ago,
+                        'message': 'No recent syncs'
+                    }
+            else:
+                return {
+                    'status': 'unknown',
+                    'last_sync': None,
+                    'hours_ago': None,
+                    'message': 'No syncs found'
+                }
+        except Exception as e:
+            logger.error(f"Webhook status check error: {e}")
+            return {
+                'status': 'error',
+                'last_sync': None,
+                'hours_ago': None,
+                'message': 'Status unavailable'
+            }
+
+    def _manual_sync_inspection(self, audit_id: str):
+        """Manual sync single inspection"""
+        try:
+            # Get API URL
+            try:
+                api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+            except:
+                api_url = "https://inspection-api-service-production.up.railway.app"
+            
+            # Get building selection
+            buildings = self._fetch_buildings_from_api(api_url)
+            
+            if not buildings:
+                st.error("No buildings found - cannot sync")
+                return
+            
+            # For now, use first building (or let user select)
+            # You might want to add building selection here
+            building_id = buildings[0]['id']
+            
+            with st.spinner(f"🔄 Syncing {audit_id}..."):
+                import requests
+                
+                response = requests.post(
+                    f"{api_url}/api/inspections/sync/{audit_id}",
+                    params={
+                        "building_id": building_id,
+                        "create_work_orders": True
+                    },
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    
+                    if result.get('success'):
+                        st.success(f"✅ Synced: Unit {result.get('unit', 'N/A')}")
+                        st.balloons()
+                        
+                        # Refresh the page
+                        st.rerun()
+                    else:
+                        st.error("Sync failed - check API response")
+                else:
+                    st.error(f"API Error: {response.status_code}")
+        
+        except Exception as e:
+            st.error(f"Sync error: {e}")
+
+    def _bulk_sync_recent_inspections(self):
+        """Bulk sync recent inspections from SafetyCulture"""
+        try:
+            # Get API URL
+            try:
+                api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+            except:
+                api_url = "https://inspection-api-service-production.up.railway.app"
+            
+            with st.spinner("🔄 Fetching recent inspections from SafetyCulture..."):
+                import requests
+                
+                # This would call a bulk sync endpoint (you'd need to create this)
+                st.warning("Bulk sync feature coming soon!")
+                st.info("For now, please sync inspections individually using Audit ID")
+        
+        except Exception as e:
+            st.error(f"Bulk sync error: {e}")
+    
     def _save_report_images(self, logo_upload, cover_upload):
         """
         Save uploaded logo and cover images to temporary directory
@@ -420,65 +612,89 @@ class InspectorInterface:
         return f"{base_key}_{self._button_counter}"
     
     def show_inspector_dashboard_with_tabs(self):
-        """Enhanced Inspector Dashboard with CSV + API/Webhook Support"""
+        """
+        Updated Inspector Dashboard - Data-First Approach
+        ================================================
+        
+        NEW WORKFLOW:
+        1. Show dashboard overview (metrics, webhook status)
+        2. Show recent inspections list (with quick actions)
+        3. Manual sync section (highlighted if webhook down)
+        4. Report generation (only after selection)
+        5. CSV upload (legacy backup - in expander)
+        """
         
         # Database check
         has_database = bool(self.conn_manager or self.processor.db_manager)
         
         if not has_database:
             st.error("⚠️ Database Not Available")
-            st.warning("Limited functionality - CSV processing only")
+            st.warning("Inspector dashboard requires database connection")
             st.markdown("---")
-        
-        # Show database status
-        self._show_enhanced_database_status()
+            return
         
         # ═══════════════════════════════════════════════════════════════════
-        # TABS: CSV Upload vs API/Webhook Inspections
+        # SECTION 1: DASHBOARD OVERVIEW (Always visible)
         # ═══════════════════════════════════════════════════════════════════
         
-        tab1, tab2 = st.tabs([
-            "📡 API Inspections (Recommended)",
-            "📤 CSV Upload (Manual Backup)"
-        ])
+        self._show_inspector_overview_dashboard()
         
         # ═══════════════════════════════════════════════════════════════════
-        # TAB 1: API INSPECTIONS (NEW - Primary workflow)
+        # SECTION 2: RECENT INSPECTIONS (Main view)
         # ═══════════════════════════════════════════════════════════════════
-
-        with tab1:
-            st.success("📡 **API Mode** - Full-featured reports with photos & inspector notes")
-            st.caption("✨ Real-time sync from SafetyCulture - recommended for production use")
+        
+        self._show_recent_inspections_list()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SECTION 3: MANUAL SYNC (Conditional highlighting)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        self._show_manual_sync_section()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SECTION 4: REPORT GENERATION (Only if inspection selected)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Check if user selected inspection for report
+        if 'selected_api_inspections' in st.session_state and len(st.session_state['selected_api_inspections']) > 0:
             
-            if not has_database:
-                st.error("❌ Database required for API inspections")
-                st.info("Please configure database connection to use this feature")
-                return
+            # Auto-scroll to reports if triggered
+            if st.session_state.get('auto_scroll_to_reports', False):
+                st.markdown("---")
+                st.markdown("## 📊 Generate Reports")
+                st.session_state['auto_scroll_to_reports'] = False
+            
+            # Show report generation section
+            self._show_report_generation_from_selection()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SECTION 5: CSV UPLOAD (Legacy backup - collapsed by default)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        with st.expander("📤 Manual CSV Upload (Legacy Backup)", expanded=False):
+            st.info("📌 CSV upload is a legacy feature - webhook sync is recommended")
+            st.caption("Use this only if:")
+            st.caption("• Webhook sync is unavailable")
+            st.caption("• You have old CSV files to process")
+            st.caption("• You're doing offline inspections")
             
             st.markdown("---")
             
-            # Show API inspection interface
-            self._show_api_inspection_interface()
-
-        # ═══════════════════════════════════════════════════════════════════
-        # TAB 2: CSV UPLOAD (Backup/Manual workflow)
-        # ═══════════════════════════════════════════════════════════════════
-
-        with tab2:
-            st.info("📤 **CSV Upload Mode** - Manual upload for backup or legacy files")
-            st.caption("⚠️ Use this when API sync isn't available or for processing old CSV files")
-            
-            st.markdown("---")
-            
-            # Call existing sections
+            # Show previous inspections (CSV-based)
             self._show_previous_inspections_section()
+            
+            # Trade mapping
             self._show_trade_mapping_section()
+            
+            # CSV upload
             self._show_data_processing_section()
             
-            # Results and Reports
+            # Results (if CSV was processed)
             if self.processed_data is not None and self.metrics is not None:
                 self._show_results_and_reports()
                 self._show_enhanced_report_generation()
+    
+    
     
     def _show_api_inspection_interface(self):
         """Show interface for API/Webhook inspection reports"""
@@ -4227,7 +4443,1016 @@ Developer Access:
             import traceback
             with st.expander("Error Details"):
                 st.code(traceback.format_exc())
+                
+    def _show_inspector_overview_dashboard(self):
+        """Show overview dashboard on login"""
+        
+        st.markdown("### 📊 Dashboard Overview")
+        
+        # Get webhook status
+        webhook_status = self._check_webhook_status()
+        
+        # Show metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_inspections = self._get_total_inspection_count()
+            st.metric("Total Inspections", total_inspections)
+        
+        with col2:
+            this_week = self._get_this_week_inspection_count()
+            st.metric("This Week", this_week)
+        
+        with col3:
+            total_defects = self._get_total_defect_count()
+            st.metric("Total Defects", f"{total_defects:,}")
+        
+        with col4:
+            # Webhook status indicator
+            if webhook_status['status'] == 'healthy':
+                st.metric("Auto-Sync", "✅ Active", delta=webhook_status['message'])
+            elif webhook_status['status'] == 'stale':
+                st.metric("Auto-Sync", "⚠️ Stale", delta=webhook_status['message'])
+            elif webhook_status['status'] == 'down':
+                st.metric("Auto-Sync", "❌ Down", delta=webhook_status['message'])
+            else:
+                st.metric("Auto-Sync", "❓ Unknown", delta=webhook_status['message'])
+        
+        st.markdown("---")
+
+    def _show_recent_inspections_list(self):
+        """Show recent inspections with quick actions - REDESIGNED"""
+        
+        st.markdown("### 📅 Recent Inspections")
+        
+        # Get recent inspections
+        inspections = self._get_all_api_inspections()
+        
+        if len(inspections) == 0:
+            st.info("📋 No inspections found in database")
+            st.caption("👇 Use manual sync below to import from SafetyCulture")
+            return
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # IMPROVED: Quick Actions Row
+        # ═══════════════════════════════════════════════════════════════════
+        
+        st.markdown("**Quick Actions:**")
+        
+        col_action1, col_action2, col_action3 = st.columns(3)
+        
+        with col_action1:
+            if st.button("📊 Report by Building", use_container_width=True, type="primary"):
+                st.session_state['show_building_report'] = True
+                st.rerun()
+        
+        with col_action2:
+            if st.button("📋 Multi-Inspection Report", use_container_width=True):
+                st.session_state['show_multi_select'] = True
+                st.rerun()
+        
+        with col_action3:
+            if st.button("🗑️ Manage Inspections", use_container_width=True):
+                st.session_state['show_manage_inspections'] = True
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # IMPROVED: Filters (cleaner)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        col_filter1, col_filter2 = st.columns([3, 1])
+        
+        with col_filter1:
+            filter_building = st.selectbox(
+                "Filter by building:",
+                options=["All Buildings"] + sorted(list(set([i['building'] for i in inspections]))),
+                key="filter_building_recent"
+            )
+        
+        with col_filter2:
+            show_count = st.selectbox(
+                "Show:",
+                options=[10, 20, 50, "All"],
+                key="show_count_recent"
+            )
+        
+        # Apply filters
+        filtered_inspections = inspections
+        
+        if filter_building != "All Buildings":
+            filtered_inspections = [i for i in filtered_inspections if i['building'] == filter_building]
+        
+        if show_count != "All":
+            filtered_inspections = filtered_inspections[:show_count]
+        
+        st.caption(f"Showing {len(filtered_inspections)} of {len(inspections)} inspections")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # IMPROVED: Simple Cards - Just ONE action button
+        # ═══════════════════════════════════════════════════════════════════
+        
+        for idx, insp in enumerate(filtered_inspections):
             
+            # Determine urgency color
+            defect_count = insp.get('defects', 0)
+            if defect_count > 30:
+                urgency_color = "🔴"
+            elif defect_count > 10:
+                urgency_color = "🟡"
+            else:
+                urgency_color = "🟢"
+            
+            # SIMPLER CARD DESIGN
+            col1, col2, col3 = st.columns([5, 2, 2])
+            
+            with col1:
+                st.markdown(f"""
+                **{urgency_color} {insp['date']} - {insp['building']} - Unit {insp['unit']}**  
+                {defect_count} defects • {insp.get('photos', 0)} photos • {insp.get('notes_count', 0)} notes
+                """)
+            
+            with col2:
+                # Quality indicator
+                if defect_count == 0:
+                    st.success("✅ Perfect")
+                elif defect_count <= 5:
+                    st.info("👍 Good")
+                elif defect_count <= 15:
+                    st.warning("⚠️ Moderate")
+                else:
+                    st.error("🚨 High")
+            
+            with col3:
+                # SINGLE ACTION BUTTON
+                if st.button("📊 Generate Report", key=f"gen_{insp['id']}", use_container_width=True, type="primary"):
+                    st.session_state['selected_api_inspections'] = [insp]
+                    st.session_state['auto_scroll_to_reports'] = True
+                    st.rerun()
+            
+            st.markdown("---")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # NEW: Building Report Modal
+        # ═══════════════════════════════════════════════════════════════════
+        
+        if st.session_state.get('show_building_report', False):
+            self._show_building_report_modal(inspections)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # NEW: Multi-Select Modal
+        # ═══════════════════════════════════════════════════════════════════
+        
+        if st.session_state.get('show_multi_select', False):
+            self._show_multi_select_modal(inspections)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # NEW: Manage Inspections Modal (Delete functionality)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        if st.session_state.get('show_manage_inspections', False):
+            self._show_manage_inspections_modal(inspections)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # NEW HELPER METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _show_building_report_modal(self, inspections):
+        """Modal for generating report by building"""
+        
+        with st.container():
+            st.markdown("### 🏢 Generate Report by Building")
+            
+            # Get unique buildings
+            buildings = {}
+            for insp in inspections:
+                building = insp['building']
+                if building not in buildings:
+                    buildings[building] = []
+                buildings[building].append(insp)
+            
+            # Building selector
+            selected_building = st.selectbox(
+                "Select Building:",
+                options=list(buildings.keys()),
+                key="building_report_select"
+            )
+            
+            if selected_building:
+                building_inspections = buildings[selected_building]
+                
+                # Show summary
+                total_units = len(set([i['unit'] for i in building_inspections]))
+                total_defects = sum([i.get('defects', 0) for i in building_inspections])
+                total_photos = sum([i.get('photos', 0) for i in building_inspections])
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Inspections", len(building_inspections))
+                with col2:
+                    st.metric("Units", total_units)
+                with col3:
+                    st.metric("Total Defects", total_defects)
+                with col4:
+                    st.metric("Photos", total_photos)
+                
+                # Show list
+                with st.expander("📋 Inspections in this building", expanded=False):
+                    for insp in building_inspections:
+                        st.write(f"• {insp['date']} - Unit {insp['unit']} ({insp.get('defects', 0)} defects)")
+                
+                # Action buttons
+                col_action1, col_action2 = st.columns(2)
+                
+                with col_action1:
+                    if st.button("📊 Generate Report", type="primary", use_container_width=True, key="gen_building_report"):
+                        st.session_state['selected_api_inspections'] = building_inspections
+                        st.session_state['auto_scroll_to_reports'] = True
+                        st.session_state['show_building_report'] = False
+                        st.rerun()
+                
+                with col_action2:
+                    if st.button("✖️ Cancel", use_container_width=True, key="cancel_building_report"):
+                        st.session_state['show_building_report'] = False
+                        st.rerun()
+
+    def _show_multi_select_modal(self, inspections):
+        """Modal for selecting multiple inspections"""
+        
+        with st.container():
+            st.markdown("### 📋 Select Multiple Inspections")
+            
+            # Initialize selection
+            if 'multi_select_ids' not in st.session_state:
+                st.session_state.multi_select_ids = []
+            
+            # Show selection count
+            st.info(f"Selected: {len(st.session_state.multi_select_ids)} inspections")
+            
+            # Inspection list with checkboxes
+            for insp in inspections[:20]:  # Show first 20
+                col1, col2 = st.columns([4, 1])
+                
+                with col1:
+                    st.write(f"{insp['date']} - {insp['building']} - Unit {insp['unit']} ({insp.get('defects', 0)} defects)")
+                
+                with col2:
+                    is_selected = insp['id'] in st.session_state.multi_select_ids
+                    
+                    if st.checkbox("Select", value=is_selected, key=f"multi_select_{insp['id']}"):
+                        if insp['id'] not in st.session_state.multi_select_ids:
+                            st.session_state.multi_select_ids.append(insp['id'])
+                    else:
+                        if insp['id'] in st.session_state.multi_select_ids:
+                            st.session_state.multi_select_ids.remove(insp['id'])
+            
+            # Action buttons
+            col_action1, col_action2, col_action3 = st.columns(3)
+            
+            with col_action1:
+                if st.button("📊 Generate Report", type="primary", use_container_width=True, key="gen_multi_report", disabled=len(st.session_state.multi_select_ids) == 0):
+                    # Get selected inspections
+                    selected = [i for i in inspections if i['id'] in st.session_state.multi_select_ids]
+                    st.session_state['selected_api_inspections'] = selected
+                    st.session_state['auto_scroll_to_reports'] = True
+                    st.session_state['show_multi_select'] = False
+                    st.session_state.multi_select_ids = []
+                    st.rerun()
+            
+            with col_action2:
+                if st.button("Clear Selection", use_container_width=True, key="clear_multi_select"):
+                    st.session_state.multi_select_ids = []
+                    st.rerun()
+            
+            with col_action3:
+                if st.button("✖️ Cancel", use_container_width=True, key="cancel_multi_select"):
+                    st.session_state['show_multi_select'] = False
+                    st.session_state.multi_select_ids = []
+                    st.rerun()
+
+    def _show_manage_inspections_modal(self, inspections):
+        """Modal for managing (deleting) inspections - SAFER"""
+        
+        with st.container():
+            st.markdown("### 🗑️ Manage Inspections")
+            
+            st.warning("⚠️ **Warning:** Deleting inspections is permanent and cannot be undone!")
+            
+            # Show inspections with delete option
+            for insp in inspections[:20]:
+                col1, col2 = st.columns([5, 1])
+                
+                with col1:
+                    st.write(f"{insp['date']} - {insp['building']} - Unit {insp['unit']} ({insp.get('defects', 0)} defects)")
+                    st.caption(f"ID: {insp['id'][:12]}...")
+                
+                with col2:
+                    if st.button("🗑️", key=f"del_{insp['id']}", use_container_width=True):
+                        st.session_state[f'confirm_delete_{insp["id"]}'] = True
+                        st.rerun()
+                
+                # Confirmation dialog
+                if st.session_state.get(f'confirm_delete_{insp["id"]}', False):
+                    st.error(f"⚠️ Confirm delete: {insp['building']} - Unit {insp['unit']}?")
+                    
+                    col_confirm1, col_confirm2 = st.columns(2)
+                    
+                    with col_confirm1:
+                        if st.button("✅ Yes, Delete", key=f"confirm_yes_{insp['id']}", type="primary", use_container_width=True):
+                            success = self._delete_inspection(insp['id'])
+                            if success:
+                                st.success("Deleted!")
+                                del st.session_state[f'confirm_delete_{insp["id"]}']
+                                st.rerun()
+                            else:
+                                st.error("Delete failed!")
+                    
+                    with col_confirm2:
+                        if st.button("❌ Cancel", key=f"confirm_no_{insp['id']}", use_container_width=True):
+                            del st.session_state[f'confirm_delete_{insp["id"]}']
+                            st.rerun()
+            
+            # Close button
+            if st.button("✖️ Close", use_container_width=True, key="close_manage"):
+                st.session_state['show_manage_inspections'] = False
+                st.rerun()
+
+    def _delete_inspection(self, inspection_id: str):
+        """Delete inspection and related items"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # Delete items first (foreign key)
+            if self.db_type == "postgresql":
+                cursor.execute("""
+                    DELETE FROM inspector_inspection_items
+                    WHERE inspection_id = %s
+                """, (inspection_id,))
+                
+                cursor.execute("""
+                    DELETE FROM inspector_inspections
+                    WHERE id = %s
+                """, (inspection_id,))
+            else:
+                cursor.execute("""
+                    DELETE FROM inspector_inspection_items
+                    WHERE inspection_id = ?
+                """, (inspection_id,))
+                
+                cursor.execute("""
+                    DELETE FROM inspector_inspections
+                    WHERE id = ?
+                """, (inspection_id,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return True
+        except Exception as e:
+            logger.error(f"Delete error: {e}")
+            return False
+
+    def _show_manual_sync_section(self):
+        """Show manual sync section - IMPROVED with template search"""
+        
+        webhook_status = self._check_webhook_status()
+        
+        # Show warning if webhook is not healthy
+        if webhook_status['status'] != 'healthy':
+            st.warning(f"⚠️ Auto-sync status: {webhook_status['message']}")
+            st.markdown("### 🔄 Manual Sync Required")
+            expanded_default = True
+        else:
+            st.markdown("### 🔄 Manual Sync (Optional)")
+            expanded_default = False
+        
+        with st.expander("Manual Sync Options", expanded=expanded_default):
+            
+            # ═══════════════════════════════════════════════════════════════
+            # NEW: Sync by Template Name (EASIER!)
+            # ═══════════════════════════════════════════════════════════════
+            
+            st.markdown("#### 🎯 Option 1: Sync by Template Name (Recommended)")
+            st.info("✨ Easiest way - search by building/template name instead of Audit ID")
+            
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                template_search = st.text_input(
+                    "Search by Building/Template Name:",
+                    placeholder="e.g., Argyle Square, Highett Common, etc.",
+                    key="template_search_input",
+                    help="Enter part of the building or template name"
+                )
+            
+            with col2:
+                st.write("")  # Spacing
+                st.write("")  # Spacing
+                if st.button("🔍 Search", type="primary", use_container_width=True, key="search_template"):
+                    if template_search:
+                        self._search_by_template(template_search)
+                    else:
+                        st.error("Enter search term")
+            
+            st.markdown("---")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # Option 2: Sync by Audit ID (Advanced)
+            # ═══════════════════════════════════════════════════════════════
+            
+            st.markdown("#### 🔧 Option 2: Sync by Audit ID (Advanced)")
+            st.caption("Use this if you have the specific Audit ID from SafetyCulture")
+            
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                audit_id = st.text_input(
+                    "SafetyCulture Audit ID:",
+                    placeholder="audit_26fea697cbb64a1482a44b935785b2a4",
+                    key="manual_sync_audit_id",
+                    help="Get this from SafetyCulture iAuditor export"
+                )
+            
+            with col2:
+                st.write("")  # Spacing
+                st.write("")  # Spacing
+                if st.button("👁️ Preview", use_container_width=True, key="preview_manual_sync"):
+                    if audit_id:
+                        try:
+                            api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+                        except:
+                            api_url = "https://inspection-api-service-production.up.railway.app"
+                        
+                        preview_data = self._preview_api_inspection(api_url, audit_id)
+                        
+                        if preview_data:
+                            st.success(f"Found: Unit {preview_data['unit']}")
+                            st.info(f"Items: {preview_data['total_items']}, Defects: {preview_data['not_ok_items']}")
+                    else:
+                        st.error("Enter Audit ID first")
+            
+            with col3:
+                st.write("")  # Spacing
+                st.write("")  # Spacing
+                if st.button("📥 Sync", type="primary", use_container_width=True, key="sync_manual"):
+                    if audit_id:
+                        self._manual_sync_inspection(audit_id)
+                    else:
+                        st.error("Enter Audit ID first")
+            
+            st.markdown("---")
+            
+            # Option 3: Bulk sync (future feature)
+            st.markdown("#### 📦 Option 3: Bulk Sync")
+            st.caption("Sync multiple inspections at once")
+            
+            if st.button("📥 Sync Last 10 Inspections", use_container_width=True, disabled=True):
+                self._bulk_sync_recent_inspections()
+            
+            st.info("💡 Bulk sync feature coming soon")
+        
+        st.markdown("---")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # NEW: Template Search Function
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _search_by_template(self, template_search: str):
+        """Search SafetyCulture by template name"""
+        
+        try:
+            # Get API URL
+            try:
+                api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+            except:
+                api_url = "https://inspection-api-service-production.up.railway.app"
+            
+            with st.spinner(f"🔍 Searching for '{template_search}'..."):
+                import requests
+                
+                # Call your webhook handler's search endpoint
+                response = requests.get(
+                    f"{api_url}/webhooks/safety-culture/search/inspections",
+                    params={
+                        "template_name": template_search,
+                        "limit": 20,
+                        "days_back": 30
+                    },
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    results = response.json()
+                    
+                    if results.get('success') and len(results.get('inspections', [])) > 0:
+                        inspections = results['inspections']
+                        
+                        st.success(f"✅ Found {len(inspections)} inspection(s)")
+                        
+                        # Display results
+                        st.markdown("**Select inspection to sync:**")
+                        
+                        for idx, insp in enumerate(inspections[:10]):  # Show max 10
+                            with st.expander(
+                                f"{insp.get('template_name', 'Unknown')} - {insp.get('date_completed', 'N/A')} - Unit {insp.get('unit', 'N/A')}",
+                                expanded=(idx == 0)
+                            ):
+                                col1, col2 = st.columns([3, 1])
+                                
+                                with col1:
+                                    st.write(f"**Template:** {insp.get('template_name', 'N/A')}")
+                                    st.write(f"**Date:** {insp.get('date_completed', 'N/A')}")
+                                    st.write(f"**Unit:** {insp.get('unit', 'N/A')}")
+                                    st.write(f"**Audit ID:** {insp.get('audit_id', 'N/A')[:30]}...")
+                                
+                                with col2:
+                                    if st.button("📥 Sync This", key=f"sync_template_{insp.get('audit_id')}", type="primary", use_container_width=True):
+                                        self._manual_sync_inspection(insp.get('audit_id'))
+                    
+                    else:
+                        st.warning(f"No inspections found matching '{template_search}'")
+                        st.info("Try a different search term or use Option 2 (Audit ID)")
+                
+                else:
+                    st.error(f"Search failed: {response.status_code}")
+        
+        except Exception as e:
+            st.error(f"Search error: {e}")
+            st.info("💡 Make sure your FastAPI service has the search endpoint")
+
+    def _show_report_generation_from_selection(self):
+            """Show report generation for selected inspections"""
+            
+            selected = st.session_state.get('selected_api_inspections', [])
+            
+            if len(selected) == 0:
+                return
+            
+            st.markdown("---")
+            st.markdown("## 📊 Generate Reports")
+            
+            # Show selection summary
+            st.success(f"✅ {len(selected)} inspection(s) selected for report")
+            
+            # Calculate totals
+            total_defects = sum(i.get('defects', 0) for i in selected)
+            total_photos = sum(i.get('photos', 0) for i in selected)
+            total_notes = sum(i.get('notes_count', 0) for i in selected)
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Inspections", len(selected))
+            with col2:
+                st.metric("Total Defects", total_defects)
+            with col3:
+                st.metric("Photos", total_photos)
+            with col4:
+                st.metric("Notes", total_notes)
+            
+            # Show selected inspections
+            with st.expander("📋 Selected Inspections", expanded=False):
+                for insp in selected:
+                    st.write(f"• {insp['date']} - {insp['building']} - Unit {insp['unit']}")
+            
+            # Clear selection button
+            if st.button("🔄 Clear Selection & Choose Different Inspection"):
+                del st.session_state['selected_api_inspections']
+                st.rerun()
+            
+            st.markdown("---")
+            
+            # Image upload section
+            try:
+                with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
+                    st.info("✨ Add your company logo and building photo to create professional Word reports")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Company Logo:**")
+                        st.caption("Appears in document header (2.0\" width)")
+                        
+                        logo_upload = st.file_uploader(
+                            "Upload company logo",
+                            type=['png', 'jpg', 'jpeg'],
+                            key="api_logo_upload_selected",
+                            help="Recommended: 200x100px PNG with transparent background"
+                        )
+                        
+                        if logo_upload:
+                            st.image(logo_upload, caption="✅ Logo Preview", width=150)
+                            st.success("Logo ready for upload")
+                    
+                    with col2:
+                        st.markdown("**Building Cover Photo:**")
+                        st.caption("Appears on cover page (4.7\" width)")
+                        
+                        cover_upload = st.file_uploader(
+                            "Upload building photo",
+                            type=['png', 'jpg', 'jpeg'],
+                            key="api_cover_upload_selected",
+                            help="Recommended: 800x600px landscape format"
+                        )
+                        
+                        if cover_upload:
+                            st.image(cover_upload, caption="✅ Cover Preview", width=150)
+                            st.success("Cover photo ready for upload")
+                    
+                    # Save images button
+                    col_save, col_clear = st.columns([2, 1])
+                    
+                    with col_save:
+                        if st.button("💾 Save Images for Reports", key="save_api_images_selected", use_container_width=True, type="primary"):
+                            images_saved = self._save_report_images(logo_upload, cover_upload)
+                            if images_saved > 0:
+                                st.success(f"✅ {images_saved} image(s) saved successfully!")
+                                st.balloons()
+                            else:
+                                st.info("No new images to save - upload files above first")
+                    
+                    with col_clear:
+                        if st.button("🗑️ Clear All", key="clear_api_images_selected", use_container_width=True):
+                            self._clear_report_images()
+                            st.success("Images cleared!")
+                            st.rerun()
+                    
+                    # Show current status
+                    if 'report_images' in st.session_state:
+                        current_images = [k for k, v in st.session_state.report_images.items() if v is not None]
+                        if current_images:
+                            st.markdown("---")
+                            st.success(f"✅ **Images ready for reports:** {', '.join(current_images)}")
+                            
+                            for img_type, img_path in st.session_state.report_images.items():
+                                if img_path:
+                                    st.caption(f"• {img_type.capitalize()}: {os.path.basename(img_path)}")
+            
+            except Exception as e:
+                st.error(f"❌ Error in image upload section: {e}")
+            
+            st.markdown("---")
+            
+            # Report generation buttons
+            st.subheader("📊 Generate Reports")
+            
+            st.info("✨ **Full-featured reports** include photos and inspector notes from SafetyCulture API")
+            
+            col1, col2 = st.columns(2)
+            
+            # ─────── Excel Report with Photos ─────── 
+            with col1:
+                st.markdown("### 📊 Excel Report")
+                st.write("**Includes:**")
+                st.write("• Inspector notes (Column G)")
+                st.write("• Photo thumbnails (Columns J-S)")
+                st.write("• All defect details")
+                st.write("• Settlement readiness")
+                st.write("• Status tracking")
+                
+                if st.button("📊 Generate Excel with Photos", type="primary", use_container_width=True, key="gen_excel_api_selected"):
+                    with st.spinner("Generating Excel report with photos..."):
+                        try:
+                            inspection_ids = [insp['id'] for insp in selected]
+                            
+                            # Get database config
+                            try:
+                                db_config = {
+                                    'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
+                                    'database': st.secrets.get('SUPABASE_DATABASE') or os.getenv('SUPABASE_DATABASE'),
+                                    'user': st.secrets.get('SUPABASE_USER') or os.getenv('SUPABASE_USER'),
+                                    'password': st.secrets.get('SUPABASE_PASSWORD') or os.getenv('SUPABASE_PASSWORD'),
+                                    'port': st.secrets.get('SUPABASE_PORT') or os.getenv('SUPABASE_PORT', '5432')
+                                }
+                            except:
+                                db_config = {
+                                    'host': os.getenv('SUPABASE_HOST'),
+                                    'database': os.getenv('SUPABASE_DATABASE'),
+                                    'user': os.getenv('SUPABASE_USER'),
+                                    'password': os.getenv('SUPABASE_PASSWORD'),
+                                    'port': os.getenv('SUPABASE_PORT', '5432')
+                                }
+                            
+                            # Get API key
+                            api_key = None
+                            try:
+                                api_key = st.secrets['SAFETY_CULTURE_API_KEY']
+                                if api_key:
+                                    st.caption("🔑 Using API key from secrets.toml")
+                            except:
+                                pass
+
+                            if not api_key:
+                                api_key = os.getenv('SAFETY_CULTURE_API_KEY')
+                                if api_key:
+                                    st.caption("🔑 Using API key from environment")
+
+                            if not api_key:
+                                st.error("❌ SafetyCulture API key not configured")
+                                st.stop()
+                            
+                            # Determine report type
+                            report_type = "single" if len(inspection_ids) == 1 else "multi"
+
+                            # GET BUILDING INFO FOR SMART FILENAME
+                            import psycopg2
+                            conn = psycopg2.connect(**db_config)
+                            cursor_temp = conn.cursor()
+
+                            if report_type == "single":
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        i.inspection_date,
+                                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
+                                    FROM inspector_inspections i
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = %s
+                                """, (inspection_ids[0], inspection_ids[0]))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = row[2] if row else None
+                            else:
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        MAX(i.inspection_date) as latest_date
+                                    FROM inspector_inspections i
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = ANY(%s)
+                                    GROUP BY b.name
+                                """, (inspection_ids,))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = None
+                            cursor_temp.close()
+
+                            # GENERATE SMART FILENAME
+                            filename = generate_report_filename(
+                                building_name=building_name,
+                                inspection_date=inspection_date,
+                                unit=unit_number,
+                                report_type=report_type
+                            ) + ".xlsx"
+
+                            output_path = os.path.join(tempfile.gettempdir(), filename)
+                            
+                            # Use professional generator
+                            success = create_professional_excel_from_database(
+                                inspection_ids=inspection_ids,
+                                db_connection=conn,
+                                api_key=api_key,
+                                output_path=output_path,
+                                report_type=report_type
+                            )
+                            
+                            conn.close()
+                            
+                            if success and os.path.exists(output_path):
+                                with open(output_path, 'rb') as f:
+                                    st.download_button(
+                                        label="📥 Download Professional Excel Report",
+                                        data=f,
+                                        file_name=filename,
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        use_container_width=True,
+                                        key="download_excel_professional_selected"
+                                    )
+                                
+                                st.success("✅ Professional Excel report generated!")
+                                
+                                file_size = os.path.getsize(output_path)
+                                
+                                col_a, col_b, col_c, col_d = st.columns(4)
+                                with col_a:
+                                    st.metric("Inspections", len(inspection_ids))
+                                with col_b:
+                                    st.metric("Total Defects", total_defects)
+                                with col_c:
+                                    st.metric("Photos", total_photos)
+                                with col_d:
+                                    st.metric("File Size", f"{file_size / 1024:.1f} KB")
+                                
+                                st.info(f'''
+                                **Report Features:**
+                                • 📊 Executive Dashboard with Quality Score
+                                • 🏠 Settlement Readiness Analysis
+                                • 📸 {total_photos} photos embedded as thumbnails
+                                • 📝 {total_notes} inspector notes included
+                                • 🔧 Trade/Room/Component/Unit summaries
+                                • 📅 Inspection Timeline tracking
+                                • 📄 Complete metadata
+                                ''')
+                                
+                            else:
+                                st.error("❌ Failed to generate Excel report")
+                                st.warning("Check console logs for details")
+                        
+                        except Exception as e:
+                            st.error(f"❌ Error generating Excel: {e}")
+                            import traceback
+                            with st.expander("🔍 Error Details"):
+                                st.code(traceback.format_exc())
+            
+            # ─────── Word Report with Photos ─────── 
+            with col2:
+                st.markdown("### 📄 Word Report")
+                st.write("**Includes:**")
+                st.write("• Inspector notes inline")
+                st.write("• Full-size photos")
+                st.write("• Professional layout")
+                st.write("• Print-ready format")
+                st.write("• Cover page with logo")
+                
+                if st.button("📄 Generate Word with Photos", type="primary", use_container_width=True, key="gen_word_api_selected"):
+                    with st.spinner("Generating professional Word report with photos..."):
+                        try:
+                            inspection_ids = [insp['id'] for insp in selected]
+                            
+                            # Database config
+                            try:
+                                db_config = {
+                                    'host': st.secrets.get('SUPABASE_HOST') or os.getenv('SUPABASE_HOST'),
+                                    'database': st.secrets.get('SUPABASE_DATABASE') or os.getenv('SUPABASE_DATABASE'),
+                                    'user': st.secrets.get('SUPABASE_USER') or os.getenv('SUPABASE_USER'),
+                                    'password': st.secrets.get('SUPABASE_PASSWORD') or os.getenv('SUPABASE_PASSWORD'),
+                                    'port': st.secrets.get('SUPABASE_PORT') or os.getenv('SUPABASE_PORT', '5432')
+                                }
+                            except:
+                                db_config = {
+                                    'host': os.getenv('SUPABASE_HOST'),
+                                    'database': os.getenv('SUPABASE_DATABASE'),
+                                    'user': os.getenv('SUPABASE_USER'),
+                                    'password': os.getenv('SUPABASE_PASSWORD'),
+                                    'port': os.getenv('SUPABASE_PORT', '5432')
+                                }
+                            
+                            # Get SafetyCulture API key
+                            api_key = None
+                            try:
+                                api_key = st.secrets['SAFETY_CULTURE_API_KEY']
+                                if api_key:
+                                    st.caption("🔑 Using API key from secrets.toml")
+                            except:
+                                pass
+
+                            if not api_key:
+                                api_key = os.getenv('SAFETY_CULTURE_API_KEY')
+                                if api_key:
+                                    st.caption("🔑 Using API key from environment")
+
+                            if not api_key:
+                                st.error("❌ SafetyCulture API key not configured")
+                                st.stop()
+                            
+                            # Determine report type
+                            report_type = "single" if len(inspection_ids) == 1 else "multi"
+
+                            # GET BUILDING INFO FOR SMART FILENAME
+                            import psycopg2
+                            conn = psycopg2.connect(**db_config)
+                            cursor_temp = conn.cursor()
+
+                            if report_type == "single":
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        i.inspection_date,
+                                        (SELECT unit FROM inspector_inspection_items WHERE inspection_id = %s LIMIT 1) as unit
+                                    FROM inspector_inspections i
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = %s
+                                """, (inspection_ids[0], inspection_ids[0]))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = row[2] if row else None
+                            else:
+                                cursor_temp.execute("""
+                                    SELECT 
+                                        b.name as building_name,
+                                        MAX(i.inspection_date) as latest_date
+                                    FROM inspector_inspections i
+                                    JOIN inspector_buildings b ON i.building_id = b.id
+                                    WHERE i.id = ANY(%s)
+                                    GROUP BY b.name
+                                """, (inspection_ids,))
+                                row = cursor_temp.fetchone()
+                                building_name = row[0] if row else "Building"
+                                inspection_date = row[1].strftime('%Y-%m-%d') if row and row[1] else None
+                                unit_number = None
+                            cursor_temp.close()
+
+                            # GENERATE SMART FILENAME
+                            filename = generate_report_filename(
+                                building_name=building_name,
+                                inspection_date=inspection_date,
+                                unit=unit_number,
+                                report_type=report_type
+                            ) + ".docx"
+
+                            output_path = os.path.join(tempfile.gettempdir(), filename)
+                            
+                            # ✅ Get images from session state
+                            images = None
+                            images_info = []
+                            
+                            if 'report_images' in st.session_state:
+                                report_images = st.session_state.report_images
+                                
+                                # Check if at least one image is available
+                                has_logo = report_images.get('logo') and os.path.exists(report_images['logo'])
+                                has_cover = report_images.get('cover') and os.path.exists(report_images['cover'])
+                                
+                                if has_logo or has_cover:
+                                    images = {
+                                        'logo': report_images.get('logo') if has_logo else None,
+                                        'cover': report_images.get('cover') if has_cover else None
+                                    }
+                                    
+                                    if has_logo:
+                                        images_info.append("📌 Company logo in header")
+                                    if has_cover:
+                                        images_info.append("🖼️ Building photo on cover")
+                                    
+                                    st.caption(" | ".join(images_info))
+                                else:
+                                    st.caption("📄 Generating report without logo/cover images")
+                            else:
+                                st.caption("📄 Generating report without logo/cover images")
+                            
+                            # ✅ Generate report with photos AND IMAGES
+                            success = create_word_report_from_database(
+                                inspection_ids=inspection_ids,
+                                db_connection=conn,
+                                api_key=api_key,
+                                output_path=output_path,
+                                report_type=report_type,
+                                images=images
+                            )
+                            
+                            conn.close()
+                            
+                            if success and os.path.exists(output_path):
+                                with open(output_path, 'rb') as f:
+                                    st.download_button(
+                                        label="📥 Download Professional Word Report",
+                                        data=f,
+                                        file_name=filename,
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        use_container_width=True,
+                                        key="download_word_api_professional_selected"
+                                    )
+                                
+                                st.success("✅ Professional Word report generated successfully!")
+                                
+                                file_size = os.path.getsize(output_path)
+                                
+                                col_a, col_b, col_c = st.columns(3)
+                                with col_a:
+                                    st.metric("Inspections", len(inspection_ids))
+                                with col_b:
+                                    st.metric("Photos Embedded", total_photos)
+                                with col_c:
+                                    st.metric("File Size", f"{file_size / 1024:.1f} KB")
+                                
+                                # Enhanced feature list
+                                features = [
+                                    f"📋 {total_defects} defects documented",
+                                    f"📸 {total_photos} photos embedded",
+                                    f"📝 {total_notes} inspector notes included",
+                                    "📄 Professional cover page",
+                                    "📊 Executive overview with charts",
+                                    "🎨 Color-coded severity analysis",
+                                    "📈 Trade distribution analysis",
+                                    "💡 Strategic recommendations",
+                                    "🔧 Professional formatting"
+                                ]
+                                
+                                # Add image features if used
+                                if images:
+                                    if images.get('logo'):
+                                        features.insert(0, "✅ Company logo in header")
+                                    if images.get('cover'):
+                                        features.insert(1, "✅ Building photo on cover")
+                                
+                                st.info("**Professional Report Features:**\n" + "\n".join(f"• {f}" for f in features))
+                                
+                            else:
+                                st.error("❌ Failed to generate Word report")
+                                st.warning("Check console logs for details")
+                        
+                        except Exception as e:
+                            st.error(f"❌ Error generating Word report: {e}")
+                            import traceback
+                            with st.expander("🔍 Error Details"):
+                                st.code(traceback.format_exc())        
+
+
 def render_inspector_interface(user_info=None, auth_manager=None):
     """Main inspector interface function for integration with main.py"""
     
