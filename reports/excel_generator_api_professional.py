@@ -1522,7 +1522,7 @@ def create_professional_excel_from_database(
 
             # Query all inspections and combine defects AND all items
             all_defects = []
-            all_inspection_items = []  # ✅ ADD THIS!
+            all_inspection_items = []
             building_name = None
             address = None
             inspection_dates = []
@@ -1568,7 +1568,14 @@ def create_professional_excel_from_database(
                 logger.warning("No defects found across all inspections")
                 return False
             
-            # Calculate inspection date range
+            # ✅ CALCULATE unit_type_str BEFORE using it!
+            if len(unit_types_set) > 0:
+                unit_type_str = ', '.join(sorted(unit_types_set))
+                logger.info(f"Unit types found: {unit_type_str}")
+            else:
+                unit_type_str = 'Apartment'
+            
+            # ✅ CALCULATE inspection date range
             if len(inspection_dates) > 1:
                 # Multiple dates - show range
                 sorted_dates = sorted(inspection_dates)
@@ -1585,7 +1592,7 @@ def create_professional_excel_from_database(
                 inspection_date_str = 'N/A'
                 inspection_date_range = 'N/A'
                 is_multi_day = False
-
+            
             # Create combined inspection data
             combined_inspection_data = {
                 'id': 'multi',
@@ -1594,36 +1601,17 @@ def create_professional_excel_from_database(
                 'is_multi_day_inspection': is_multi_day,  # ✅ Flag for date range display
                 'inspector_name': 'Multiple Inspectors',
                 'total_defects': len(all_defects),
-                'building_name': building_name or 'Building Report',
-                'address': address or 'Address not specified',
+                'building_name': building_name or 'Building Report',  # ✅ From first inspection
+                'address': address or 'Address not specified',  # ✅ From first inspection
                 'unit': 'Multiple Units',
-                'unit_type': unit_type_str,
-                'total_items': sum(1 for _ in all_defects)
-            }
-            # 🆕 Calculate unit types string (not "Mixed"!)
-            if len(unit_types_set) > 0:
-                unit_type_str = ', '.join(sorted(unit_types_set))
-                logger.info(f"Unit types found: {unit_type_str}")
-            else:
-                unit_type_str = 'Apartment'
-            
-            # Create combined inspection data
-            combined_inspection_data = {
-                'id': 'multi',
-                'inspection_date': max(inspection_dates) if inspection_dates else 'N/A',
-                'inspector_name': 'Multiple Inspectors',
-                'total_defects': len(all_defects),
-                'building_name': building_name or 'Building Report',  # ✅ DEFAULT VALUE!
-                'address': address or 'Address not specified',  # ✅ DEFAULT VALUE!
-                'unit': 'Multiple Units',
-                'unit_type': unit_type_str,
-                'total_items': sum(1 for _ in all_defects)
+                'unit_type': unit_type_str,  # ✅ Now defined!
+                'total_items': len(all_inspection_items)  # ✅ Fixed: count all items, not defects
             }
             
             logger.info(f"Combined {len(all_defects)} defects from {len(inspection_ids)} inspections")
             
             # Generate report with combined data
-            return generator.generate_professional_report(combined_inspection_data, all_defects, all_inspection_items, output_path)  # ✅ UPDATE!
+            return generator.generate_professional_report(combined_inspection_data, all_defects, all_inspection_items, output_path)
         
         else:
             logger.error(f"Invalid report type: {report_type}")
