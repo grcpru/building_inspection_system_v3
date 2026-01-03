@@ -341,7 +341,7 @@ class ProfessionalExcelGeneratorAPI:
             'summary_unit': summary_unit,
             'photo_count': photo_count,
             'notes_count': notes_count,
-            'is_multi_day_inspection': False
+            'is_multi_day_inspection': inspection_data.get('is_multi_day_inspection', False)  # ✅ Read from inspection_data!
         }
         
         return metrics
