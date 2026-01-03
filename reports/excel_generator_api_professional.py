@@ -320,6 +320,7 @@ class ProfessionalExcelGeneratorAPI:
             'building_name': inspection_data.get('building_name', 'Building'),
             'address': address,  # Use extracted/calculated address
             'inspection_date': inspection_data.get('inspection_date', datetime.now().strftime('%Y-%m-%d')),
+            'inspection_date_range': inspection_data.get('inspection_date_range', inspection_data.get('inspection_date', 'N/A')),
             'unit_types_str': unit_types_str,  # Use calculated unit types from data
             'total_units': total_units,
             'total_inspections': total_inspections,
@@ -634,10 +635,16 @@ class ProfessionalExcelGeneratorAPI:
         ws.merge_range(f'A{row+1}:B{row+1}', '🏢 BUILDING INFORMATION', info_header)
         row += 1
         
+        # Determine inspection date display (conditional: range for multi-day, single for one-day)
+        if metrics.get('is_multi_day_inspection', False):
+            inspection_date_display = metrics.get('inspection_date_range', metrics['inspection_date'])
+        else:
+            inspection_date_display = metrics['inspection_date']
+
         building_data = [
             ('Building Name', metrics['building_name']),
             ('Address', metrics['address']),
-            ('Inspection Date', metrics['inspection_date']),
+            ('Inspection Date', inspection_date_display),  # ✅ Use conditional display
             ('Total Units Inspected', f"{metrics['total_units']:,}"),
             ('Unit Types', metrics['unit_types_str'])
         ]
@@ -745,6 +752,7 @@ class ProfessionalExcelGeneratorAPI:
             benchmark = 'Meets Industry Standard'
         else:
             benchmark = 'Below Industry Standard'
+        
         
         # Recommended action
         if metrics['total_defects'] == 0:
@@ -1522,15 +1530,35 @@ def create_professional_excel_from_database(
 
             for inspection_id in inspection_ids:
                 try:
-                    inspection_data, defects, all_items = _query_inspection_data(db_connection, inspection_id)  # ✅ UPDATE!
+                    inspection_data, defects, all_items = _query_inspection_data(db_connection, inspection_id)
                     
-                    # ... existing code ...
+                    # Extract building name (use first one)
+                    if building_name is None:
+                        building_name = inspection_data.get('building_name')
+                    
+                    # Extract address (use first one)
+                    if address is None:
+                        address = inspection_data.get('address')
+                    
+                    # Collect inspection dates
+                    insp_date = inspection_data.get('inspection_date')
+                    if insp_date and insp_date != 'N/A':
+                        inspection_dates.append(insp_date)
+                    
+                    # Collect unit types
+                    unit_type = inspection_data.get('unit_type')
+                    if unit_type and unit_type != 'Mixed':
+                        # Split if comma-separated and add each
+                        for ut in unit_type.split(','):
+                            unit_types_set.add(ut.strip())
                     
                     # Add all defects
                     all_defects.extend(defects)
                     
-                    # ✅ ADD THIS: Add all inspection items
+                    # Add all inspection items
                     all_inspection_items.extend(all_items)
+                    
+                    logger.info(f"  Inspection {inspection_id}: {len(defects)} defects, {len(all_items)} items")
                     
                 except Exception as e:
                     logger.error(f"Error querying inspection {inspection_id}: {str(e)}")
@@ -1540,6 +1568,38 @@ def create_professional_excel_from_database(
                 logger.warning("No defects found across all inspections")
                 return False
             
+            # Calculate inspection date range
+            if len(inspection_dates) > 1:
+                # Multiple dates - show range
+                sorted_dates = sorted(inspection_dates)
+                inspection_date_str = sorted_dates[0]  # Earliest date
+                inspection_date_range = f"{sorted_dates[0]} to {sorted_dates[-1]}"
+                is_multi_day = True
+            elif len(inspection_dates) == 1:
+                # Single date
+                inspection_date_str = inspection_dates[0]
+                inspection_date_range = inspection_dates[0]
+                is_multi_day = False
+            else:
+                # No dates
+                inspection_date_str = 'N/A'
+                inspection_date_range = 'N/A'
+                is_multi_day = False
+
+            # Create combined inspection data
+            combined_inspection_data = {
+                'id': 'multi',
+                'inspection_date': inspection_date_str,  # ✅ Earliest date
+                'inspection_date_range': inspection_date_range,  # ✅ Full range
+                'is_multi_day_inspection': is_multi_day,  # ✅ Flag for date range display
+                'inspector_name': 'Multiple Inspectors',
+                'total_defects': len(all_defects),
+                'building_name': building_name or 'Building Report',
+                'address': address or 'Address not specified',
+                'unit': 'Multiple Units',
+                'unit_type': unit_type_str,
+                'total_items': sum(1 for _ in all_defects)
+            }
             # 🆕 Calculate unit types string (not "Mixed"!)
             if len(unit_types_set) > 0:
                 unit_type_str = ', '.join(sorted(unit_types_set))
