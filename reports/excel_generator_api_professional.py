@@ -1517,17 +1517,18 @@ def create_professional_excel_from_database(
             return generator.generate_professional_report(inspection_data, defects, all_items, output_path)
         
         elif report_type == "multi":
-            # Multi-inspection support (e.g., building report with multiple units)
+            # Multi-inspection support
             logger.info(f"Creating multi-inspection report for {len(inspection_ids)} inspections")
 
-            # Query all inspections and combine defects AND all items
+            # Initialize variables
             all_defects = []
             all_inspection_items = []
             building_name = None
             address = None
-            inspection_dates = []
+            inspection_dates = []  # Will store unique dates only
             unit_types_set = set()
 
+            # Query all inspections
             for inspection_id in inspection_ids:
                 try:
                     inspection_data, defects, all_items = _query_inspection_data(db_connection, inspection_id)
@@ -1540,25 +1541,23 @@ def create_professional_excel_from_database(
                     if address is None:
                         address = inspection_data.get('address')
                     
-                    # Collect inspection dates
+                    # Collect inspection dates (UNIQUE only)
                     insp_date = inspection_data.get('inspection_date')
                     if insp_date and insp_date != 'N/A':
-                        inspection_dates.append(insp_date)
+                        if insp_date not in inspection_dates:  # ✅ Only unique dates
+                            inspection_dates.append(insp_date)
                     
                     # Collect unit types
                     unit_type = inspection_data.get('unit_type')
                     if unit_type and unit_type != 'Mixed':
-                        # Split if comma-separated and add each
                         for ut in unit_type.split(','):
                             unit_types_set.add(ut.strip())
                     
-                    # Add all defects
+                    # Add all defects and items
                     all_defects.extend(defects)
-                    
-                    # Add all inspection items
                     all_inspection_items.extend(all_items)
                     
-                    logger.info(f"  Inspection {inspection_id}: {len(defects)} defects, {len(all_items)} items")
+                    logger.info(f"  Inspection {inspection_id}: {len(defects)} defects, {len(all_items)} items, date: {insp_date}")
                     
                 except Exception as e:
                     logger.error(f"Error querying inspection {inspection_id}: {str(e)}")
@@ -1568,49 +1567,72 @@ def create_professional_excel_from_database(
                 logger.warning("No defects found across all inspections")
                 return False
             
-            # ✅ CALCULATE unit_type_str BEFORE using it!
+            # Calculate unit_type_str
             if len(unit_types_set) > 0:
                 unit_type_str = ', '.join(sorted(unit_types_set))
                 logger.info(f"Unit types found: {unit_type_str}")
             else:
                 unit_type_str = 'Apartment'
             
-            # ✅ CALCULATE inspection date range
+            # ✅ Calculate inspection date range with DD/MM/YYYY format
+            from datetime import datetime as dt
+            
+            logger.info(f"Collected {len(inspection_dates)} unique dates: {inspection_dates}")
+            
             if len(inspection_dates) > 1:
-                # Multiple dates - show range
+                # Multiple unique dates - show range
                 sorted_dates = sorted(inspection_dates)
-                inspection_date_str = sorted_dates[0]  # Earliest date
-                inspection_date_range = f"{sorted_dates[0]} to {sorted_dates[-1]}"
-                is_multi_day = True
+                
+                try:
+                    start_date_obj = dt.strptime(sorted_dates[0], '%Y-%m-%d')
+                    end_date_obj = dt.strptime(sorted_dates[-1], '%Y-%m-%d')
+                    
+                    start_formatted = start_date_obj.strftime('%d/%m/%Y')
+                    end_formatted = end_date_obj.strftime('%d/%m/%Y')
+                    
+                    inspection_date_str = start_formatted
+                    inspection_date_range = f"{start_formatted} - {end_formatted}"
+                    is_multi_day = True
+                except:
+                    inspection_date_str = sorted_dates[0]
+                    inspection_date_range = f"{sorted_dates[0]} - {sorted_dates[-1]}"
+                    is_multi_day = True
+                    
             elif len(inspection_dates) == 1:
                 # Single date
-                inspection_date_str = inspection_dates[0]
-                inspection_date_range = inspection_dates[0]
-                is_multi_day = False
+                try:
+                    date_obj = dt.strptime(inspection_dates[0], '%Y-%m-%d')
+                    inspection_date_str = date_obj.strftime('%d/%m/%Y')
+                    inspection_date_range = inspection_date_str
+                    is_multi_day = False
+                except:
+                    inspection_date_str = inspection_dates[0]
+                    inspection_date_range = inspection_dates[0]
+                    is_multi_day = False
             else:
-                # No dates
                 inspection_date_str = 'N/A'
                 inspection_date_range = 'N/A'
                 is_multi_day = False
             
+            logger.info(f"Date range: {inspection_date_range} (Multi-day: {is_multi_day})")
+            
             # Create combined inspection data
             combined_inspection_data = {
                 'id': 'multi',
-                'inspection_date': inspection_date_str,  # ✅ Earliest date
-                'inspection_date_range': inspection_date_range,  # ✅ Full range
-                'is_multi_day_inspection': is_multi_day,  # ✅ Flag for date range display
+                'inspection_date': inspection_date_str,
+                'inspection_date_range': inspection_date_range,
+                'is_multi_day_inspection': is_multi_day,
                 'inspector_name': 'Multiple Inspectors',
                 'total_defects': len(all_defects),
-                'building_name': building_name or 'Building Report',  # ✅ From first inspection
-                'address': address or 'Address not specified',  # ✅ From first inspection
+                'building_name': building_name or 'Building Report',
+                'address': address or 'Address not specified',
                 'unit': 'Multiple Units',
-                'unit_type': unit_type_str,  # ✅ Now defined!
-                'total_items': len(all_inspection_items)  # ✅ Fixed: count all items, not defects
+                'unit_type': unit_type_str,
+                'total_items': len(all_inspection_items)
             }
             
             logger.info(f"Combined {len(all_defects)} defects from {len(inspection_ids)} inspections")
             
-            # Generate report with combined data
             return generator.generate_professional_report(combined_inspection_data, all_defects, all_inspection_items, output_path)
         
         else:
