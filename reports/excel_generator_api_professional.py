@@ -1502,9 +1502,10 @@ def create_professional_excel_from_database(
     try:
         generator = ProfessionalExcelGeneratorAPI(api_key)
         
+        # ✅ NEW (unpacking 3 values)
         if report_type == "single" and len(inspection_ids) == 1:
             # Query single inspection
-            inspection_data, defects = _query_inspection_data(db_connection, inspection_ids[0])
+            inspection_data, defects, all_items = _query_inspection_data(db_connection, inspection_ids[0])
             return generator.generate_professional_report(inspection_data, defects, all_items, output_path)
         
         elif report_type == "multi":
