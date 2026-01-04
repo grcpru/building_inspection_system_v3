@@ -4816,235 +4816,318 @@ Developer Access:
             return False
 
     def _show_manual_sync_section(self):
-        """Simple manual sync - just paste audit ID and click sync"""
+    """Smart sync - find missing inspections automatically"""
+    
+    webhook_status = self._check_webhook_status()
+    
+    # Show warning if webhook is not healthy
+    if webhook_status['status'] != 'healthy':
+        st.warning(f"⚠️ Auto-sync status: {webhook_status['message']}")
+        st.markdown("### 🔄 Manual Sync Required")
+        expanded_default = True
+    else:
+        st.markdown("### 🔄 Backup Sync")
+        st.caption("Import missing inspections from SafetyCulture")
+        expanded_default = False
+    
+    with st.expander("Find & Sync Missing Inspections", expanded=expanded_default):
         
-        webhook_status = self._check_webhook_status()
+        st.info("💡 **Smart Sync:** Automatically finds Highett inspections in SafetyCulture that aren't in your database yet")
         
-        # Show warning if webhook is not healthy
-        if webhook_status['status'] != 'healthy':
-            st.warning(f"⚠️ Auto-sync status: {webhook_status['message']}")
-            st.markdown("### 🔄 Manual Sync Required")
-            expanded_default = True
-        else:
-            st.markdown("### 🔄 Backup Sync")
-            st.caption("Import specific inspections from SafetyCulture")
-            expanded_default = False
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 1: Find Missing Inspections
+        # ═══════════════════════════════════════════════════════════════
         
-        with st.expander("Sync Inspections Manually", expanded=expanded_default):
-            
-            st.markdown("""
-            **Quick Guide:**
-            1. Open [SafetyCulture Web App](https://app.safetyculture.com)
-            2. Filter to Highett Common inspections
-            3. Click on an inspection
-            4. Copy the Audit ID from the URL
-            5. Paste it below and click Sync
-            """)
-            
-            # ═══════════════════════════════════════════════════════════════
-            # Single Inspection Sync
-            # ═══════════════════════════════════════════════════════════════
-            
-            st.markdown("#### 📥 Sync Single Inspection")
-            
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                audit_id = st.text_input(
-                    "Paste Audit ID from SafetyCulture:",
-                    placeholder="audit_f8b75072809749afa0c1ba0b79042e8f",
-                    key="single_audit_id",
-                    help="Example: audit_f8b75072809749afa0c1ba0b79042e8f"
-                )
-            
-            with col2:
-                st.write("")  # Spacing
-                st.write("")  # Spacing
-                if st.button("🔄 Sync Now", type="primary", use_container_width=True, key="sync_single"):
-                    if audit_id and audit_id.startswith('audit_'):
-                        self._manual_sync_inspection(audit_id)
-                    elif audit_id:
-                        st.error("❌ Invalid format. Audit ID must start with 'audit_'")
-                    else:
-                        st.error("❌ Please enter an Audit ID")
-            
-            st.markdown("---")
-            
-            # ═══════════════════════════════════════════════════════════════
-            # Batch Sync
-            # ═══════════════════════════════════════════════════════════════
-            
-            with st.expander("📦 Batch Sync (Multiple Inspections)", expanded=False):
-                st.caption("Paste multiple Audit IDs (one per line) to sync them all at once")
-                
-                batch_text = st.text_area(
-                    "Audit IDs:",
-                    placeholder="audit_f8b75072809749afa0c1ba0b79042e8f\naudit_abc123def456ghi789jkl012mno345\naudit_xyz987wvu654tsr321qpo098nml876",
-                    height=150,
-                    key="batch_audit_ids",
-                    help="One Audit ID per line"
-                )
-                
-                if st.button("🔄 Sync All", type="primary", use_container_width=True, key="batch_sync"):
-                    if batch_text:
-                        self._batch_sync_inspections(batch_text)
-                    else:
-                        st.error("❌ Please enter at least one Audit ID")
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            days_to_search = st.selectbox(
+                "Search last:",
+                options=[30, 60, 90, 180, 365, 730],  # Up to 2 years
+                index=3,  # Default 180 days
+                key="smart_sync_days"
+            )
+            st.caption(f"Will check SafetyCulture for Highett inspections from last {days_to_search} days")
+        
+        with col2:
+            st.write("")  # Spacing
+            st.write("")  # Spacing
+            if st.button(
+                "🔍 Find Missing",
+                type="primary",
+                use_container_width=True,
+                key="find_missing_btn"
+            ):
+                self._find_and_show_missing_inspections(days_to_search)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 2: Show Missing Inspections with Checkboxes
+        # ═══════════════════════════════════════════════════════════════
+        
+        if st.session_state.get('missing_inspections'):
+            self._show_missing_inspections_list()
         
         st.markdown("---")
-
-
-    def _manual_sync_inspection(self, audit_id: str, show_messages: bool = True):
-        """Sync single inspection - uses Highett template automatically"""
         
-        try:
-            # Get API URL
-            try:
-                api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
-            except:
-                api_url = "https://inspection-api-service-production.up.railway.app"
+        # ═══════════════════════════════════════════════════════════════
+        # ADVANCED: Manual Sync (fallback)
+        # ═══════════════════════════════════════════════════════════════
+        
+        with st.expander("🔧 Advanced: Manual Sync by Audit ID", expanded=False):
+            st.caption("Use this if auto-find doesn't work or for specific inspections")
             
+            audit_id = st.text_input(
+                "Audit ID:",
+                placeholder="audit_f8b75072809749afa0c1ba0b79042e8f",
+                key="manual_audit_id"
+            )
+            
+            if st.button("📥 Sync This", key="manual_sync_btn"):
+                if audit_id and audit_id.startswith('audit_'):
+                    self._manual_sync_inspection(audit_id)
+                elif audit_id:
+                    st.error("❌ Must start with 'audit_'")
+    
+    st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# NEW: Find Missing Inspections
+# ═══════════════════════════════════════════════════════════════════
+
+def _find_and_show_missing_inspections(self, days_back: int):
+    """Find Highett inspections in SafetyCulture that aren't in database"""
+    
+    try:
+        # Get API URL
+        try:
+            api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+        except:
+            api_url = "https://inspection-api-service-production.up.railway.app"
+        
+        with st.spinner(f"🔍 Searching SafetyCulture for Highett inspections (last {days_back} days)..."):
             import requests
             
-            # Highett Common template (hardcoded - no need to select)
-            template_id = "template_d3bfcab9602b49fea2327b474ffb92c8"
+            # Call API to find missing
+            response = requests.get(
+                f"{api_url}/webhooks/safety-culture/smart-sync/find-missing",
+                params={
+                    "days_back": days_back,
+                    "template_id": "template_d3bfcab9602b49fea2327b474ffb92c8"
+                },
+                timeout=120  # Longer timeout - this endpoint is slow
+            )
             
-            if show_messages:
-                with st.spinner(f"🔄 Syncing inspection from SafetyCulture..."):
-                    response = requests.post(
-                        f"{api_url}/webhooks/safety-culture/test/trigger",
-                        params={
-                            "audit_id": audit_id,
-                            "template_id": template_id
-                        },
-                        timeout=60
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        
-                        if result.get('success'):
-                            st.success(f"✅ Successfully synced inspection!")
-                            
-                            # Show details
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("Building", result.get('building_name', 'Auto-detected'))
-                            with col2:
-                                st.metric("Defects", result.get('defect_count', 0))
-                            with col3:
-                                st.metric("Items", result.get('items_saved', 0))
-                            
-                            # Refresh
-                            time.sleep(1)
-                            st.rerun()
-                            return True
-                        else:
-                            st.error(f"❌ Sync failed: {result.get('error', 'Unknown error')}")
-                            return False
-                    else:
-                        st.error(f"❌ API error: {response.status_code}")
-                        with st.expander("Error details"):
-                            st.code(response.text)
-                        return False
+            if response.status_code != 200:
+                st.error(f"❌ API error: {response.status_code}")
+                st.code(response.text[:500])
+                return
+            
+            result = response.json()
+            
+            if not result.get('success'):
+                st.error(f"❌ {result.get('error', 'Unknown error')}")
+                return
+            
+            # Show results
+            total_found = result.get('total_in_safetyculture', 0)
+            already_synced = result.get('already_in_database', 0)
+            missing = result.get('missing_inspections', [])
+            
+            st.success(f"✅ Found {total_found} Highett inspections in SafetyCulture")
+            st.info(f"📊 Already in database: {already_synced}")
+            
+            if len(missing) == 0:
+                st.success("🎉 All up to date! No missing inspections.")
             else:
-                # Silent mode for batch
-                response = requests.post(
-                    f"{api_url}/webhooks/safety-culture/test/trigger",
-                    params={
-                        "audit_id": audit_id,
-                        "template_id": template_id
-                    },
-                    timeout=60
-                )
+                st.warning(f"📥 Missing: {len(missing)} inspection(s) not yet in database")
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    return result.get('success', False)
-                else:
-                    return False
-        
-        except Exception as e:
-            if show_messages:
-                st.error(f"❌ Error: {e}")
-            return False
+                # Store in session state for display
+                st.session_state['missing_inspections'] = missing
+                st.rerun()
+    
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
-    def _batch_sync_inspections(self, batch_text: str):
-        """Sync multiple inspections from text input"""
+def _show_missing_inspections_list(self):
+    """Show missing inspections with checkboxes for selection"""
+    
+    missing = st.session_state.get('missing_inspections', [])
+    
+    if not missing:
+        return
+    
+    st.markdown("### 📋 Select Inspections to Sync")
+    
+    # Initialize selection state
+    if 'selected_for_sync' not in st.session_state:
+        st.session_state['selected_for_sync'] = []
+    
+    # Show each missing inspection with checkbox
+    for idx, insp in enumerate(missing):
+        audit_id = insp['audit_id']
+        audit_name = insp.get('audit_name', 'Unnamed')
+        date = insp.get('date_completed', insp.get('date_modified', 'N/A'))
         
-        # Parse audit IDs
-        lines = [line.strip() for line in batch_text.split('\n') if line.strip()]
+        col1, col2 = st.columns([4, 1])
         
-        # Validate and filter
-        valid_ids = []
-        invalid_ids = []
-        
-        for line in lines:
-            if line.startswith('audit_'):
-                valid_ids.append(line)
-            else:
-                invalid_ids.append(line)
-        
-        # Show validation results
-        if invalid_ids:
-            st.warning(f"⚠️ Skipping {len(invalid_ids)} invalid ID(s):")
-            for invalid in invalid_ids[:5]:  # Show first 5
-                st.caption(f"• {invalid}")
-        
-        if not valid_ids:
-            st.error("❌ No valid Audit IDs found")
-            st.info("💡 Audit IDs must start with 'audit_'")
-            return
-        
-        # Confirm and sync
-        st.info(f"📥 Ready to sync {len(valid_ids)} inspection(s)")
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        success_count = 0
-        error_count = 0
-        results = []
-        
-        # Sync each
-        for idx, audit_id in enumerate(valid_ids, 1):
-            status_text.text(f"Syncing {idx}/{len(valid_ids)}: {audit_id[:40]}...")
+        with col1:
+            is_selected = audit_id in st.session_state['selected_for_sync']
             
-            try:
-                success = self._manual_sync_inspection(audit_id, show_messages=False)
-                
-                if success:
-                    success_count += 1
-                    results.append({'audit_id': audit_id, 'status': '✅'})
-                else:
-                    error_count += 1
-                    results.append({'audit_id': audit_id, 'status': '❌'})
-            except Exception as e:
+            if st.checkbox(
+                f"{audit_name} ({date})",
+                value=is_selected,
+                key=f"cb_{audit_id}"
+            ):
+                if audit_id not in st.session_state['selected_for_sync']:
+                    st.session_state['selected_for_sync'].append(audit_id)
+            else:
+                if audit_id in st.session_state['selected_for_sync']:
+                    st.session_state['selected_for_sync'].remove(audit_id)
+        
+        with col2:
+            st.caption(f"{audit_id[:20]}...")
+    
+    # Action buttons
+    st.markdown("---")
+    
+    col_action1, col_action2, col_action3 = st.columns(3)
+    
+    with col_action1:
+        selected_count = len(st.session_state['selected_for_sync'])
+        
+        if st.button(
+            f"📥 Sync Selected ({selected_count})",
+            type="primary",
+            use_container_width=True,
+            disabled=selected_count == 0,
+            key="sync_selected_btn"
+        ):
+            self._sync_selected_inspections()
+    
+    with col_action2:
+        if st.button("☑️ Select All", use_container_width=True, key="select_all_btn"):
+            st.session_state['selected_for_sync'] = [i['audit_id'] for i in missing]
+            st.rerun()
+    
+    with col_action3:
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_missing_btn"):
+            if 'missing_inspections' in st.session_state:
+                del st.session_state['missing_inspections']
+            if 'selected_for_sync' in st.session_state:
+                del st.session_state['selected_for_sync']
+            st.rerun()
+
+
+def _sync_selected_inspections(self):
+    """Sync the selected inspections"""
+    
+    selected_ids = st.session_state.get('selected_for_sync', [])
+    missing = st.session_state.get('missing_inspections', [])
+    
+    if not selected_ids:
+        st.error("❌ No inspections selected")
+        return
+    
+    # Get details for selected
+    selected_inspections = [
+        insp for insp in missing
+        if insp['audit_id'] in selected_ids
+    ]
+    
+    st.info(f"🔄 Syncing {len(selected_inspections)} inspection(s)...")
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    success_count = 0
+    error_count = 0
+    
+    # Sync each
+    for idx, insp in enumerate(selected_inspections, 1):
+        audit_id = insp['audit_id']
+        name = insp.get('audit_name', audit_id[:30])
+        
+        status_text.text(f"Syncing {idx}/{len(selected_inspections)}: {name}...")
+        
+        try:
+            success = self._manual_sync_inspection(audit_id, show_messages=False)
+            if success:
+                success_count += 1
+            else:
                 error_count += 1
-                results.append({'audit_id': audit_id, 'status': f'❌ {str(e)[:20]}'})
+        except:
+            error_count += 1
+        
+        progress_bar.progress(idx / len(selected_inspections))
+    
+    # Clear progress
+    progress_bar.empty()
+    status_text.empty()
+    
+    # Show results
+    if success_count > 0:
+        st.success(f"✅ Successfully synced {success_count} inspection(s)!")
+    
+    if error_count > 0:
+        st.warning(f"⚠️ Failed {error_count} inspection(s)")
+    
+    # Clear selection and refresh
+    if 'missing_inspections' in st.session_state:
+        del st.session_state['missing_inspections']
+    if 'selected_for_sync' in st.session_state:
+        del st.session_state['selected_for_sync']
+    
+    time.sleep(1)
+    st.rerun()
+
+
+def _manual_sync_inspection(self, audit_id: str, show_messages: bool = True):
+    """Sync single inspection"""
+    
+    try:
+        try:
+            api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+        except:
+            api_url = "https://inspection-api-service-production.up.railway.app"
+        
+        import requests
+        
+        template_id = "template_d3bfcab9602b49fea2327b474ffb92c8"
+        
+        response = requests.post(
+            f"{api_url}/webhooks/safety-culture/test/trigger",
+            params={
+                "audit_id": audit_id,
+                "template_id": template_id
+            },
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
             
-            progress_bar.progress(idx / len(valid_ids))
-        
-        # Clear progress
-        progress_bar.empty()
-        status_text.empty()
-        
-        # Show results
-        if success_count > 0:
-            st.success(f"✅ Successfully synced {success_count}/{len(valid_ids)} inspection(s)")
-        
-        if error_count > 0:
-            st.warning(f"⚠️ Failed to sync {error_count}/{len(valid_ids)} inspection(s)")
-            
-            # Show details
-            with st.expander("📋 Details"):
-                for result in results:
-                    st.write(f"{result['status']} {result['audit_id'][:50]}")
-        
-        # Refresh
-        time.sleep(1)
-        st.rerun()
+            if result.get('success'):
+                if show_messages:
+                    st.success(f"✅ Synced: {result.get('building_name', 'N/A')}")
+                return True
+            else:
+                if show_messages:
+                    st.error(f"❌ Failed: {result.get('error', 'Unknown')}")
+                return False
+        else:
+            if show_messages:
+                st.error(f"❌ API error: {response.status_code}")
+            return False
+    
+    except Exception as e:
+        if show_messages:
+            st.error(f"❌ Error: {e}")
+        return False
 
     def _show_report_generation_from_selection(self):
             """Show report generation for selected inspections"""
