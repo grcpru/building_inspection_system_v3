@@ -4896,61 +4896,67 @@ Developer Access:
     # ═══════════════════════════════════════════════════════════════════
 
     def _find_and_show_missing_inspections(self, days_back: int):
-        """Find Highett inspections in SafetyCulture that aren't in database"""
-        
+    """Find inspections by name instead of template"""
+    
+    try:
+        # Get API URL
         try:
-            # Get API URL
-            try:
-                api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
-            except:
-                api_url = "https://inspection-api-service-production.up.railway.app"
-            
-            with st.spinner(f"🔍 Searching SafetyCulture for Highett inspections (last {days_back} days)..."):
-                import requests
-                
-                # Call API to find missing
-                response = requests.get(
-                    f"{api_url}/webhooks/safety-culture/smart-sync/find-missing",
-                    params={
-                        "days_back": days_back,
-                        "template_id": "template_d3bfcab9602b49fea2327b474ffb92c8"
-                    },
-                    timeout=120  # Longer timeout - this endpoint is slow
-                )
-                
-                if response.status_code != 200:
-                    st.error(f"❌ API error: {response.status_code}")
-                    st.code(response.text[:500])
-                    return
-                
-                result = response.json()
-                
-                if not result.get('success'):
-                    st.error(f"❌ {result.get('error', 'Unknown error')}")
-                    return
-                
-                # Show results
-                total_found = result.get('total_in_safetyculture', 0)
-                already_synced = result.get('already_in_database', 0)
-                missing = result.get('missing_inspections', [])
-                
-                st.success(f"✅ Found {total_found} Highett inspections in SafetyCulture")
-                st.info(f"📊 Already in database: {already_synced}")
-                
-                if len(missing) == 0:
-                    st.success("🎉 All up to date! No missing inspections.")
-                else:
-                    st.warning(f"📥 Missing: {len(missing)} inspection(s) not yet in database")
-                    
-                    # Store in session state for display
-                    st.session_state['missing_inspections'] = missing
-                    st.rerun()
+            api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+        except:
+            api_url = "https://inspection-api-service-production.up.railway.app"
         
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
-            import traceback
-            st.code(traceback.format_exc())
-
+        with st.spinner(f"🔍 Searching for Highett inspections (last {days_back} days)..."):
+            import requests
+            
+            # ✅ Search by name instead of template_id
+            response = requests.get(
+                f"{api_url}/webhooks/safety-culture/smart-sync/find-missing",
+                params={
+                    "days_back": days_back,
+                    "search_name": "Highett"  # ← Search by name
+                },
+                timeout=120
+            )
+            
+            if response.status_code != 200:
+                st.error(f"❌ API error: {response.status_code}")
+                st.code(response.text[:500])
+                return
+            
+            result = response.json()
+            
+            if not result.get('success'):
+                st.error(f"❌ {result.get('error', 'Unknown error')}")
+                return
+            
+            # Show results
+            total_found = result.get('total_in_safetyculture', 0)
+            already_synced = result.get('already_in_database', 0)
+            missing = result.get('missing_inspections', [])
+            
+            st.success(f"✅ Found {total_found} Highett inspections in SafetyCulture")
+            st.info(f"📊 Already in database: {already_synced}")
+            
+            # ✅ Show template IDs found
+            if result.get('template_ids_found'):
+                with st.expander("🔍 Template IDs Found", expanded=False):
+                    for tid in result['template_ids_found']:
+                        st.code(tid)
+                    st.caption("These are the actual template IDs for Highett inspections")
+            
+            if len(missing) == 0:
+                st.success("🎉 All up to date! No missing inspections.")
+            else:
+                st.warning(f"📥 Missing: {len(missing)} inspection(s) not yet in database")
+                
+                # Store for display
+                st.session_state['missing_inspections'] = missing
+                st.rerun()
+    
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
 
     def _show_missing_inspections_list(self):
         """Show missing inspections with checkboxes for selection"""
