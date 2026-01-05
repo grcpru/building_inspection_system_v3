@@ -3182,13 +3182,13 @@ class InspectorInterface:
             st.info("💡 No database - Data will be temporary (this session only)")
         
         # ✅ NEW: Two input methods
-        tab1 = st.tabs(["📄 CSV Upload"])
+        tab1, tab2 = st.tabs(["📄 CSV Upload", "🔄 API Sync"])
         
         with tab1:
             self._show_csv_upload_section()
         
-        #with tab2:
-            #self._show_api_sync_section()
+        with tab2:
+            self._show_api_sync_section()
 
     def _show_csv_upload_section(self):
         """CSV upload section (your existing code)"""
@@ -4264,78 +4264,78 @@ Developer Access:
         except:
             return 0
 
-    # def _show_api_sync_section(self):
-    #     """Sync directly from SafetyCulture API"""
+    def _show_api_sync_section(self):
+        """Sync directly from SafetyCulture API"""
         
-    #     st.markdown("#### Sync from SafetyCulture iAuditor API")
-    #     st.info("🔄 Fetch inspections directly from SafetyCulture - no CSV needed!")
+        st.markdown("#### Sync from SafetyCulture iAuditor API")
+        st.info("🔄 Fetch inspections directly from SafetyCulture - no CSV needed!")
         
-    #     # Get API URL from secrets or use default
-    #     try:
-    #         api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
-    #     except:
-    #         api_url = "https://inspection-api-service-production.up.railway.app"
+        # Get API URL from secrets or use default
+        try:
+            api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+        except:
+            api_url = "https://inspection-api-service-production.up.railway.app"
         
-    #     # Show API status
-    #     try:
-    #         import requests
-    #         health_check = requests.get(f"{api_url}/health", timeout=5)
-    #         if health_check.status_code == 200:
-    #             st.success(f"✅ API Connected: {api_url}")
-    #         else:
-    #             st.error(f"❌ API Error: Status {health_check.status_code}")
-    #             return
-    #     except Exception as e:
-    #         st.error(f"❌ Cannot reach API: {e}")
-    #         st.warning("Make sure your FastAPI service is running on Railway")
-    #         return
+        # Show API status
+        try:
+            import requests
+            health_check = requests.get(f"{api_url}/health", timeout=5)
+            if health_check.status_code == 200:
+                st.success(f"✅ API Connected: {api_url}")
+            else:
+                st.error(f"❌ API Error: Status {health_check.status_code}")
+                return
+        except Exception as e:
+            st.error(f"❌ Cannot reach API: {e}")
+            st.warning("Make sure your FastAPI service is running on Railway")
+            return
         
-    #     # Step 1: Get buildings
-    #     st.markdown("**Step 1: Select Building**")
-    #     buildings = self._fetch_buildings_from_api(api_url)
+        # Step 1: Get buildings
+        st.markdown("**Step 1: Select Building**")
+        buildings = self._fetch_buildings_from_api(api_url)
         
-    #     if not buildings:
-    #         st.warning("No buildings found. Please add buildings first.")
-    #         return
+        if not buildings:
+            st.warning("No buildings found. Please add buildings first.")
+            return
         
-    #     building_options = {f"{b['name']} ({b['total_units']} units)": b['id'] for b in buildings}
-    #     selected_building_name = st.selectbox("Select Building:", list(building_options.keys()))
-    #     selected_building_id = building_options[selected_building_name]
+        building_options = {f"{b['name']} ({b['total_units']} units)": b['id'] for b in buildings}
+        selected_building_name = st.selectbox("Select Building:", list(building_options.keys()))
+        selected_building_id = building_options[selected_building_name]
         
-    #     # Step 2: Enter Audit ID
-    #     st.markdown("**Step 2: Enter SafetyCulture Audit ID**")
+        # Step 2: Enter Audit ID
+        st.markdown("**Step 2: Enter SafetyCulture Audit ID**")
         
-    #     col1, col2 = st.columns([3, 1])
+        col1, col2 = st.columns([3, 1])
         
-    #     with col1:
-    #         audit_id = st.text_input(
-    #             "Audit ID from SafetyCulture:",
-    #             placeholder="audit_26fea697cbb64a1482a44b935785b2a4",
-    #             help="Get this from SafetyCulture iAuditor export"
-    #         )
+        with col1:
+            audit_id = st.text_input(
+                "Audit ID from SafetyCulture:",
+                placeholder="audit_26fea697cbb64a1482a44b935785b2a4",
+                help="Get this from SafetyCulture iAuditor export"
+            )
         
-    #     with col2:
-    #         st.markdown("**Example:**")
-    #         st.code("audit_26fea...")
+        with col2:
+            st.markdown("**Example:**")
+            st.code("audit_26fea...")
         
-    #     # Step 3: Preview Button (Optional)
-    #     if audit_id:
-    #         col_preview, col_sync = st.columns(2)
+        # Step 3: Preview Button (Optional)
+        if audit_id:
+            col_preview, col_sync = st.columns(2)
             
-    #         with col_preview:
-    #             if st.button("👁️ Preview Inspection", use_container_width=True):
-    #                 with st.spinner("Fetching preview..."):
-    #                     preview_data = self._preview_api_inspection(api_url, audit_id)
-    #                     if preview_data:
-    #                         st.success(f"Found: Unit {preview_data['unit']} - {preview_data['unit_type']}")
-    #                         #st.info(f"Owner: {preview_data['owner_name']}")
-    #                         st.metric("Total Items", preview_data['total_items'])
-    #                         st.metric("Defects Found", preview_data['not_ok_items'])
+            with col_preview:
+                if st.button("👁️ Preview Inspection", use_container_width=True):
+                    with st.spinner("Fetching preview..."):
+                        preview_data = self._preview_api_inspection(api_url, audit_id)
+                        if preview_data:
+                            st.success(f"Found: Unit {preview_data['unit']} - {preview_data['unit_type']}")
+                            #st.info(f"Owner: {preview_data['owner_name']}")
+                            st.metric("Total Items", preview_data['total_items'])
+                            st.metric("Defects Found", preview_data['not_ok_items'])
             
-    #         with col_sync:
-    #             # Step 4: Sync Button
-    #             if st.button("🚀 Sync to Database", type="primary", use_container_width=True):
-    #                 self._sync_inspection_from_api(api_url, audit_id, selected_building_id)
+            with col_sync:
+                # Step 4: Sync Button
+                if st.button("🚀 Sync to Database", type="primary", use_container_width=True):
+                    self._sync_inspection_from_api(api_url, audit_id, selected_building_id)
 
     def _fetch_buildings_from_api(self, api_url: str):
         """Fetch buildings from FastAPI"""
