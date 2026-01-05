@@ -612,85 +612,85 @@ class InspectorInterface:
         return f"{base_key}_{self._button_counter}"
     
     def show_inspector_dashboard_with_tabs(self):
-    """
-    Updated Inspector Dashboard with Smart Sync Tab
-    """
-    
-    # Database check
-    has_database = bool(self.conn_manager or self.processor.db_manager)
-    
-    if not has_database:
-        st.error("⚠️ Database Not Available")
-        st.warning("Inspector dashboard requires database connection")
-        st.markdown("---")
-        return
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # CREATE TABS HERE
-    # ═══════════════════════════════════════════════════════════════════
-    
-    tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 Smart Sync", "⚙️ Settings"])
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # TAB 1: EXISTING DASHBOARD
-    # ═══════════════════════════════════════════════════════════════════
-    
-    with tab1:
-        # Section 1: Dashboard Overview
-        self._show_inspector_overview_dashboard()
+        """
+        Updated Inspector Dashboard with Smart Sync Tab
+        """
         
-        # Section 2: Recent Inspections
-        self._show_recent_inspections_list()
+        # Database check
+        has_database = bool(self.conn_manager or self.processor.db_manager)
         
-        # Section 3: Manual Sync
-        self._show_manual_sync_section()
-        
-        # Section 4: Report Generation (conditional)
-        if 'selected_api_inspections' in st.session_state and len(st.session_state['selected_api_inspections']) > 0:
-            if st.session_state.get('auto_scroll_to_reports', False):
-                st.markdown("---")
-                st.markdown("## 📊 Generate Reports")
-                st.session_state['auto_scroll_to_reports'] = False
-            
-            self._show_report_generation_from_selection()
-        
-        # Section 5: CSV Upload (legacy backup)
-        with st.expander("📤 Manual CSV Upload (Legacy Backup)", expanded=False):
-            st.info("📌 CSV upload is a legacy feature - webhook sync is recommended")
-            st.caption("Use this only if:")
-            st.caption("• Webhook sync is unavailable")
-            st.caption("• You have old CSV files to process")
-            st.caption("• You're doing offline inspections")
-            
+        if not has_database:
+            st.error("⚠️ Database Not Available")
+            st.warning("Inspector dashboard requires database connection")
             st.markdown("---")
-            
-            self._show_previous_inspections_section()
-            self._show_trade_mapping_section()
-            self._show_data_processing_section()
-            
-            if self.processed_data is not None and self.metrics is not None:
-                self._show_results_and_reports()
-                self._show_enhanced_report_generation()
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # TAB 2: SMART SYNC (NEW)
-    # ═══════════════════════════════════════════════════════════════════
-    
-    with tab2:
-        self._show_smart_sync_ui()
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # TAB 3: SETTINGS (OPTIONAL)
-    # ═══════════════════════════════════════════════════════════════════
-    
-    with tab3:
-        st.subheader("⚙️ Settings")
-        st.info("Settings panel coming soon...")
+            return
         
-        # Optional settings
-        st.checkbox("Auto-refresh dashboard", value=False)
-        st.selectbox("Default view", ["Recent", "All", "Defects Only"])
-        st.number_input("Items per page", min_value=10, max_value=100, value=20)
+        # ═══════════════════════════════════════════════════════════════════
+        # CREATE TABS HERE
+        # ═══════════════════════════════════════════════════════════════════
+        
+        tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 Smart Sync", "⚙️ Settings"])
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 1: EXISTING DASHBOARD
+        # ═══════════════════════════════════════════════════════════════════
+        
+        with tab1:
+            # Section 1: Dashboard Overview
+            self._show_inspector_overview_dashboard()
+            
+            # Section 2: Recent Inspections
+            self._show_recent_inspections_list()
+            
+            # Section 3: Manual Sync
+            self._show_manual_sync_section()
+            
+            # Section 4: Report Generation (conditional)
+            if 'selected_api_inspections' in st.session_state and len(st.session_state['selected_api_inspections']) > 0:
+                if st.session_state.get('auto_scroll_to_reports', False):
+                    st.markdown("---")
+                    st.markdown("## 📊 Generate Reports")
+                    st.session_state['auto_scroll_to_reports'] = False
+                
+                self._show_report_generation_from_selection()
+            
+            # Section 5: CSV Upload (legacy backup)
+            with st.expander("📤 Manual CSV Upload (Legacy Backup)", expanded=False):
+                st.info("📌 CSV upload is a legacy feature - webhook sync is recommended")
+                st.caption("Use this only if:")
+                st.caption("• Webhook sync is unavailable")
+                st.caption("• You have old CSV files to process")
+                st.caption("• You're doing offline inspections")
+                
+                st.markdown("---")
+                
+                self._show_previous_inspections_section()
+                self._show_trade_mapping_section()
+                self._show_data_processing_section()
+                
+                if self.processed_data is not None and self.metrics is not None:
+                    self._show_results_and_reports()
+                    self._show_enhanced_report_generation()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 2: SMART SYNC (NEW)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        with tab2:
+            self._show_smart_sync_ui()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 3: SETTINGS (OPTIONAL)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        with tab3:
+            st.subheader("⚙️ Settings")
+            st.info("Settings panel coming soon...")
+            
+            # Optional settings
+            st.checkbox("Auto-refresh dashboard", value=False)
+            st.selectbox("Default view", ["Recent", "All", "Defects Only"])
+            st.number_input("Items per page", min_value=10, max_value=100, value=20)
     
     def _show_api_inspection_interface(self):
         """Show interface for API/Webhook inspection reports"""
