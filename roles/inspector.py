@@ -4958,6 +4958,7 @@ Developer Access:
             import traceback
             st.code(traceback.format_exc())
 
+
     def _show_missing_inspections_list(self):
         """Show missing inspections with checkboxes for selection"""
         
