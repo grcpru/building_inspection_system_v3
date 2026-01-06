@@ -4952,12 +4952,11 @@ Developer Access:
             # Inspection List
             for inspection in filtered:
                 audit_id = inspection['audit_id']
-                unit = inspection['unit']
-                date = inspection['inspection_date']
-                name_short = inspection['audit_name_short']
+                audit_name = inspection['audit_name']  # Full name
                 archived = inspection.get('archived', False)
                 
-                col_check, col_unit, col_date, col_name, col_status = st.columns([0.5, 1, 1.5, 4, 1])
+                # ✅ SIMPLIFIED: Just 3 columns
+                col_check, col_name, col_status = st.columns([0.5, 8, 1.5])
                 
                 with col_check:
                     is_selected = audit_id in st.session_state['selected_inspections']
@@ -4969,14 +4968,9 @@ Developer Access:
                         if audit_id in st.session_state['selected_inspections']:
                             st.session_state['selected_inspections'].remove(audit_id)
                 
-                with col_unit:
-                    st.markdown(f"**{unit}**")
-                
-                with col_date:
-                    st.markdown(f"{date}")
-                
                 with col_name:
-                    st.markdown(f"{name_short}", help=inspection['audit_name'])
+                    # ✅ SHOW FULL AUDIT NAME (has everything: date, inspector, unit, address)
+                    st.markdown(f"{audit_name}")
                 
                 with col_status:
                     if archived:
