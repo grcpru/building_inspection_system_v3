@@ -4811,7 +4811,7 @@ Developer Access:
             logger.error(f"Delete error: {e}")
             return False
 
-    def _show_smart_sync_ui():
+    def _show_smart_sync_ui(self):
         """
         🎯 Smart Sync UI - Find and sync missing inspections
         """
