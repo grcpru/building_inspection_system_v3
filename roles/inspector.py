@@ -5120,6 +5120,278 @@ Developer Access:
             st.rerun()
 
 
+    def _show_manual_sync_section(self):
+        """Smart sync with checkbox selection"""
+        
+        webhook_status = self._check_webhook_status()
+        
+        if webhook_status['status'] != 'healthy':
+            st.warning(f"⚠️ Auto-sync status: {webhook_status['message']}")
+            st.markdown("### 🔄 Manual Sync")
+            expanded_default = True
+        else:
+            st.markdown("### 🔄 Backup Sync")
+            st.caption("Find and sync missing inspections from SafetyCulture")
+            expanded_default = False
+        
+        with st.expander("Smart Sync - Find Missing Inspections", expanded=expanded_default):
+            
+            st.info("💡 **Smart Sync:** Automatically finds Highett inspections in SafetyCulture that aren't in your database yet")
+            
+            # Step 1: Find Missing Inspections
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                days_to_search = st.selectbox(
+                    "Search last:",
+                    options=[30, 60, 90, 180, 365],
+                    index=3,  # Default 180 days
+                    key="smart_sync_days"
+                )
+                st.caption(f"Will check SafetyCulture for Highett inspections from last {days_to_search} days")
+            
+            with col2:
+                st.write("")
+                st.write("")
+                if st.button(
+                    "🔍 Find Missing",
+                    type="primary",
+                    use_container_width=True,
+                    key="find_missing_btn"
+                ):
+                    self._find_missing_inspections(days_to_search)
+            
+            # Step 2: Show Results & Selection
+            if st.session_state.get('missing_inspections'):
+                self._show_missing_inspections_ui()
+            
+            st.markdown("---")
+            
+            # Advanced: Manual sync by audit ID
+            with st.expander("🔧 Advanced: Sync Specific Audit ID", expanded=False):
+                st.caption("Use this if you know the specific Audit ID")
+                
+                audit_id = st.text_input(
+                    "Audit ID:",
+                    placeholder="audit_f8b75072809749afa0c1ba0b79042e8f",
+                    key="manual_audit_id"
+                )
+                
+                if st.button("📥 Sync This", key="manual_sync_btn"):
+                    if audit_id and audit_id.startswith('audit_'):
+                        self._manual_sync_inspection(audit_id)
+                    elif audit_id:
+                        st.error("❌ Must start with 'audit_'")
+        
+        st.markdown("---")
+
+
+    def _find_missing_inspections(self, days_back: int):
+        """Find missing inspections from SafetyCulture"""
+        
+        try:
+            try:
+                api_url = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+            except:
+                api_url = "https://inspection-api-service-production.up.railway.app"
+            
+            with st.spinner(f"🔍 Searching SafetyCulture for Highett inspections (last {days_back} days)..."):
+                import requests
+                
+                response = requests.get(
+                    f"{api_url}/webhooks/safety-culture/smart-sync/find-missing",
+                    params={
+                        "days_back": days_back,
+                        "template_id": "template_d3bfcab9602b49fea2327b474ffb92c8"
+                    },
+                    timeout=120
+                )
+                
+                if response.status_code != 200:
+                    st.error(f"❌ API error: {response.status_code}")
+                    return
+                
+                result = response.json()
+                
+                if not result.get('success'):
+                    st.error(f"❌ {result.get('error', 'Unknown error')}")
+                    return
+                
+                # Show summary
+                total = result.get('total_in_safetyculture', 0)
+                synced = result.get('already_in_database', 0)
+                missing = result.get('missing_inspections', [])
+                
+                st.success(f"✅ Found {total} Highett inspections in SafetyCulture")
+                
+                if synced > 0:
+                    st.info(f"📊 Already synced: {synced}")
+                
+                if len(missing) == 0:
+                    st.success("🎉 All up to date! No missing inspections.")
+                else:
+                    st.warning(f"📥 Missing: {len(missing)} inspection(s) not yet in database")
+                    
+                    # Store for display
+                    st.session_state['missing_inspections'] = missing
+                    st.session_state['missing_search_days'] = days_back
+                    st.rerun()
+        
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
+
+
+    def _show_missing_inspections_ui(self):
+        """Show missing inspections with checkbox selection"""
+        
+        missing = st.session_state.get('missing_inspections', [])
+        days_back = st.session_state.get('missing_search_days', 180)
+        
+        if not missing:
+            return
+        
+        st.markdown("### 📋 Select Inspections to Sync")
+        st.caption(f"Found {len(missing)} inspections from last {days_back} days that aren't in database yet")
+        
+        # Initialize selection
+        if 'selected_inspections' not in st.session_state:
+            st.session_state['selected_inspections'] = []
+        
+        # Filter
+        search_filter = st.text_input(
+            "🔍 Filter by date or audit ID:",
+            placeholder="e.g., 2025-12-16 or audit_f8b75...",
+            key="inspection_filter"
+        )
+        
+        # Apply filter
+        if search_filter:
+            filtered = [
+                i for i in missing
+                if search_filter.lower() in str(i.get('date_modified', '')).lower()
+                or search_filter.lower() in i.get('audit_id', '').lower()
+            ]
+        else:
+            filtered = missing
+        
+        st.caption(f"Showing {len(filtered)} of {len(missing)} inspections")
+        
+        # Checkbox list
+        for insp in filtered[:50]:  # Show max 50 at a time
+            audit_id = insp['audit_id']
+            date = insp.get('date_modified') or insp.get('date_completed') or 'N/A'
+            archived_tag = "🗄️ Archived" if insp.get('archived') else ""
+            
+            is_selected = audit_id in st.session_state['selected_inspections']
+            
+            checkbox_label = f"{date} - {audit_id[:30]}... {archived_tag}"
+            
+            if st.checkbox(
+                checkbox_label,
+                value=is_selected,
+                key=f"cb_{audit_id}"
+            ):
+                if audit_id not in st.session_state['selected_inspections']:
+                    st.session_state['selected_inspections'].append(audit_id)
+            else:
+                if audit_id in st.session_state['selected_inspections']:
+                    st.session_state['selected_inspections'].remove(audit_id)
+        
+        if len(filtered) > 50:
+            st.warning(f"⚠️ Showing first 50 of {len(filtered)} inspections. Use filter to narrow down.")
+        
+        # Action buttons
+        st.markdown("---")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            selected_count = len(st.session_state['selected_inspections'])
+            
+            if st.button(
+                f"📥 Sync Selected ({selected_count})",
+                type="primary",
+                use_container_width=True,
+                disabled=selected_count == 0
+            ):
+                self._sync_selected_inspections()
+        
+        with col2:
+            if st.button("☑️ Select All", use_container_width=True):
+                st.session_state['selected_inspections'] = [i['audit_id'] for i in filtered[:50]]
+                st.rerun()
+        
+        with col3:
+            if st.button("⬜ Clear All", use_container_width=True):
+                st.session_state['selected_inspections'] = []
+                st.rerun()
+        
+        with col4:
+            if st.button("🔄 Refresh", use_container_width=True):
+                if 'missing_inspections' in st.session_state:
+                    del st.session_state['missing_inspections']
+                if 'selected_inspections' in st.session_state:
+                    del st.session_state['selected_inspections']
+                st.rerun()
+
+
+    def _sync_selected_inspections(self):
+        """Sync the selected inspections"""
+        
+        import time
+        
+        selected_ids = st.session_state.get('selected_inspections', [])
+        
+        if not selected_ids:
+            st.error("❌ No inspections selected")
+            return
+        
+        st.info(f"🔄 Syncing {len(selected_ids)} inspection(s)...")
+        
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        success_count = 0
+        error_count = 0
+        
+        # Sync each
+        for idx, audit_id in enumerate(selected_ids, 1):
+            status_text.text(f"Syncing {idx}/{len(selected_ids)}: {audit_id[:40]}...")
+            
+            try:
+                success = self._manual_sync_inspection(audit_id, show_messages=False)
+                if success:
+                    success_count += 1
+                else:
+                    error_count += 1
+            except:
+                error_count += 1
+            
+            progress_bar.progress(idx / len(selected_ids))
+            time.sleep(0.5)  # Small delay between syncs
+        
+        # Clear progress
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Show results
+        if success_count > 0:
+            st.success(f"✅ Successfully synced {success_count}/{len(selected_ids)} inspection(s)!")
+        
+        if error_count > 0:
+            st.warning(f"⚠️ Failed to sync {error_count}/{len(selected_ids)} inspection(s)")
+        
+        # Clear selection and refresh
+        if 'missing_inspections' in st.session_state:
+            del st.session_state['missing_inspections']
+        if 'selected_inspections' in st.session_state:
+            del st.session_state['selected_inspections']
+        
+        time.sleep(1)
+        st.rerun()
+
+
     def _manual_sync_inspection(self, audit_id: str, show_messages: bool = True):
         """Sync single inspection"""
         
