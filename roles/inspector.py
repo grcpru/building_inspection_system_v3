@@ -4820,17 +4820,20 @@ Developer Access:
         st.markdown("### 🔍 Find Missing Inspections")
         st.markdown("Search SafetyCulture for inspections not yet synced to your database.")
         
-        # ═══════════════════════════════════════════════════════════════
-        # Search Controls
-        # ═══════════════════════════════════════════════════════════════
+        # ✅ GET API URL AT THE TOP (always available)
+        try:
+            API_BASE_URL = st.secrets.get("FASTAPI_URL", "https://inspection-api-service-production.up.railway.app")
+        except:
+            API_BASE_URL = "https://inspection-api-service-production.up.railway.app"
         
+        # Search Controls
         col1, col2, col3 = st.columns([2, 2, 2])
         
         with col1:
             days_back = st.selectbox(
                 "Search period",
                 options=[30, 60, 90, 180, 365],
-                index=4,  # Default 365 days
+                index=4,
                 format_func=lambda x: f"Last {x} days"
             )
         
@@ -4842,10 +4845,8 @@ Developer Access:
             )
         
         with col3:
-            # Search button
             if st.button("🔍 Find Missing", type="primary", use_container_width=True):
                 with st.spinner("Searching SafetyCulture..."):
-                    # Call API
                     try:
                         response = requests.get(
                             f"{API_BASE_URL}/webhooks/safety-culture/smart-sync/find-missing",
@@ -4860,7 +4861,6 @@ Developer Access:
                             result = response.json()
                             
                             if result.get('success'):
-                                # Store in session state
                                 st.session_state['missing_inspections'] = result.get('missing_inspections', [])
                                 st.session_state['search_stats'] = {
                                     'total': result.get('total_in_safetyculture', 0),
@@ -4878,16 +4878,12 @@ Developer Access:
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
         
-        # ═══════════════════════════════════════════════════════════════
         # Display Results
-        # ═══════════════════════════════════════════════════════════════
-        
         if 'missing_inspections' in st.session_state and st.session_state['missing_inspections']:
             
             missing = st.session_state['missing_inspections']
             stats = st.session_state.get('search_stats', {})
             
-            # Stats bar
             st.markdown("---")
             col1, col2, col3, col4 = st.columns(4)
             
@@ -4903,37 +4899,28 @@ Developer Access:
             
             st.markdown("---")
             
-            # Filter controls
+            # Filters
             col1, col2 = st.columns([3, 3])
             
             with col1:
                 filter_unit = st.text_input(
                     "🔍 Filter by unit",
-                    placeholder="e.g. G214, J501",
-                    help="Type to filter by unit number"
+                    placeholder="e.g. G214, J501"
                 )
             
             with col2:
                 filter_date = st.text_input(
                     "📅 Filter by date",
-                    placeholder="e.g. Dec 2024, 12 Dec",
-                    help="Type to filter by date"
+                    placeholder="e.g. Dec 2024, 12 Dec"
                 )
             
-            # Apply filters
             filtered = missing
             
             if filter_unit:
-                filtered = [
-                    i for i in filtered 
-                    if filter_unit.upper() in i.get('unit', '').upper()
-                ]
+                filtered = [i for i in filtered if filter_unit.upper() in i.get('unit', '').upper()]
             
             if filter_date:
-                filtered = [
-                    i for i in filtered 
-                    if filter_date.lower() in i.get('inspection_date', '').lower()
-                ]
+                filtered = [i for i in filtered if filter_date.lower() in i.get('inspection_date', '').lower()]
             
             st.markdown(f"**Showing {len(filtered)} of {len(missing)} inspections**")
             
@@ -4957,17 +4944,12 @@ Developer Access:
                         del st.session_state['selected_inspections']
                     st.rerun()
             
-            # Initialize selection state
             if 'selected_inspections' not in st.session_state:
                 st.session_state['selected_inspections'] = []
             
-            # ═══════════════════════════════════════════════════════════
-            # Inspection List (with checkboxes)
-            # ═══════════════════════════════════════════════════════════
-            
             st.markdown("---")
             
-            # Display as table with checkboxes
+            # Inspection List
             for inspection in filtered:
                 audit_id = inspection['audit_id']
                 unit = inspection['unit']
@@ -4975,11 +4957,9 @@ Developer Access:
                 name_short = inspection['audit_name_short']
                 archived = inspection.get('archived', False)
                 
-                # Row container
                 col_check, col_unit, col_date, col_name, col_status = st.columns([0.5, 1, 1.5, 4, 1])
                 
                 with col_check:
-                    # Checkbox for selection
                     is_selected = audit_id in st.session_state['selected_inspections']
                     
                     if st.checkbox("Select", value=is_selected, key=f"check_{audit_id}", label_visibility="collapsed"):
@@ -4996,10 +4976,7 @@ Developer Access:
                     st.markdown(f"{date}")
                 
                 with col_name:
-                    st.markdown(
-                        f"{name_short}",
-                        help=inspection['audit_name']  # Full name in tooltip
-                    )
+                    st.markdown(f"{name_short}", help=inspection['audit_name'])
                 
                 with col_status:
                     if archived:
@@ -5007,27 +4984,18 @@ Developer Access:
                     else:
                         st.markdown("✅ Complete")
             
-            # ═══════════════════════════════════════════════════════════
-            # Sync Button
-            # ═══════════════════════════════════════════════════════════
-            
             st.markdown("---")
             
             selected_count = len(st.session_state['selected_inspections'])
             
             if selected_count > 0:
-                if st.button(
-                    f"🚀 Sync Selected ({selected_count})",
-                    type="primary",
-                    use_container_width=True
-                ):
-                    _sync_selected_inspections()
+                if st.button(f"🚀 Sync Selected ({selected_count})", type="primary", use_container_width=True):
+                    self._sync_selected_inspections(API_BASE_URL)
             else:
                 st.info("👆 Select inspections above to sync")
         
         elif 'missing_inspections' in st.session_state:
-            # Searched but found nothing
-            st.info("✅ All inspections are already synced! No missing inspections found.")
+            st.info("✅ All inspections are already synced!")
 
 
     def _sync_selected_inspections():
