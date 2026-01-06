@@ -4833,7 +4833,7 @@ Developer Access:
             days_back = st.selectbox(
                 "Search period",
                 options=[30, 60, 90, 180, 365],
-                index=4,
+                index=1,
                 format_func=lambda x: f"Last {x} days"
             )
         
