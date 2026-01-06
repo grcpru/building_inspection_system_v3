@@ -16,6 +16,7 @@ import tempfile
 import os
 import zipfile
 import hashlib
+import requests
 
 # Import the enhanced modules
 from core.data_processor import InspectionDataProcessor, load_master_trade_mapping
