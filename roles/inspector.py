@@ -4981,12 +4981,7 @@ Developer Access:
                     # Checkbox for selection
                     is_selected = audit_id in st.session_state['selected_inspections']
                     
-                    if st.checkbox(
-                        "",
-                        value=is_selected,
-                        key=f"check_{audit_id}",
-                        label_visibility="collapsed"
-                    ):
+                    if st.checkbox("Select", value=is_selected, key=f"check_{audit_id}", label_visibility="collapsed"):
                         if audit_id not in st.session_state['selected_inspections']:
                             st.session_state['selected_inspections'].append(audit_id)
                     else:
