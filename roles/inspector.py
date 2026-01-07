@@ -644,7 +644,7 @@ class InspectorInterface:
             self._show_recent_inspections_list()
             
             # Section 3: Manual Sync
-            self._show_manual_sync_section()
+            #self._show_manual_sync_section()
             
             # Section 4: Report Generation (conditional)
             if 'selected_api_inspections' in st.session_state and len(st.session_state['selected_api_inspections']) > 0:
