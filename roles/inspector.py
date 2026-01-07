@@ -3183,13 +3183,13 @@ class InspectorInterface:
             st.info("💡 No database - Data will be temporary (this session only)")
         
         # ✅ NEW: Two input methods
-        tab1, tab2 = st.tabs(["📄 CSV Upload", "🔄 API Sync"])
+        #tab1, tab2 = st.tabs(["📄 CSV Upload", "🔄 API Sync"])
         
-        with tab1:
-            self._show_csv_upload_section()
+        #with tab1:
+        self._show_csv_upload_section()
         
-        with tab2:
-            self._show_api_sync_section()
+        #with tab2:
+        #    self._show_api_sync_section()
 
     def _show_csv_upload_section(self):
         """CSV upload section (your existing code)"""
@@ -5066,70 +5066,70 @@ Developer Access:
             st.balloons()
             st.button("🔄 Refresh List", on_click=lambda: st.rerun())
 
-    def _show_manual_sync_section(self):
-        """Smart sync with checkbox selection"""
+    # def _show_manual_sync_section(self):
+    #     """Smart sync with checkbox selection"""
         
-        webhook_status = self._check_webhook_status()
+    #     webhook_status = self._check_webhook_status()
         
-        if webhook_status['status'] != 'healthy':
-            st.warning(f"⚠️ Auto-sync status: {webhook_status['message']}")
-            st.markdown("### 🔄 Manual Sync")
-            expanded_default = True
-        else:
-            st.markdown("### 🔄 Backup Sync")
-            st.caption("Find and sync missing inspections from SafetyCulture")
-            expanded_default = False
+    #     if webhook_status['status'] != 'healthy':
+    #         st.warning(f"⚠️ Auto-sync status: {webhook_status['message']}")
+    #         st.markdown("### 🔄 Manual Sync")
+    #         expanded_default = True
+    #     else:
+    #         st.markdown("### 🔄 Backup Sync")
+    #         st.caption("Find and sync missing inspections from SafetyCulture")
+    #         expanded_default = False
         
-        with st.expander("Smart Sync - Find Missing Inspections", expanded=expanded_default):
+    #     with st.expander("Smart Sync - Find Missing Inspections", expanded=expanded_default):
             
-            st.info("💡 **Smart Sync:** Automatically finds Highett inspections in SafetyCulture that aren't in your database yet")
+    #         st.info("💡 **Smart Sync:** Automatically finds Highett inspections in SafetyCulture that aren't in your database yet")
             
-            # Step 1: Find Missing Inspections
-            col1, col2 = st.columns([2, 1])
+    #         # Step 1: Find Missing Inspections
+    #         col1, col2 = st.columns([2, 1])
             
-            with col1:
-                days_to_search = st.selectbox(
-                    "Search last:",
-                    options=[30, 60, 90, 180, 365],
-                    index=3,  # Default 180 days
-                    key="smart_sync_days"
-                )
-                st.caption(f"Will check SafetyCulture for Highett inspections from last {days_to_search} days")
+    #         with col1:
+    #             days_to_search = st.selectbox(
+    #                 "Search last:",
+    #                 options=[30, 60, 90, 180, 365],
+    #                 index=3,  # Default 180 days
+    #                 key="smart_sync_days"
+    #             )
+    #             st.caption(f"Will check SafetyCulture for Highett inspections from last {days_to_search} days")
             
-            with col2:
-                st.write("")
-                st.write("")
-                if st.button(
-                    "🔍 Find Missing",
-                    type="primary",
-                    use_container_width=True,
-                    key="find_missing_btn"
-                ):
-                    self._find_missing_inspections(days_to_search)
+    #         with col2:
+    #             st.write("")
+    #             st.write("")
+    #             if st.button(
+    #                 "🔍 Find Missing",
+    #                 type="primary",
+    #                 use_container_width=True,
+    #                 key="find_missing_btn"
+    #             ):
+    #                 self._find_missing_inspections(days_to_search)
             
-            # Step 2: Show Results & Selection
-            if st.session_state.get('missing_inspections'):
-                self._show_missing_inspections_ui()
+    #         # Step 2: Show Results & Selection
+    #         if st.session_state.get('missing_inspections'):
+    #             self._show_missing_inspections_ui()
             
-            st.markdown("---")
+    #         st.markdown("---")
             
-            # Advanced: Manual sync by audit ID
-            with st.expander("🔧 Advanced: Sync Specific Audit ID", expanded=False):
-                st.caption("Use this if you know the specific Audit ID")
+    #         # Advanced: Manual sync by audit ID
+    #         with st.expander("🔧 Advanced: Sync Specific Audit ID", expanded=False):
+    #             st.caption("Use this if you know the specific Audit ID")
                 
-                audit_id = st.text_input(
-                    "Audit ID:",
-                    placeholder="audit_f8b75072809749afa0c1ba0b79042e8f",
-                    key="manual_audit_id"
-                )
+    #             audit_id = st.text_input(
+    #                 "Audit ID:",
+    #                 placeholder="audit_f8b75072809749afa0c1ba0b79042e8f",
+    #                 key="manual_audit_id"
+    #             )
                 
-                if st.button("📥 Sync This", key="manual_sync_btn"):
-                    if audit_id and audit_id.startswith('audit_'):
-                        self._manual_sync_inspection(audit_id)
-                    elif audit_id:
-                        st.error("❌ Must start with 'audit_'")
+    #             if st.button("📥 Sync This", key="manual_sync_btn"):
+    #                 if audit_id and audit_id.startswith('audit_'):
+    #                     self._manual_sync_inspection(audit_id)
+    #                 elif audit_id:
+    #                     st.error("❌ Must start with 'audit_'")
         
-        st.markdown("---")
+    #     st.markdown("---")
 
 
     def _find_missing_inspections(self, days_back: int):
