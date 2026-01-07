@@ -4992,9 +4992,9 @@ Developer Access:
             st.info("✅ All inspections are already synced!")
 
 
-    def _sync_selected_inspections():
+    def _sync_selected_inspections(self, API_BASE_URL):
         """
-        Sync selected inspections one by one with progress tracking
+        Sync selected inspections from Smart Sync
         """
         
         selected = st.session_state.get('selected_inspections', [])
@@ -5003,29 +5003,25 @@ Developer Access:
             st.warning("No inspections selected")
             return
         
-        st.markdown("### 🔄 Syncing Inspections...")
+        st.markdown("---")
+        st.markdown(f"### Syncing {len(selected)} inspections...")
         
-        # Progress tracking
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         success_count = 0
-        failed = []
+        error_count = 0
+        errors = []
         
         for idx, audit_id in enumerate(selected, 1):
-            # Update progress
-            progress = idx / len(selected)
-            progress_bar.progress(progress)
-            status_text.text(f"Syncing {idx} of {len(selected)}...")
-            
             try:
-                # Call sync API
+                status_text.text(f"Syncing {idx}/{len(selected)}: {audit_id}")
+                progress_bar.progress(idx / len(selected))
+                
+                # Call the test/trigger endpoint to sync this audit
                 response = requests.post(
                     f"{API_BASE_URL}/webhooks/safety-culture/test/trigger",
-                    params={
-                        'audit_id': audit_id,
-                        'template_id': 'template_d3bfcab9602b49fea2327b474ffb92c8'
-                    },
+                    params={'audit_id': audit_id},
                     timeout=30
                 )
                 
@@ -5034,49 +5030,41 @@ Developer Access:
                     if result.get('success'):
                         success_count += 1
                     else:
-                        failed.append({
-                            'audit_id': audit_id,
-                            'error': result.get('error', 'Unknown error')
-                        })
+                        error_count += 1
+                        errors.append(f"{audit_id}: {result.get('error', 'Unknown error')}")
                 else:
-                    failed.append({
-                        'audit_id': audit_id,
-                        'error': f"HTTP {response.status_code}"
-                    })
+                    error_count += 1
+                    errors.append(f"{audit_id}: HTTP {response.status_code}")
             
             except Exception as e:
-                failed.append({
-                    'audit_id': audit_id,
-                    'error': str(e)
-                })
+                error_count += 1
+                errors.append(f"{audit_id}: {str(e)}")
         
-        # Complete
         progress_bar.progress(1.0)
-        status_text.empty()
+        status_text.text("✅ Sync complete!")
         
         # Show results
         st.markdown("---")
         
-        if success_count == len(selected):
-            st.success(f"🎉 Successfully synced all {success_count} inspections!")
-        else:
-            st.warning(f"⚠️ Synced {success_count} of {len(selected)} inspections")
-            
-            if failed:
-                st.error(f"❌ Failed to sync {len(failed)} inspections:")
-                for fail in failed:
-                    st.text(f"  • {fail['audit_id']}: {fail['error']}")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("✅ Successful", success_count)
+        with col2:
+            st.metric("❌ Failed", error_count)
         
-        # Clear selection and refresh
+        if errors:
+            with st.expander("❌ View Errors", expanded=False):
+                for error in errors:
+                    st.error(error)
+        
+        # Clear selection
         st.session_state['selected_inspections'] = []
         
-        # Auto-refresh dashboard data
-        st.balloons()
-        
-        if st.button("✅ Done - Refresh Dashboard"):
-            del st.session_state['missing_inspections']
-            st.rerun()
-
+        # Refresh the list
+        if success_count > 0:
+            st.success(f"✅ Successfully synced {success_count} inspections!")
+            st.balloons()
+            st.button("🔄 Refresh List", on_click=lambda: st.rerun())
 
     def _show_manual_sync_section(self):
         """Smart sync with checkbox selection"""
