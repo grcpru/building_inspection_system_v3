@@ -5187,155 +5187,155 @@ Developer Access:
             st.error(f"❌ Error: {e}")
 
 
-    # def _show_missing_inspections_ui(self):
-    #     """Show missing inspections with checkbox selection"""
+    def _show_missing_inspections_ui(self):
+        """Show missing inspections with checkbox selection"""
         
-    #     missing = st.session_state.get('missing_inspections', [])
-    #     days_back = st.session_state.get('missing_search_days', 180)
+        missing = st.session_state.get('missing_inspections', [])
+        days_back = st.session_state.get('missing_search_days', 180)
         
-    #     if not missing:
-    #         return
+        if not missing:
+            return
         
-    #     st.markdown("### 📋 Select Inspections to Sync")
-    #     st.caption(f"Found {len(missing)} inspections from last {days_back} days that aren't in database yet")
+        st.markdown("### 📋 Select Inspections to Sync")
+        st.caption(f"Found {len(missing)} inspections from last {days_back} days that aren't in database yet")
         
-    #     # Initialize selection
-    #     if 'selected_inspections' not in st.session_state:
-    #         st.session_state['selected_inspections'] = []
+        # Initialize selection
+        if 'selected_inspections' not in st.session_state:
+            st.session_state['selected_inspections'] = []
         
-    #     # Filter
-    #     search_filter = st.text_input(
-    #         "🔍 Filter by date or audit ID:",
-    #         placeholder="e.g., 2025-12-16 or audit_f8b75...",
-    #         key="inspection_filter"
-    #     )
+        # Filter
+        search_filter = st.text_input(
+            "🔍 Filter by date or audit ID:",
+            placeholder="e.g., 2025-12-16 or audit_f8b75...",
+            key="inspection_filter"
+        )
         
-    #     # Apply filter
-    #     if search_filter:
-    #         filtered = [
-    #             i for i in missing
-    #             if search_filter.lower() in str(i.get('date_modified', '')).lower()
-    #             or search_filter.lower() in i.get('audit_id', '').lower()
-    #         ]
-    #     else:
-    #         filtered = missing
+        # Apply filter
+        if search_filter:
+            filtered = [
+                i for i in missing
+                if search_filter.lower() in str(i.get('date_modified', '')).lower()
+                or search_filter.lower() in i.get('audit_id', '').lower()
+            ]
+        else:
+            filtered = missing
         
-    #     st.caption(f"Showing {len(filtered)} of {len(missing)} inspections")
+        st.caption(f"Showing {len(filtered)} of {len(missing)} inspections")
         
-    #     # Checkbox list
-    #     for insp in filtered[:50]:  # Show max 50 at a time
-    #         audit_id = insp['audit_id']
-    #         date = insp.get('date_modified') or insp.get('date_completed') or 'N/A'
-    #         archived_tag = "🗄️ Archived" if insp.get('archived') else ""
+        # Checkbox list
+        for insp in filtered[:50]:  # Show max 50 at a time
+            audit_id = insp['audit_id']
+            date = insp.get('date_modified') or insp.get('date_completed') or 'N/A'
+            archived_tag = "🗄️ Archived" if insp.get('archived') else ""
             
-    #         is_selected = audit_id in st.session_state['selected_inspections']
+            is_selected = audit_id in st.session_state['selected_inspections']
             
-    #         checkbox_label = f"{date} - {audit_id[:30]}... {archived_tag}"
+            checkbox_label = f"{date} - {audit_id[:30]}... {archived_tag}"
             
-    #         if st.checkbox(
-    #             checkbox_label,
-    #             value=is_selected,
-    #             key=f"cb_{audit_id}"
-    #         ):
-    #             if audit_id not in st.session_state['selected_inspections']:
-    #                 st.session_state['selected_inspections'].append(audit_id)
-    #         else:
-    #             if audit_id in st.session_state['selected_inspections']:
-    #                 st.session_state['selected_inspections'].remove(audit_id)
+            if st.checkbox(
+                checkbox_label,
+                value=is_selected,
+                key=f"cb_{audit_id}"
+            ):
+                if audit_id not in st.session_state['selected_inspections']:
+                    st.session_state['selected_inspections'].append(audit_id)
+            else:
+                if audit_id in st.session_state['selected_inspections']:
+                    st.session_state['selected_inspections'].remove(audit_id)
         
-    #     if len(filtered) > 50:
-    #         st.warning(f"⚠️ Showing first 50 of {len(filtered)} inspections. Use filter to narrow down.")
+        if len(filtered) > 50:
+            st.warning(f"⚠️ Showing first 50 of {len(filtered)} inspections. Use filter to narrow down.")
         
-    #     # Action buttons
-    #     st.markdown("---")
+        # Action buttons
+        st.markdown("---")
         
-    #     col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4 = st.columns(4)
         
-    #     with col1:
-    #         selected_count = len(st.session_state['selected_inspections'])
+        with col1:
+            selected_count = len(st.session_state['selected_inspections'])
             
-    #         if st.button(
-    #             f"📥 Sync Selected ({selected_count})",
-    #             type="primary",
-    #             use_container_width=True,
-    #             disabled=selected_count == 0
-    #         ):
-    #             self._sync_selected_inspections()
+            if st.button(
+                f"📥 Sync Selected ({selected_count})",
+                type="primary",
+                use_container_width=True,
+                disabled=selected_count == 0
+            ):
+                self._sync_selected_inspections()
         
-    #     with col2:
-    #         if st.button("☑️ Select All", use_container_width=True):
-    #             st.session_state['selected_inspections'] = [i['audit_id'] for i in filtered[:50]]
-    #             st.rerun()
+        with col2:
+            if st.button("☑️ Select All", use_container_width=True):
+                st.session_state['selected_inspections'] = [i['audit_id'] for i in filtered[:50]]
+                st.rerun()
         
-    #     with col3:
-    #         if st.button("⬜ Clear All", use_container_width=True):
-    #             st.session_state['selected_inspections'] = []
-    #             st.rerun()
+        with col3:
+            if st.button("⬜ Clear All", use_container_width=True):
+                st.session_state['selected_inspections'] = []
+                st.rerun()
         
-    #     with col4:
-    #         if st.button("🔄 Refresh", use_container_width=True):
-    #             if 'missing_inspections' in st.session_state:
-    #                 del st.session_state['missing_inspections']
-    #             if 'selected_inspections' in st.session_state:
-    #                 del st.session_state['selected_inspections']
-    #             st.rerun()
+        with col4:
+            if st.button("🔄 Refresh", use_container_width=True):
+                if 'missing_inspections' in st.session_state:
+                    del st.session_state['missing_inspections']
+                if 'selected_inspections' in st.session_state:
+                    del st.session_state['selected_inspections']
+                st.rerun()
 
 
-    # def _sync_selected_inspections(self):
-    #     """Sync the selected inspections"""
+    def _sync_selected_inspections(self):
+        """Sync the selected inspections"""
         
-    #     import time
+        import time
         
-    #     selected_ids = st.session_state.get('selected_inspections', [])
+        selected_ids = st.session_state.get('selected_inspections', [])
         
-    #     if not selected_ids:
-    #         st.error("❌ No inspections selected")
-    #         return
+        if not selected_ids:
+            st.error("❌ No inspections selected")
+            return
         
-    #     st.info(f"🔄 Syncing {len(selected_ids)} inspection(s)...")
+        st.info(f"🔄 Syncing {len(selected_ids)} inspection(s)...")
         
-    #     # Progress tracking
-    #     progress_bar = st.progress(0)
-    #     status_text = st.empty()
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-    #     success_count = 0
-    #     error_count = 0
+        success_count = 0
+        error_count = 0
         
-    #     # Sync each
-    #     for idx, audit_id in enumerate(selected_ids, 1):
-    #         status_text.text(f"Syncing {idx}/{len(selected_ids)}: {audit_id[:40]}...")
+        # Sync each
+        for idx, audit_id in enumerate(selected_ids, 1):
+            status_text.text(f"Syncing {idx}/{len(selected_ids)}: {audit_id[:40]}...")
             
-    #         try:
-    #             success = self._manual_sync_inspection(audit_id, show_messages=False)
-    #             if success:
-    #                 success_count += 1
-    #             else:
-    #                 error_count += 1
-    #         except:
-    #             error_count += 1
+            try:
+                success = self._manual_sync_inspection(audit_id, show_messages=False)
+                if success:
+                    success_count += 1
+                else:
+                    error_count += 1
+            except:
+                error_count += 1
             
-    #         progress_bar.progress(idx / len(selected_ids))
-    #         time.sleep(0.5)  # Small delay between syncs
+            progress_bar.progress(idx / len(selected_ids))
+            time.sleep(0.5)  # Small delay between syncs
         
-    #     # Clear progress
-    #     progress_bar.empty()
-    #     status_text.empty()
+        # Clear progress
+        progress_bar.empty()
+        status_text.empty()
         
-    #     # Show results
-    #     if success_count > 0:
-    #         st.success(f"✅ Successfully synced {success_count}/{len(selected_ids)} inspection(s)!")
+        # Show results
+        if success_count > 0:
+            st.success(f"✅ Successfully synced {success_count}/{len(selected_ids)} inspection(s)!")
         
-    #     if error_count > 0:
-    #         st.warning(f"⚠️ Failed to sync {error_count}/{len(selected_ids)} inspection(s)")
+        if error_count > 0:
+            st.warning(f"⚠️ Failed to sync {error_count}/{len(selected_ids)} inspection(s)")
         
-    #     # Clear selection and refresh
-    #     if 'missing_inspections' in st.session_state:
-    #         del st.session_state['missing_inspections']
-    #     if 'selected_inspections' in st.session_state:
-    #         del st.session_state['selected_inspections']
+        # Clear selection and refresh
+        if 'missing_inspections' in st.session_state:
+            del st.session_state['missing_inspections']
+        if 'selected_inspections' in st.session_state:
+            del st.session_state['selected_inspections']
         
-    #     time.sleep(1)
-    #     st.rerun()
+        time.sleep(1)
+        st.rerun()
 
 
     def _manual_sync_inspection(self, audit_id: str, show_messages: bool = True):
