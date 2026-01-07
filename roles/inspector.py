@@ -656,22 +656,22 @@ class InspectorInterface:
                 self._show_report_generation_from_selection()
             
             # Section 5: CSV Upload (legacy backup)
-            with st.expander("📤 Manual CSV Upload (Legacy Backup)", expanded=False):
-                st.info("📌 CSV upload is a legacy feature - webhook sync is recommended")
-                st.caption("Use this only if:")
-                st.caption("• Webhook sync is unavailable")
-                st.caption("• You have old CSV files to process")
-                st.caption("• You're doing offline inspections")
+            # with st.expander("📤 Manual CSV Upload (Legacy Backup)", expanded=False):
+            #     st.info("📌 CSV upload is a legacy feature - webhook sync is recommended")
+            #     st.caption("Use this only if:")
+            #     st.caption("• Webhook sync is unavailable")
+            #     st.caption("• You have old CSV files to process")
+            #     st.caption("• You're doing offline inspections")
                 
-                st.markdown("---")
+            #     st.markdown("---")
                 
-                self._show_previous_inspections_section()
-                self._show_trade_mapping_section()
-                self._show_data_processing_section()
+            #     self._show_previous_inspections_section()
+            #     self._show_trade_mapping_section()
+            #     self._show_data_processing_section()
                 
-                if self.processed_data is not None and self.metrics is not None:
-                    self._show_results_and_reports()
-                    self._show_enhanced_report_generation()
+            #     if self.processed_data is not None and self.metrics is not None:
+            #         self._show_results_and_reports()
+            #         self._show_enhanced_report_generation()
         
         # ═══════════════════════════════════════════════════════════════════
         # TAB 2: SMART SYNC (NEW)
