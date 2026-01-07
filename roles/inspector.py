@@ -5281,61 +5281,61 @@ Developer Access:
                 st.rerun()
 
 
-    def _sync_selected_inspections(self):
-        """Sync the selected inspections"""
+    # def _sync_selected_inspections(self):
+    #     """Sync the selected inspections"""
         
-        import time
+    #     import time
         
-        selected_ids = st.session_state.get('selected_inspections', [])
+    #     selected_ids = st.session_state.get('selected_inspections', [])
         
-        if not selected_ids:
-            st.error("❌ No inspections selected")
-            return
+    #     if not selected_ids:
+    #         st.error("❌ No inspections selected")
+    #         return
         
-        st.info(f"🔄 Syncing {len(selected_ids)} inspection(s)...")
+    #     st.info(f"🔄 Syncing {len(selected_ids)} inspection(s)...")
         
-        # Progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    #     # Progress tracking
+    #     progress_bar = st.progress(0)
+    #     status_text = st.empty()
         
-        success_count = 0
-        error_count = 0
+    #     success_count = 0
+    #     error_count = 0
         
-        # Sync each
-        for idx, audit_id in enumerate(selected_ids, 1):
-            status_text.text(f"Syncing {idx}/{len(selected_ids)}: {audit_id[:40]}...")
+    #     # Sync each
+    #     for idx, audit_id in enumerate(selected_ids, 1):
+    #         status_text.text(f"Syncing {idx}/{len(selected_ids)}: {audit_id[:40]}...")
             
-            try:
-                success = self._manual_sync_inspection(audit_id, show_messages=False)
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-            except:
-                error_count += 1
+    #         try:
+    #             success = self._manual_sync_inspection(audit_id, show_messages=False)
+    #             if success:
+    #                 success_count += 1
+    #             else:
+    #                 error_count += 1
+    #         except:
+    #             error_count += 1
             
-            progress_bar.progress(idx / len(selected_ids))
-            time.sleep(0.5)  # Small delay between syncs
+    #         progress_bar.progress(idx / len(selected_ids))
+    #         time.sleep(0.5)  # Small delay between syncs
         
-        # Clear progress
-        progress_bar.empty()
-        status_text.empty()
+    #     # Clear progress
+    #     progress_bar.empty()
+    #     status_text.empty()
         
-        # Show results
-        if success_count > 0:
-            st.success(f"✅ Successfully synced {success_count}/{len(selected_ids)} inspection(s)!")
+    #     # Show results
+    #     if success_count > 0:
+    #         st.success(f"✅ Successfully synced {success_count}/{len(selected_ids)} inspection(s)!")
         
-        if error_count > 0:
-            st.warning(f"⚠️ Failed to sync {error_count}/{len(selected_ids)} inspection(s)")
+    #     if error_count > 0:
+    #         st.warning(f"⚠️ Failed to sync {error_count}/{len(selected_ids)} inspection(s)")
         
-        # Clear selection and refresh
-        if 'missing_inspections' in st.session_state:
-            del st.session_state['missing_inspections']
-        if 'selected_inspections' in st.session_state:
-            del st.session_state['selected_inspections']
+    #     # Clear selection and refresh
+    #     if 'missing_inspections' in st.session_state:
+    #         del st.session_state['missing_inspections']
+    #     if 'selected_inspections' in st.session_state:
+    #         del st.session_state['selected_inspections']
         
-        time.sleep(1)
-        st.rerun()
+    #     time.sleep(1)
+    #     st.rerun()
 
 
     def _manual_sync_inspection(self, audit_id: str, show_messages: bool = True):
