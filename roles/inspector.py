@@ -991,8 +991,8 @@ class InspectorInterface:
             with col1:
                 st.markdown("### 📊 Excel Report")
                 st.write("**Includes:**")
-                st.write("• Inspector notes (Column G)")
-                st.write("• Photo thumbnails (Column H)")
+                st.write("• Inspector notes")
+                st.write("• Photo thumbnails")
                 st.write("• All defect details")
                 st.write("• Settlement readiness")
                 st.write("• Status tracking")
@@ -1151,7 +1151,7 @@ class InspectorInterface:
                 st.markdown("### 📄 Word Report")
                 st.write("**Includes:**")
                 st.write("• Inspector notes inline")
-                st.write("• Full-size photos")
+                st.write("• Full-size photos (A Unit Report)")
                 st.write("• Professional layout")
                 st.write("• Print-ready format")
                 st.write("• Cover page with logo")
@@ -5434,7 +5434,7 @@ Developer Access:
             
             # Image upload section
             try:
-                with st.expander("📸 Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
+                with st.expander("📸 Word Report Enhancement - Upload Logo & Cover Image (Optional)", expanded=True):
                     st.info("✨ Add your company logo and building photo to create professional Word reports")
                     
                     col1, col2 = st.columns(2)
@@ -5512,7 +5512,7 @@ Developer Access:
             
             # ─────── Excel Report with Photos ─────── 
             with col1:
-                st.markdown("### 📊 Excel Report")
+                st.markdown("### 📊 Excel Report (Report by Building is not supported)")
                 st.write("**Includes:**")
                 st.write("• Inspector notes (Column G)")
                 st.write("• Photo thumbnails (Columns J-S)")
