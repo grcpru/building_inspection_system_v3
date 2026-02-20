@@ -4688,7 +4688,7 @@ Developer Access:
             st.info(f"Selected: {len(st.session_state.multi_select_ids)} inspections")
             
             # Inspection list with checkboxes
-            for insp in inspections[:20]:  # Show first 20
+            for insp in inspections[:50]:  # Show first 50
                 col1, col2 = st.columns([4, 1])
                 
                 with col1:
